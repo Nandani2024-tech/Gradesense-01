@@ -1,0 +1,1 @@
+from .topic_extractor import extract_topic_from_rubric

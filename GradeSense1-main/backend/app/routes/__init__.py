@@ -1,0 +1,60 @@
+"""API route registration."""
+
+from fastapi import APIRouter
+from .auth import router as auth_router
+from .batches import router as batches_router
+from .subjects import router as subjects_router
+from .students import router as students_router
+from .exams import router as exams_router
+from .uploads import router as uploads_router
+from .grading import router as grading_router
+from .submissions import router as submissions_router
+from .re_evaluations import router as re_evaluations_router
+from .feedback import router as feedback_router
+from .analytics import router as analytics_router
+from .student_portal import router as student_portal_router
+from .notifications import router as notifications_router
+from .search import router as search_router
+from .admin import router as admin_router
+from .debug import router as debug_router
+from .universal import router as universal_router
+from .health import router as health_router
+from .system import router as system_router
+
+
+
+
+def register_all_routes(app: APIRouter):
+    """Include all route modules on the main API application."""
+    # Create a router with the /api prefix
+    api_router = APIRouter(prefix="/api")
+    
+    # Register all /api prefixed routes
+    _register_api_routes(api_router)
+    
+    # Include the api_router on the app
+    app.include_router(api_router)
+    
+    # Register root-level routes
+    app.include_router(health_router)
+
+def _register_api_routes(api_router: APIRouter):
+    """Internal helper to register all /api routes"""
+    api_router.include_router(auth_router)
+    api_router.include_router(batches_router)
+    api_router.include_router(subjects_router)
+    api_router.include_router(students_router)
+    api_router.include_router(exams_router)
+    api_router.include_router(uploads_router)
+    api_router.include_router(grading_router)
+    api_router.include_router(submissions_router)
+    api_router.include_router(re_evaluations_router)
+    api_router.include_router(feedback_router)
+    api_router.include_router(analytics_router)
+    api_router.include_router(student_portal_router)
+    api_router.include_router(notifications_router)
+    api_router.include_router(search_router)
+    api_router.include_router(admin_router)
+    api_router.include_router(debug_router)
+    api_router.include_router(universal_router)
+    api_router.include_router(system_router)
