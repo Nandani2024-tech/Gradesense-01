@@ -21,12 +21,14 @@ from app.services.grading import (
 )
 from app.services.llm import LlmChat, UserMessage, ImageContent
 
-from .prompts import (
+from app.services.llm.prompts.ai_structured_prompts import (
     PROMPT_VERSION,
     build_objective_key_prompt,
     build_student_option_prompt,
     build_quality_prompt,
 )
+from app.utils.json_helpers import parse_tolerant_json
+from app.utils.safe_numeric import safe_float
 
 
 GRADING_CONTRACT_VERSION = "ai_structured_contract_v1"
@@ -34,45 +36,10 @@ MAX_CONTEXT_IMAGES = int(os.getenv("GRADING_MAX_CONTEXT_IMAGES", "8"))
 MAX_MODEL_ANSWER_IMAGES = int(os.getenv("GRADING_MAX_MODEL_ANSWER_IMAGES", "4"))
 
 
-def _to_float(value: Any, default: float = 0.0) -> float:
-    try:
-        if value is None:
-            return float(default)
-        return float(value)
-    except Exception:
-        return float(default)
-
-
-def _parse_json(raw_text: str) -> Dict[str, Any]:
-    raw_text = raw_text.strip()
-    # Try finding JSON blocks first
-    for match in re.finditer(r"```(?:json)?\s*([\s\S]*?)```", raw_text, flags=re.IGNORECASE):
-        block = match.group(1).strip()
-        try:
-            return json.loads(block)
-        except Exception:
-            continue
-
-    # Try finding the first '{' and last '}'
-    start = raw_text.find("{")
-    end = raw_text.rfind("}")
-    if start != -1 and end != -1:
-        try:
-            txt = str(raw_text)
-            return json.loads(txt[start : end + 1])
-        except Exception:
-            pass
-
-    # Final attempt: direct load
-    try:
-        return json.loads(raw_text)
-    except Exception:
-        snippet = raw_text[:200] if raw_text else "empty"
-        raise ValueError(f"invalid_grading_json: {snippet}...")
 
 
 def _normalize_quality(value: Any) -> float:
-    score = _to_float(value, 0.0)
+    score = safe_float(value, 0.0)
     if score < 0:
         return -1.0
     if score > 1.0 and score <= 100.0:
@@ -155,7 +122,7 @@ async def _llm_json(prompt: str, model_name: str, images: Optional[List[str]] = 
         file_contents = []
 
     raw = await chat.send_message(UserMessage(text=prompt, file_contents=file_contents))
-    return _parse_json(raw)
+    return parse_tolerant_json(raw)
 
 
 def _extract_option_letter(text: str) -> Optional[str]:

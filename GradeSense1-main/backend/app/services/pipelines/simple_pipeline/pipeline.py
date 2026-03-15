@@ -1,9 +1,9 @@
 from typing import Any, Dict, List, Optional
 
-from app.layers.simple_pipeline.utils.meta_merger import _merge_question_meta
-from app.layers.simple_pipeline.grading.mcq_grader import grade_mcq
-from app.layers.simple_pipeline.grading.descriptive_grader import grade_descriptive
-from app.layers.simple_pipeline.extraction.text_packet_builder import _text_only_build_packets
+from app.services.pipelines.simple_pipeline.utils.meta_merger import _merge_question_meta
+from app.services.pipelines.simple_pipeline.grading.mcq_grader import grade_mcq
+from app.services.pipelines.simple_pipeline.grading.descriptive_grader import grade_descriptive
+from app.services.pipelines.simple_pipeline.extraction.text_packet_builder import _text_only_build_packets
 
 try:
     from app.services.answer_sheet_pipeline import (

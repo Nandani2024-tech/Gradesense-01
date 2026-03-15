@@ -20,20 +20,20 @@ from app.services.llm.config import get_llm_api_key
 from app.services.llm import ImageContent, LlmChat, UserMessage
 from app.utils.ocr_provider import get_ocr_provider
 
-from .mark_reasoner import resolve_marks
-from .prompts import (
+from app.layers.ai_structured.mark_reasoner import resolve_marks
+from app.services.llm.prompts.ai_structured_prompts import (
     build_extraction_prompt,
     build_reconstruction_prompt,
     get_extraction_system_prompt,
     build_visual_extraction_prompt,
     get_visual_extraction_system_prompt,
 )
-from .safe_numeric import safe_float, safe_int, parse_section_math_expression
-from .retry import RetryExhaustedError, run_with_retry
-from .structure_repair import apply_structure_repairs
-from .structure_validator import validate_structure as validate_structure_stage3
-from .validation import normalize_structure_payload
-from app.layers.visual_entities import extract_visual_entities
+from app.utils.safe_numeric import safe_float, safe_int, parse_section_math_expression
+from app.utils.retry import RetryExhaustedError, run_with_retry
+from app.layers.ai_structured.structure_repair import apply_structure_repairs
+from app.layers.ai_structured.structure_validator import validate_structure as validate_structure_stage3
+from app.layers.ai_structured.validation import normalize_structure_payload
+from app.adapters.visual_extractor import extract_visual_entities
 
 
 _ALLOWED_TYPES = {

@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.logging_config import logger
 
-from .safe_numeric import parse_section_math_expression, safe_float, safe_int
+from app.utils.safe_numeric import parse_section_math_expression, safe_float, safe_int
 from .validation import normalize_structure_payload
 
 

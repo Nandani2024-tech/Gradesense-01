@@ -23,46 +23,15 @@ from app.layers.constants import (
     PRECISION_ROUNDING
 )
 
-from .cache import get_alignment_cache, set_alignment_cache
-from .prompts import build_alignment_prompt
+from app.utils.cache import get_alignment_cache, set_alignment_cache
+from app.services.llm.prompts.ai_structured_prompts import build_alignment_prompt
+from app.utils.json_helpers import parse_tolerant_json
+from app.utils.safe_numeric import safe_float
 
 
 # ALIGNMENT_COVERAGE_GATE moved to constants.py
 
 
-def _to_float(value: Any, default: float = 0.0) -> float:
-    try:
-        if value is None:
-            return float(default)
-        return float(value)
-    except Exception:
-        return float(default)
-
-
-def _parse_json_object(raw_text: str) -> Dict[str, Any]:
-    raw_text = raw_text.strip()
-    # Try finding JSON blocks first
-    for match in re.finditer(r"```(?:json)?\s*([\s\S]*?)```", raw_text, flags=re.IGNORECASE):
-        block = match.group(1).strip()
-        try:
-            return json.loads(block)
-        except Exception:
-            continue
-
-    # Try finding the first '{' and last '}'
-    start = raw_text.find("{")
-    end = raw_text.rfind("}")
-    if start != -1 and end != -1:
-        try:
-            return json.loads(raw_text[start : end + 1])
-        except Exception:
-            pass
-
-    # Final attempt: direct load
-    try:
-        return json.loads(raw_text)
-    except Exception:
-        raise ValueError(f"invalid_alignment_json: {raw_text[:200]}...")
 
 
 def _extract_option_letter(text: str) -> Optional[str]:
@@ -187,7 +156,7 @@ def _normalize_alignment_answers(payload: Dict[str, Any], expected_numbers: List
             "detected_type": detected_type,
             "page_index": int(row.get("page_index")) if str(row.get("page_index", "")).isdigit() else None,
             "bbox": row.get("bbox") if isinstance(row.get("bbox"), list) else None,
-            "confidence": max(0.0, min(1.0, _to_float(row.get("confidence"), 0.0))),
+            "confidence": max(0.0, min(1.0, safe_float(row.get("confidence"), 0.0))),
             "_is_expected": qn in expected_set,
         }
         answers.append(ans)
@@ -239,7 +208,7 @@ def _compute_alignment_metrics(
     alignment_coverage = (mapped_questions / float(answered_questions)) if answered_questions else 0.0
 
     avg_conf = (
-        sum(_to_float(ans.get("confidence"), 0.0) for ans in answers) / float(len(answers))
+        sum(safe_float(ans.get("confidence"), 0.0) for ans in answers) / float(len(answers))
         if answers
         else 0.0
     )
@@ -303,7 +272,7 @@ async def _llm_align_answers(
         file_contents=file_contents,
     )
     raw = await chat.send_message(message)
-    return _parse_json_object(raw)
+    return parse_tolerant_json(raw)
 
 
 async def _fallback_align_answers(

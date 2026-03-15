@@ -7,33 +7,19 @@ import json
 from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
-
-def _to_float(value: Any, default: float = 0.0) -> float:
-    try:
-        if value is None:
-            return float(default)
-        return float(value)
-    except Exception:
-        return float(default)
+from app.utils.safe_numeric import safe_float, safe_int
 
 
-def _to_int(value: Any, default: int = 0) -> int:
-    try:
-        if value is None:
-            return int(default)
-        return int(value)
-    except Exception:
-        return int(default)
 
 
 def _normalize_subquestion(sub: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "label": str(sub.get("label") or "").strip(),
         "text": str(sub.get("text") or "").strip(),
-        "marks": round(_to_float(sub.get("marks"), 0.0), 2),
+        "marks": round(safe_float(sub.get("marks"), 0.0), 2),
         "mark_source": str(sub.get("mark_source") or "inferred").strip().lower(),
-        "mark_confidence": round(_to_float(sub.get("mark_confidence"), 0.0), 2),
-        "confidence": round(_to_float(sub.get("confidence"), 0.0), 2),
+        "mark_confidence": round(safe_float(sub.get("mark_confidence"), 0.0), 2),
+        "confidence": round(safe_float(sub.get("confidence"), 0.0), 2),
     }
 
 
@@ -43,7 +29,7 @@ def normalize_structure_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     for q in questions:
         if not isinstance(q, dict):
             continue
-        qn = _to_int(q.get("number"), 0)
+        qn = safe_int(q.get("number"), 0)
         if qn <= 0:
             continue
         subquestions = [_normalize_subquestion(sq) for sq in (q.get("subquestions") or []) if isinstance(sq, dict)]
@@ -55,15 +41,15 @@ def normalize_structure_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "instruction": (str(q.get("instruction") or "").strip() or None),
                 "question_text": str(q.get("question_text") or "").strip(),
                 "question_type": str(q.get("question_type") or "descriptive").strip().lower(),
-                "marks": round(_to_float(q.get("marks"), 0.0), 2),
+                "marks": round(safe_float(q.get("marks"), 0.0), 2),
                 "options": list(q.get("options") or []) or None,
                 "subquestions": subquestions,
                 "or_group_id": (str(q.get("or_group_id") or "").strip() or None),
                 "image_evidence": list(q.get("image_evidence") or []),
-                "ai_confidence": round(_to_float(q.get("ai_confidence"), 0.0), 2),
+                "ai_confidence": round(safe_float(q.get("ai_confidence"), 0.0), 2),
                 "mark_source": str(q.get("mark_source") or "inferred").strip().lower(),
-                "mark_confidence": round(_to_float(q.get("mark_confidence"), 0.0), 2),
-                "confidence": round(_to_float(q.get("confidence"), _to_float(q.get("ai_confidence"), 0.0)), 2),
+                "mark_confidence": round(safe_float(q.get("mark_confidence"), 0.0), 2),
+                "confidence": round(safe_float(q.get("confidence"), safe_float(q.get("ai_confidence"), 0.0)), 2),
             }
         )
 
@@ -82,9 +68,9 @@ def normalize_structure_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         if or_counts.get(str(gid), 0) < 2:
             q["or_group_id"] = None
 
-    total_questions = _to_int(payload.get("total_questions"), len(normalized_questions))
-    total_marks = round(_to_float(payload.get("total_marks"), 0.0), 4)
-    effective_total_marks = round(_to_float(payload.get("effective_total_marks"), total_marks), 4)
+    total_questions = safe_int(payload.get("total_questions"), len(normalized_questions))
+    total_marks = round(safe_float(payload.get("total_marks"), 0.0), 4)
+    effective_total_marks = round(safe_float(payload.get("effective_total_marks"), total_marks), 4)
     section_math_blocks = []
     for block in (payload.get("section_math_blocks") or []):
         if not isinstance(block, dict):
@@ -92,8 +78,8 @@ def normalize_structure_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         range_raw = block.get("range")
         range_obj = None
         if isinstance(range_raw, dict):
-            start = _to_int(range_raw.get("start"), 0)
-            end = _to_int(range_raw.get("end"), 0)
+            start = safe_int(range_raw.get("start"), 0)
+            end = safe_int(range_raw.get("end"), 0)
             if start > 0 and end >= start:
                 range_obj = {"start": start, "end": end}
         section_math_blocks.append(

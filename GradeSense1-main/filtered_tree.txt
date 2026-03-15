@@ -1,0 +1,721 @@
+GradeSense1-main/
+├── .gitignore
+├── backend/
+│   ├── .env
+│   ├── .gitignore
+│   ├── README.md
+│   ├── app/
+│   │   ├── __init__.py
+│   │   ├── adapters/
+│   │   │   ├── __init__.py
+│   │   │   ├── aws/
+│   │   │   ├── college_layout.py
+│   │   │   ├── college_normalization.py
+│   │   │   ├── cv/
+│   │   │   ├── layout_segmentation.py
+│   │   │   ├── ocr/
+│   │   │   ├── ocr_adapter.py
+│   │   │   ├── universal_layout.py
+│   │   │   ├── universal_normalization.py
+│   │   │   └── visual_extractor.py
+│   │   ├── await_search_results.txt
+│   │   ├── await_search_utf8.txt
+│   │   ├── core/
+│   │   │   ├── config.py
+│   │   │   ├── database.py
+│   │   │   ├── db_config.py
+│   │   │   ├── logging_config.py
+│   │   │   └── version.py
+│   │   ├── deps.py
+│   │   ├── domain/
+│   │   │   ├── exam_nodes.py
+│   │   │   └── factories/
+│   │   │       ├── __init__.py
+│   │   │       ├── exam_factory.py
+│   │   │       └── submission_factory.py
+│   │   ├── infrastructure/
+│   │   │   └── storage/
+│   │   │       └── gridfs_storage.py
+│   │   ├── layers/
+│   │   │   ├── __init__.py
+│   │   │   ├── ai_structured/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── mark_reasoner.py
+│   │   │   │   ├── mark_resolver.py
+│   │   │   │   ├── schemas.py
+│   │   │   │   ├── strict_visual_blueprint.py
+│   │   │   │   ├── structure_repair.py
+│   │   │   │   ├── structure_validator.py
+│   │   │   │   └── validation.py
+│   │   │   ├── audit_report.md
+│   │   │   ├── aws_pipeline/
+│   │   │   │   └── __init__.py
+│   │   │   ├── college/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── grader.py
+│   │   │   │   └── prompts.py
+│   │   │   ├── college_v3/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── contracts.py
+│   │   │   │   └── grading.py
+│   │   │   ├── constants.py
+│   │   │   ├── resolver.py
+│   │   │   ├── universal/
+│   │   │   │   ├── __init__.py
+│   │   │   │   └── grader.py
+│   │   │   ├── upsc/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── policy.py
+│   │   │   │   └── prompts.py
+│   │   │   └── visual_entities/
+│   │   │       └── __init__.py
+│   │   ├── mapping/
+│   │   │   ├── __init__.py
+│   │   │   ├── config.py
+│   │   │   ├── margin_detection.py
+│   │   │   ├── question_mapper_core.py
+│   │   │   ├── segment_analysis.py
+│   │   │   └── subquestion_detection.py
+│   │   ├── middleware/
+│   │   │   ├── cors.py
+│   │   │   └── metrics.py
+│   │   ├── models/
+│   │   │   ├── __init__.py
+│   │   │   ├── admin.py
+│   │   │   ├── analytics/
+│   │   │   │   ├── __init__.py
+│   │   │   │   └── grading_analytics.py
+│   │   │   ├── analytics.py
+│   │   │   ├── batch.py
+│   │   │   ├── exam.py
+│   │   │   ├── feedback.py
+│   │   │   ├── reevaluation.py
+│   │   │   ├── subject.py
+│   │   │   ├── submission.py
+│   │   │   └── user.py
+│   │   ├── ocr/
+│   │   │   ├── __init__.py
+│   │   │   ├── block_clustering.py
+│   │   │   ├── line_clustering.py
+│   │   │   └── segment_utils.py
+│   │   ├── pipeline_schemas/
+│   │   │   ├── __init__.py
+│   │   │   └── blueprint/
+│   │   │       ├── __init__.py
+│   │   │       ├── question_node.py
+│   │   │       └── sub_question_node.py
+│   │   ├── prompts/
+│   │   │   ├── extraction_prompts.yaml
+│   │   │   └── prompt_manager.py
+│   │   ├── routes/
+│   │   │   ├── __init__.py
+│   │   │   ├── admin.py
+│   │   │   ├── analytics.py
+│   │   │   ├── auth.py
+│   │   │   ├── batches.py
+│   │   │   ├── debug.py
+│   │   │   ├── exams.py
+│   │   │   ├── feedback.py
+│   │   │   ├── grading.py
+│   │   │   ├── health.py
+│   │   │   ├── notifications.py
+│   │   │   ├── re_evaluations.py
+│   │   │   ├── search.py
+│   │   │   ├── student_portal.py
+│   │   │   ├── students.py
+│   │   │   ├── subjects.py
+│   │   │   ├── submissions.py
+│   │   │   ├── system.py
+│   │   │   ├── universal.py
+│   │   │   └── uploads.py
+│   │   ├── schemas/
+│   │   │   ├── __init__.py
+│   │   │   ├── admin/
+│   │   │   │   ├── publish_results_request.py
+│   │   │   │   └── user_status_update.py
+│   │   │   ├── ai_outputs/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── extraction/
+│   │   │   │   │   ├── extracted_question.py
+│   │   │   │   │   ├── extracted_subquestion.py
+│   │   │   │   │   └── question_extraction_schema.py
+│   │   │   │   ├── marks/
+│   │   │   │   │   ├── mark_validation_schema.py
+│   │   │   │   │   ├── question_mark.py
+│   │   │   │   │   └── subpart_mark.py
+│   │   │   │   └── model_answers/
+│   │   │   │       ├── model_answer_entry.py
+│   │   │   │       └── model_answer_extraction_schema.py
+│   │   │   ├── ai_outputs.py
+│   │   │   ├── analytics/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── frontend_event.py
+│   │   │   │   └── nl_query.py
+│   │   │   ├── annotation/
+│   │   │   │   ├── __init__.py
+│   │   │   │   └── annotation_data.py
+│   │   │   ├── auth/
+│   │   │   │   ├── login_request.py
+│   │   │   │   ├── register_request.py
+│   │   │   │   └── set_password_request.py
+│   │   │   ├── batch/
+│   │   │   │   ├── __init__.py
+│   │   │   │   └── batch_create.py
+│   │   │   ├── exam/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── exam_create.py
+│   │   │   │   └── student_exam_create.py
+│   │   │   ├── reevaluation/
+│   │   │   │   └── reevaluation_create.py
+│   │   │   ├── subject/
+│   │   │   │   └── subject_create.py
+│   │   │   └── user/
+│   │   │       ├── feature_flags.py
+│   │   │       ├── profile_update.py
+│   │   │       ├── quotas.py
+│   │   │       └── user_create.py
+│   │   ├── services/
+│   │   │   ├── __init__.py
+│   │   │   ├── analytics/
+│   │   │   │   ├── __init__.py
+│   │   │   │   └── topic_extractor.py
+│   │   │   ├── annotation.py
+│   │   │   ├── annotation_v2/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── annotator.py
+│   │   │   │   ├── config.py
+│   │   │   │   ├── fallback.py
+│   │   │   │   ├── models.py
+│   │   │   │   ├── renderers/
+│   │   │   │   │   ├── __init__.py
+│   │   │   │   │   ├── base_renderer.py
+│   │   │   │   │   ├── box.py
+│   │   │   │   │   ├── comment.py
+│   │   │   │   │   ├── point_number.py
+│   │   │   │   │   ├── score.py
+│   │   │   │   │   ├── tick_cross.py
+│   │   │   │   │   └── underline.py
+│   │   │   │   └── utils.py
+│   │   │   ├── answer_sheet_pipeline/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── adapters/
+│   │   │   │   │   └── result_mapper.py
+│   │   │   │   ├── config.py
+│   │   │   │   ├── image_utils.py
+│   │   │   │   ├── layout/
+│   │   │   │   │   ├── layout_detector.py
+│   │   │   │   │   └── table_detection.py
+│   │   │   │   ├── ocr/
+│   │   │   │   │   └── region_ocr.py
+│   │   │   │   ├── packets/
+│   │   │   │   │   ├── packet_aligner.py
+│   │   │   │   │   └── packet_builder.py
+│   │   │   │   ├── pipeline/
+│   │   │   │   │   └── answer_pipeline_runner.py
+│   │   │   │   ├── preprocessing/
+│   │   │   │   │   ├── page_normalizer.py
+│   │   │   │   │   └── pdf_image_converter.py
+│   │   │   │   ├── regex_patterns.py
+│   │   │   │   └── structuring/
+│   │   │   │       └── accounting_structure.py
+│   │   │   ├── answer_sheet_pipeline_old.py
+│   │   │   ├── aws/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── config.py
+│   │   │   │   ├── s3_storage.py
+│   │   │   │   └── textract_client.py
+│   │   │   ├── background.py
+│   │   │   ├── config/
+│   │   │   │   ├── pipeline_constants.py
+│   │   │   │   └── task_constants.py
+│   │   │   ├── extraction/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── auto_extraction.py
+│   │   │   │   ├── background_tasks.py
+│   │   │   │   ├── blueprint.py
+│   │   │   │   ├── deduplication.py
+│   │   │   │   ├── mark_validation.py
+│   │   │   │   ├── parsing.py
+│   │   │   │   └── utils.py
+│   │   │   ├── extraction_pipeline.py
+│   │   │   ├── file_processing/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── config.py
+│   │   │   │   ├── image_rotation.py
+│   │   │   │   └── pdf_converter.py
+│   │   │   ├── grading/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── aggregation.py
+│   │   │   │   ├── ai_grader.py
+│   │   │   │   ├── answer_normalizer.py
+│   │   │   │   ├── background_job.py
+│   │   │   │   ├── blueprint.py
+│   │   │   │   ├── cache_storage.py
+│   │   │   │   ├── concept_matcher.py
+│   │   │   │   ├── constants.py
+│   │   │   │   ├── grading_applier.py
+│   │   │   │   ├── grading_contract.py
+│   │   │   │   ├── grading_core.py
+│   │   │   │   ├── grading_facade.py
+│   │   │   │   ├── legacy_grading.py
+│   │   │   │   ├── llm_evaluator.py
+│   │   │   │   ├── normalization.py
+│   │   │   │   ├── question_classifier.py
+│   │   │   │   ├── rubric_builder.py
+│   │   │   │   ├── score_validator.py
+│   │   │   │   ├── scoring_quality.py
+│   │   │   │   ├── subparts_builder.py
+│   │   │   │   └── utils.py
+│   │   │   ├── grading_pipeline/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── config.py
+│   │   │   │   └── pipeline_runner.py
+│   │   │   ├── llm/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── config.py
+│   │   │   │   ├── llm_service.py
+│   │   │   │   └── prompts/
+│   │   │   │       └── ai_structured_prompts.py
+│   │   │   ├── metrics/
+│   │   │   │   ├── __init__.py
+│   │   │   │   └── metrics_service.py
+│   │   │   ├── notifications/
+│   │   │   │   ├── __init__.py
+│   │   │   │   └── notifications_service.py
+│   │   │   ├── pipelines/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── ai_extraction_service.py
+│   │   │   │   ├── ai_structured/
+│   │   │   │   │   ├── alignment_service.py
+│   │   │   │   │   └── grading_interface.py
+│   │   │   │   ├── ai_structured_engine.py
+│   │   │   │   ├── aws_answer_extractor.py
+│   │   │   │   ├── aws_answer_mapper.py
+│   │   │   │   ├── aws_blueprint_builder.py
+│   │   │   │   ├── aws_grading_engine.py
+│   │   │   │   ├── aws_pipeline_engine.py
+│   │   │   │   ├── aws_raw_layer.py
+│   │   │   │   ├── aws_text_reconstruction.py
+│   │   │   │   ├── college/
+│   │   │   │   │   ├── alignment.py
+│   │   │   │   │   ├── blueprint.py
+│   │   │   │   │   ├── contracts.py
+│   │   │   │   │   ├── packet_builder.py
+│   │   │   │   │   └── structuring.py
+│   │   │   │   ├── college_engine.py
+│   │   │   │   ├── college_recovery.py
+│   │   │   │   ├── college_v3/
+│   │   │   │   │   ├── anchor_detection.py
+│   │   │   │   │   ├── answer_mapping.py
+│   │   │   │   │   ├── engine.py
+│   │   │   │   │   ├── global_span_builder.py
+│   │   │   │   │   └── question_blueprint.py
+│   │   │   │   ├── grading_engine.py
+│   │   │   │   ├── simple_pipeline/
+│   │   │   │   │   ├── extraction/
+│   │   │   │   │   │   └── text_packet_builder.py
+│   │   │   │   │   ├── grading/
+│   │   │   │   │   │   ├── descriptive_grader.py
+│   │   │   │   │   │   └── mcq_grader.py
+│   │   │   │   │   ├── pipeline.py
+│   │   │   │   │   └── utils/
+│   │   │   │   │       └── meta_merger.py
+│   │   │   │   ├── universal/
+│   │   │   │   │   ├── alignment.py
+│   │   │   │   │   ├── confidence.py
+│   │   │   │   │   ├── continuity.py
+│   │   │   │   │   ├── contracts.py
+│   │   │   │   │   ├── embeddings.py
+│   │   │   │   │   ├── ingestion.py
+│   │   │   │   │   ├── packet_builder.py
+│   │   │   │   │   ├── question_detection.py
+│   │   │   │   │   ├── recovery.py
+│   │   │   │   │   ├── region_ocr.py
+│   │   │   │   │   └── structuring.py
+│   │   │   │   └── universal_engine.py
+│   │   │   ├── score_normalization/
+│   │   │   │   ├── __init__.py
+│   │   │   │   ├── config.py
+│   │   │   │   ├── exam_map.py
+│   │   │   │   ├── merger.py
+│   │   │   │   ├── normalizer.py
+│   │   │   │   ├── quality.py
+│   │   │   │   └── utils.py
+│   │   │   ├── simple_pipeline.py
+│   │   │   ├── storage/
+│   │   │   │   ├── __init__.py
+│   │   │   │   └── gridfs_helpers.py
+│   │   │   ├── task_worker.py
+│   │   │   └── workers/
+│   │   │       ├── background_worker.py
+│   │   │       ├── task_claimers.py
+│   │   │       ├── task_handlers/
+│   │   │       │   ├── grade_paper_handler.py
+│   │   │       │   └── strict_visual_blueprint_handler.py
+│   │   │       └── task_worker.py
+│   │   ├── startup/
+│   │   │   ├── job_cleanup.py
+│   │   │   ├── lifespan.py
+│   │   │   ├── system_checks.py
+│   │   │   └── worker_manager.py
+│   │   ├── student/
+│   │   │   ├── __init__.py
+│   │   │   ├── extraction.py
+│   │   │   ├── manager.py
+│   │   │   └── parser.py
+│   │   └── utils/
+│   │       ├── __init__.py
+│   │       ├── annotations/
+│   │       │   ├── __init__.py
+│   │       │   ├── backward_compat.py
+│   │       │   ├── color_utils.py
+│   │       │   ├── positioning.py
+│   │       │   ├── renderer.py
+│   │       │   └── types.py
+│   │       ├── auth/
+│   │       │   ├── __init__.py
+│   │       │   ├── jwt_tokens.py
+│   │       │   └── password.py
+│   │       ├── aws_question_identity.py
+│   │       ├── blueprint/
+│   │       │   ├── __init__.py
+│   │       │   ├── config.py
+│   │       │   ├── freeze_payload.py
+│   │       │   ├── hash_confidence.py
+│   │       │   ├── health.py
+│   │       │   ├── models.py
+│   │       │   ├── or_groups.py
+│   │       │   ├── parse.py
+│   │       │   └── structure.py
+│   │       ├── blueprint.py
+│   │       ├── cache.py
+│   │       ├── concurrency/
+│   │       │   ├── __init__.py
+│   │       │   ├── limits.py
+│   │       │   └── semaphores.py
+│   │       ├── datetime_utils.py
+│   │       ├── file_utils.py
+│   │       ├── files/
+│   │       │   ├── __init__.py
+│   │       │   ├── backward_compat.py
+│   │       │   ├── converters.py
+│   │       │   ├── gdrive.py
+│   │       │   └── zip_handler.py
+│   │       ├── gcp_auth/
+│   │       │   ├── __init__.py
+│   │       │   ├── backward_compat.py
+│   │       │   ├── config_helper.py
+│   │       │   └── gcp_auth.py
+│   │       ├── hashing/
+│   │       │   ├── __init__.py
+│   │       │   ├── backward_compat.py
+│   │       │   ├── model_answer_hash.py
+│   │       │   └── paper_hash.py
+│   │       ├── json_helpers.py
+│   │       ├── ocr_provider/
+│   │       │   ├── __init__.py
+│   │       │   ├── config.py
+│   │       │   ├── core.py
+│   │       │   ├── models.py
+│   │       │   ├── patterns.py
+│   │       │   ├── services/
+│   │       │   │   ├── __init__.py
+│   │       │   │   ├── gemini_service_wrapper.py
+│   │       │   │   ├── paddle_service_wrapper.py
+│   │       │   │   └── vision_service_wrapper.py
+│   │       │   └── utils.py
+│   │       ├── ocr_services/
+│   │       │   ├── __init__.py
+│   │       │   ├── base_ocr.py
+│   │       │   ├── config.py
+│   │       │   ├── executor.py
+│   │       │   ├── gemini_ocr_service.py
+│   │       │   ├── legacy_compat.py
+│   │       │   ├── paddle_ocr_service.py
+│   │       │   └── vision_ocr_service.py
+│   │       ├── paddle_service.py
+│   │       ├── retry.py
+│   │       ├── safe_numeric.py
+│   │       ├── serialization/
+│   │       │   ├── __init__.py
+│   │       │   ├── backward_compat.py
+│   │       │   ├── general.py
+│   │       │   └── mongo.py
+│   │       ├── validation/
+│   │       │   ├── __init__.py
+│   │       │   ├── backward_compat.py
+│   │       │   ├── paper_inference.py
+│   │       │   ├── question_validator.py
+│   │       │   └── rules/
+│   │       │       └── question_rules.json
+│   │       └── vision_ocr_service.py
+│   ├── backend_structure.md
+│   ├── check_counts.py
+│   ├── check_imports.py
+│   ├── check_mongo.py
+│   ├── check_mongo_json.py
+│   ├── error.log
+│   ├── error_log.txt
+│   ├── layers_files.txt
+│   ├── main.py
+│   ├── mongo_counts.json
+│   ├── mongo_dump.json
+│   ├── out.txt
+│   ├── pytest.ini
+│   ├── requirements_backup.txt
+│   ├── route_output.txt
+│   ├── scripts/
+│   │   ├── dump_annotated_images.py
+│   │   ├── dump_question_snippets.py
+│   │   ├── generate_score_test.py
+│   │   ├── migrate_ai_structured_v1.py
+│   │   ├── migrate_large_files_to_gridfs.py
+│   │   ├── migrate_submission_images_to_gridfs.py
+│   │   ├── migrate_submissions_to_gridfs.py
+│   │   ├── ocr_debug.py
+│   │   ├── regenerate_annotations_for_submission.py
+│   │   ├── scan_section_math.py
+│   │   ├── test_college_extraction.py
+│   │   └── test_llm.py
+│   ├── services_files.txt
+│   ├── static/
+│   ├── structure.txt
+│   ├── test_import.log
+│   ├── test_output.log
+│   ├── test_output_utf8.txt
+│   ├── test_schema_imports.py
+│   ├── tests/
+│   │   ├── test_grading_applier.py
+│   │   ├── test_question_classifier.py
+│   │   ├── test_utils.py
+│   │   └── testy.py
+│   ├── tests_output.txt
+│   ├── testt.py
+│   ├── tmp/
+│   │   ├── check_all_recent.py
+│   │   ├── check_all_recent_json.py
+│   │   ├── check_exam.py
+│   │   ├── check_exam_subs.py
+│   │   ├── check_failed_packet.py
+│   │   ├── check_failed_sub.py
+│   │   ├── check_job_sub.py
+│   │   ├── check_jobs.py
+│   │   ├── check_recent.py
+│   │   ├── check_recent_sync.py
+│   │   ├── check_state.py
+│   │   ├── export_failed_sub.py
+│   │   ├── failed_sub_debug.json
+│   │   ├── generate_tree.py
+│   │   ├── get_sample.py
+│   │   ├── get_sample_json.py
+│   │   ├── inspect_db.py
+│   │   ├── inspect_out.txt
+│   │   ├── latest_sub.json
+│   │   ├── list_exams.py
+│   │   ├── recent_subs.json
+│   │   ├── recent_subs_output.txt
+│   │   ├── tree_output.txt
+│   │   └── verif_grading.py
+│   ├── tmp_search.txt
+│   ├── traceback_error.txt
+│   ├── utils_files.txt
+│   └── verify_ocr.py
+├── docs/
+│   └── refactor_audit_annotations.md
+├── frontend/
+│   ├── .env
+│   ├── .gitignore
+│   ├── README.md
+│   ├── build/
+│   │   ├── _redirects
+│   │   ├── asset-manifest.json
+│   │   ├── index.html
+│   │   └── static/
+│   │       ├── css/
+│   │       │   ├── main.7b9e39ce.css
+│   │       │   └── main.7b9e39ce.css.map
+│   │       └── js/
+│   │           ├── 213.bd954327.chunk.js
+│   │           ├── 213.bd954327.chunk.js.LICENSE.txt
+│   │           ├── 213.bd954327.chunk.js.map
+│   │           ├── 239.e39fb35b.chunk.js
+│   │           ├── 239.e39fb35b.chunk.js.LICENSE.txt
+│   │           ├── 239.e39fb35b.chunk.js.map
+│   │           ├── 455.3c49b9f6.chunk.js
+│   │           ├── 455.3c49b9f6.chunk.js.map
+│   │           ├── main.8797fde2.js
+│   │           ├── main.8797fde2.js.LICENSE.txt
+│   │           └── main.8797fde2.js.map
+│   ├── components.json
+│   ├── craco.config.js
+│   ├── jsconfig.json
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── plugins/
+│   │   ├── health-check/
+│   │   │   ├── health-endpoints.js
+│   │   │   └── webpack-health-plugin.js
+│   │   └── visual-edits/
+│   │       ├── babel-metadata-plugin.js
+│   │       └── dev-server-setup.js
+│   ├── postcss.config.js
+│   ├── public/
+│   │   ├── _redirects
+│   │   └── index.html
+│   ├── src/
+│   │   ├── App.css
+│   │   ├── App.js
+│   │   ├── components/
+│   │   │   ├── DashboardStats.jsx
+│   │   │   ├── FeedbackBeacon.jsx
+│   │   │   ├── GlobalGradingProgress.jsx
+│   │   │   ├── GlobalSearch.jsx
+│   │   │   ├── HandwrittenOverlay.jsx
+│   │   │   ├── Layout.jsx
+│   │   │   ├── NotificationDropdown.jsx
+│   │   │   ├── QuestionEditor.jsx
+│   │   │   ├── StudentProfileDrawer.jsx
+│   │   │   ├── VoiceInput.jsx
+│   │   │   └── ui/
+│   │   │       ├── accordion.jsx
+│   │   │       ├── alert-dialog.jsx
+│   │   │       ├── alert.jsx
+│   │   │       ├── aspect-ratio.jsx
+│   │   │       ├── avatar.jsx
+│   │   │       ├── badge.jsx
+│   │   │       ├── breadcrumb.jsx
+│   │   │       ├── button.jsx
+│   │   │       ├── calendar.jsx
+│   │   │       ├── card.jsx
+│   │   │       ├── carousel.jsx
+│   │   │       ├── checkbox.jsx
+│   │   │       ├── collapsible.jsx
+│   │   │       ├── command.jsx
+│   │   │       ├── context-menu.jsx
+│   │   │       ├── dialog.jsx
+│   │   │       ├── drawer.jsx
+│   │   │       ├── dropdown-menu.jsx
+│   │   │       ├── form.jsx
+│   │   │       ├── hover-card.jsx
+│   │   │       ├── input-otp.jsx
+│   │   │       ├── input.jsx
+│   │   │       ├── label.jsx
+│   │   │       ├── menubar.jsx
+│   │   │       ├── navigation-menu.jsx
+│   │   │       ├── pagination.jsx
+│   │   │       ├── popover.jsx
+│   │   │       ├── progress.jsx
+│   │   │       ├── radio-group.jsx
+│   │   │       ├── resizable.jsx
+│   │   │       ├── scroll-area.jsx
+│   │   │       ├── select.jsx
+│   │   │       ├── separator.jsx
+│   │   │       ├── sheet.jsx
+│   │   │       ├── skeleton.jsx
+│   │   │       ├── slider.jsx
+│   │   │       ├── sonner.jsx
+│   │   │       ├── switch.jsx
+│   │   │       ├── table.jsx
+│   │   │       ├── tabs.jsx
+│   │   │       ├── textarea.jsx
+│   │   │       ├── toast.jsx
+│   │   │       ├── toaster.jsx
+│   │   │       ├── toggle-group.jsx
+│   │   │       ├── toggle.jsx
+│   │   │       └── tooltip.jsx
+│   │   ├── hooks/
+│   │   │   └── use-toast.js
+│   │   ├── index.css
+│   │   ├── index.js
+│   │   ├── lib/
+│   │   │   └── utils.js
+│   │   ├── pages/
+│   │   │   ├── AuthCallback.jsx
+│   │   │   ├── EmailAuthPage.jsx
+│   │   │   ├── LoginPage.jsx
+│   │   │   ├── ProfileSetup.jsx
+│   │   │   ├── Settings.jsx
+│   │   │   ├── admin/
+│   │   │   │   ├── AdminAnalytics.jsx
+│   │   │   │   ├── AdminDashboard.jsx
+│   │   │   │   ├── AdminFeedback.jsx
+│   │   │   │   ├── AdminUsers.jsx
+│   │   │   │   └── AdminUsersAdvanced.jsx
+│   │   │   ├── student/
+│   │   │   │   ├── Dashboard.jsx
+│   │   │   │   ├── RequestReEvaluation.jsx
+│   │   │   │   ├── Results.jsx
+│   │   │   │   ├── StudentExams.jsx
+│   │   │   │   └── StudentExamsView.jsx
+│   │   │   └── teacher/
+│   │   │       ├── AddBatch.jsx
+│   │   │       ├── Analytics.jsx
+│   │   │       ├── BatchSettings.jsx
+│   │   │       ├── BatchView.jsx
+│   │   │       ├── ClassInsights.jsx
+│   │   │       ├── ClassReports.jsx
+│   │   │       ├── CreateStudentExam.jsx
+│   │   │       ├── Dashboard.jsx
+│   │   │       ├── ExamSubmissionsView.jsx
+│   │   │       ├── ManageBatches.jsx
+│   │   │       ├── ManageExams.jsx
+│   │   │       ├── ManageStudents.jsx
+│   │   │       ├── ManageStudentsInBatch.jsx
+│   │   │       ├── NewDashboard.jsx
+│   │   │       ├── ReEvaluations.jsx
+│   │   │       ├── ReviewPapers.jsx
+│   │   │       ├── RubricLibrary.tsx
+│   │   │       └── UploadGrade.jsx
+│   │   └── setupProxy.js
+│   └── tailwind.config.js
+├── gen_filtered_tree_v2.py
+├── gen_tree.py
+├── gen_tree_filtered.py
+├── gen_tree_to_file.py
+├── gradesense-486407-d522e1ce3212.json
+├── kdwkd.md
+├── scripts/
+│   ├── gen_annotator.py
+│   └── verify_score_placement.py
+├── structure.txt
+├── temp_tree.txt
+├── tests/
+│   ├── __init__.py
+│   ├── analytics_test.py
+│   ├── backend_test.py
+│   ├── backend_test_comprehensive.py
+│   ├── backend_test_multiformat.py
+│   ├── conftest.py
+│   ├── force_reextract.py
+│   ├── objectid_grading_test.py
+│   ├── objectid_serialization_test.py
+│   ├── quick_test.py
+│   ├── student_upload_test.py
+│   ├── test_annotation_score_placement.py
+│   ├── test_answer_sheet_pipeline.py
+│   ├── test_background_grading.py
+│   ├── test_blueprint_utils.py
+│   ├── test_cascade_deletion.py
+│   ├── test_college_partial_grading_gate.py
+│   ├── test_duplicate_deletion.py
+│   ├── test_extraction_completeness.py
+│   ├── test_fix_verify.py
+│   ├── test_gcp_credentials.py
+│   ├── test_line_id_matching.py
+│   ├── test_line_ids.py
+│   ├── test_multifile_upload.py
+│   ├── test_ocr_provider_fallback.py
+│   ├── test_prompt_rules.py
+│   ├── test_question_mapper.py
+│   ├── test_question_mapping_segments.py
+│   ├── test_regrade_fix.py
+│   ├── test_score_normalization_completeness.py
+│   ├── test_segmentation_blocks.py
+│   ├── test_simple_pipeline.py
+│   ├── test_universal_continuity.py
+│   ├── test_upload_more_papers.py
+│   ├── test_upsc_policy_caps.py
+│   ├── test_vision_setup.py
+│   └── upload_grading_test.py
+├── tmp/
+└── verify_refactor.py

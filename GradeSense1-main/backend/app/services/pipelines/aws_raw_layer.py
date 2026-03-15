@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 from app.core.logging_config import logger
 from app.core.database import db
 
-from .s3_storage import build_raw_layer_key, upload_json_to_s3, download_json_from_s3
+from app.services.aws.s3_storage import build_raw_layer_key, upload_json_to_s3, download_json_from_s3
 
 
 async def save_raw_textract_layer(

@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 
 import boto3
 
-from app.layers.aws_pipeline.config import (
+from app.services.aws.config import (
     AWS_REGION,
     AWS_S3_BUCKET,
 )

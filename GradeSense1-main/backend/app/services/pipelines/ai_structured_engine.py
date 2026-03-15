@@ -17,12 +17,12 @@ from app.infrastructure.storage.gridfs_storage import fs
 from app.models.submission import QuestionScore
 from app.services.storage.gridfs_helpers import get_exam_question_paper_images
 
-from .alignment_service import ALIGNMENT_COVERAGE_GATE, align_answers
-from .cache import get_structure_cache, set_structure_cache
-from .extraction_service import extract_question_structure
-from .grading_interface import GRADING_CONTRACT_VERSION, grade_answers_with_contracts
-from .prompts import PROMPT_VERSION
-from .validation import (
+from app.services.pipelines.ai_structured.alignment_service import ALIGNMENT_COVERAGE_GATE, align_answers
+from app.utils.cache import get_structure_cache, set_structure_cache
+from app.services.pipelines.ai_extraction_service import extract_question_structure
+from app.services.pipelines.ai_structured.grading_interface import GRADING_CONTRACT_VERSION, grade_answers_with_contracts
+from app.services.llm.prompts.ai_structured_prompts import PROMPT_VERSION
+from app.layers.ai_structured.validation import (
     compute_attempt_rules,
     compute_effective_total,
     compute_or_groups_map,

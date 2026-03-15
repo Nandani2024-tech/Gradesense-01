@@ -6,9 +6,9 @@ from typing import Any, Dict, List
 
 from app.core.logging_config import logger
 
-from .s3_storage import upload_pdf_to_s3
-from .textract_client import start_document_analysis, poll_document_analysis
-from .text_reconstruction import rebuild_page_text, detect_anchors
+from app.services.aws.s3_storage import upload_pdf_to_s3
+from app.services.aws.textract_client import start_document_analysis, poll_document_analysis
+from app.services.pipelines.aws_text_reconstruction import rebuild_page_text, detect_anchors
 
 
 def extract_answer_pages(*, exam_id: str, pdf_bytes: bytes) -> Dict[str, Any]:

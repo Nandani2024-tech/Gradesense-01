@@ -1,6 +1,6 @@
 """AI-structured extraction/alignment/grading layer."""
 
-from .engine import (
+from app.services.pipelines.ai_structured_engine import (
     extract_and_persist,
     preflight_submission_mapping,
     grade_images_with_locked_blueprint,

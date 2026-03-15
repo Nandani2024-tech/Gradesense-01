@@ -3,12 +3,12 @@
 import asyncio
 from typing import Dict, Any, Optional
 
-from app.layers.grading_engine import GradingEngine
+from app.services.pipelines.grading_engine import GradingEngine
 from app.core.logging_config import logger
 
 from .config import DEFAULT_TOTAL_POSSIBLE, DEFAULT_TOTAL_AWARDED
 from app.services.extraction_pipeline import extract_answers_from_pdf as extract_answers
-from app.layers.grading_engine import IdentityManager
+from app.services.pipelines.grading_engine import IdentityManager
 from app.services.llm import LlmChat
 from app.services.llm.config import get_llm_api_key
 

@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 
 import boto3
 
-from app.layers.aws_pipeline.config import (
+from app.services.aws.config import (
     AWS_REGION,
     AWS_TEXTRACT_POLL_INTERVAL_SECS,
     AWS_TEXTRACT_POLL_TIMEOUT_SECS,
