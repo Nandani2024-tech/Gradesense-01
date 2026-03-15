@@ -14,12 +14,20 @@ from app.core.logging_config import logger
 from app.services.llm.config import get_llm_api_key
 from app.services.llm import ImageContent, LlmChat, UserMessage
 from app.utils.ocr_provider import get_ocr_provider
+from app.utils.ocr_provider.patterns import ANSWER_MCQ_RE, ANSWER_QUESTION_RE
+from app.layers.constants import (
+    ALIGNMENT_COVERAGE_GATE,
+    OBJECTIVE_OCR_MIN_CONF,
+    MCQ_FALLBACK_CONF,
+    WRITTEN_FALLBACK_CONF,
+    PRECISION_ROUNDING
+)
 
 from .cache import get_alignment_cache, set_alignment_cache
 from .prompts import build_alignment_prompt
 
 
-ALIGNMENT_COVERAGE_GATE = 0.7
+# ALIGNMENT_COVERAGE_GATE moved to constants.py
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -95,12 +103,11 @@ def _extract_objective_from_ocr(
 
     ocr = get_ocr_provider()
     extracted: Dict[int, Dict[str, Any]] = {}
-    pattern = re.compile(r"\b(?:Q\s*)?(\d{1,3})\s*[\).:\-]?\s*\(?\s*([A-H])\s*\)?\b", flags=re.IGNORECASE)
 
     for page_idx, img in enumerate(answer_images):
         try:
             # Use lenient thresholds for objective answers: we rely on strict pattern matching.
-            res = ocr.detect(img, min_conf=0.35, min_words=1, min_lines=1, allow_fallback=False)
+            res = ocr.detect(img, min_conf=OBJECTIVE_OCR_MIN_CONF, min_words=1, min_lines=1, allow_fallback=False)
             lines = [str(row.get("text") or "").strip() for row in (res.get("lines") or [])]
         except Exception as exc:
             logger.warning("Objective OCR fallback failed page=%s: %s", page_idx + 1, exc)
@@ -109,7 +116,7 @@ def _extract_objective_from_ocr(
         for line in lines:
             if not line:
                 continue
-            for match in pattern.finditer(line):
+            for match in ANSWER_MCQ_RE.finditer(line):
                 try:
                     qn = int(match.group(1))
                 except Exception:
@@ -123,7 +130,7 @@ def _extract_objective_from_ocr(
                     extracted[qn] = {
                         "answer_text": letter,
                         "page_index": page_idx,
-                        "confidence": 0.45,
+                        "confidence": MCQ_FALLBACK_CONF,
                         "detected_type": "mcq",
                     }
     if extracted:
@@ -249,15 +256,15 @@ def _compute_alignment_metrics(
     alignment_confidence_score = max(0.0, min(1.0, alignment_confidence_score))
 
     orphan_pages = sorted(set(range(page_count)) - used_pages) if page_count > 0 else []
-
+    
     return {
-        "coverage_ratio": round(coverage_ratio, 4),
-        "alignment_coverage": round(alignment_coverage, 4),
+        "coverage_ratio": round(coverage_ratio, PRECISION_ROUNDING),
+        "alignment_coverage": round(alignment_coverage, PRECISION_ROUNDING),
         "question_coverage_map": question_coverage_map,
         "unmapped_answers": unmapped_answers,
         "duplicate_answers": duplicate_answers,
         "orphan_pages": orphan_pages,
-        "alignment_confidence_score": round(alignment_confidence_score, 4),
+        "alignment_confidence_score": round(alignment_confidence_score, PRECISION_ROUNDING),
         "expected_questions": expected_questions,
         "answered_questions": answered_questions,
         "mapped_questions": mapped_questions,
@@ -320,7 +327,7 @@ async def _fallback_align_answers(
 
         page_chunks: Dict[int, List[str]] = defaultdict(list)
         for line in lines:
-            m = re.match(r"^(?:Q(?:uestion)?\s*)?(\d{1,3})[\).:-]?\s*(.*)$", line, flags=re.IGNORECASE)
+            m = ANSWER_QUESTION_RE.match(line)
             if m:
                 qn = int(m.group(1))
                 if qn in expected_set:
@@ -341,7 +348,7 @@ async def _fallback_align_answers(
                     "detected_type": "written" if chunk_lines else "blank",
                     "page_index": page_idx,
                     "bbox": None,
-                    "confidence": 0.35,
+                    "confidence": WRITTEN_FALLBACK_CONF,
                 }
             )
 

@@ -1,34 +1,30 @@
 import asyncio
 from app.core.logging_config import logger
-from app.services.config.task_constants import WORKER_POLL_INTERVAL
+from app.services.workers.task_claimers import claim_pending_task, claim_stale_tasks
+from app.services.workers.task_handlers.strict_visual_blueprint_handler import _process_strict_visual_exam
+from app.services.config.task_constants import WORKER_POLL_INTERVAL_SECONDS
 
 async def worker_loop():
     """
-    Main worker loop. Runs indefinitely, polling for background tasks.
+    Main worker loop that polls for new tasks and coordinates execution.
     """
-    logger.info("🔄 Task worker loop started (idle polling)")
-    
-    from app.services.workers.task_claimers import _claim_pending_strict_exam
-    from app.services.workers.task_handlers.strict_visual_blueprint_handler import _process_strict_visual_exam
-    from app.services.workers.task_handlers.grade_paper_handler import process_grade_paper_tasks
-    
+    logger.info("Starting background task worker...")
     while True:
         try:
-            exam = await _claim_pending_strict_exam()
-            if exam:
-                logger.info("STRICT_VISUAL_BLUEPRINT_WORKER_START exam_id=%s", exam.get("exam_id"))
-                await _process_strict_visual_exam(exam)
-                logger.info("STRICT_VISUAL_BLUEPRINT_WORKER_DONE exam_id=%s", exam.get("exam_id"))
-        except Exception as exc:
-            logger.error("STRICT_VISUAL_BLUEPRINT_WORKER_ERROR error=%s", exc, exc_info=True)
-            
-        # Process GRAD_PAPER tasks (Background Grading)
-        try:
-            # handle one task if available, then continue loop
-            processed = await process_grade_paper_tasks()
-            if processed:
+            # 1. Clean up stale/stuck tasks
+            await claim_stale_tasks()
+
+            # 2. Try to claim a new task
+            task = await claim_pending_task()
+            if task:
+                exam_id = task.get("exam_id")
+                logger.info(f"Processing task for exam {exam_id}")
+                await _process_strict_visual_exam(task)
+                # After processing, immediately check for the next task
                 continue
+
         except Exception as e:
-            logger.error(f"TaskWorker: Unhandled error in grade_paper flow: {e}", exc_info=True)
-            
-        await asyncio.sleep(WORKER_POLL_INTERVAL)
+            logger.error(f"Error in worker_loop: {e}", exc_info=True)
+
+        # Polling interval from canonical config
+        await asyncio.sleep(float(WORKER_POLL_INTERVAL_SECONDS))

@@ -9,6 +9,23 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.logging_config import logger
 from app.utils.ocr_provider import get_ocr_provider
+from app.utils.ocr_provider.models import OCRLine
+from app.utils.ocr_provider.patterns import (
+    QUESTION_ANCHOR_RE,
+    SUBPART_RE,
+    WORKING_NOTE_RE,
+    MARK_SPLIT_RE,
+    MARK_ONLY_RE
+)
+from app.layers.constants import (
+    VISUAL_HEADER_HEIGHT_RATIO,
+    MARGIN_MARK_CONF_THRESHOLD,
+    MARGIN_X_RATIO_MIN,
+    MARGIN_X_RATIO_MAX,
+    ANCHOR_Y_DISTANCE_THRESHOLD,
+    SECTION_MATH_Y_SPAN_RATIO,
+    PRECISION_ROUNDING
+)
 
 from app.layers.ai_structured.safe_numeric import parse_section_math_expression, safe_float, safe_int
 
@@ -22,22 +39,19 @@ def _parse_sub_label(token: str) -> Optional[str]:
     txt = str(token or "").strip().lower()
     if not txt:
         return None
-    # Keep subpart labels conservative to avoid capturing section headers
-    # like VII/VIII/IX/XI as subparts.
-    m = re.match(r"^\(?\s*([a-z]|i|ii|iii|iv|v)\s*\)?\s*[\).:-]?\s*$", txt, flags=re.IGNORECASE)
+    m = SUBPART_RE.match(txt)
     if not m:
         return None
-    return _norm_label(m.group(1))
+    # SUBPART_RE groups: 1=a-z, 2=a-z (other variant), 3=romans, 4=romans (other variant)
+    label = m.group(1) or m.group(2) or m.group(3) or m.group(4)
+    return _norm_label(label)
 
 
 def _parse_mark_split(text: str) -> Optional[List[float]]:
     t = str(text or "").strip()
     if not t:
         return None
-    m = re.match(
-        r"^\s*[\(\[\{]?\s*(\d+(?:\.\d+)?(?:\s*\+\s*\d+(?:\.\d+)?)+)\s*[\)\]\}]?\s*$",
-        t,
-    )
+    m = MARK_SPLIT_RE.match(t)
     if not m:
         return None
     parts = [safe_float(p, 0.0) for p in re.split(r"\s*\+\s*", m.group(1))]
@@ -50,7 +64,7 @@ def _parse_mark_value(text: str) -> Optional[float]:
     t = str(text or "").strip()
     if not t:
         return None
-    m = re.search(r"(\d+(?:\.\d+)?)\s*(?:marks?|mks?)\b", t, flags=re.IGNORECASE)
+    m = MARK_VALUE_RE.search(t)
     if m:
         mark = safe_float(m.group(1), 0.0)
         return mark if mark > 0 else None
@@ -58,7 +72,7 @@ def _parse_mark_value(text: str) -> Optional[float]:
     if split:
         total = round(float(sum(split)), 4)
         return total if total > 0 else None
-    m = re.match(r"^\s*[\(\[\{]?\s*(\d+(?:\.\d+)?)\s*[\)\]\}]?\s*$", t)
+    m = MARK_ONLY_RE.match(t)
     if m:
         mark = safe_float(m.group(1), 0.0)
         return mark if mark > 0 else None
@@ -73,7 +87,7 @@ def _question_number_from_line(text: str) -> Optional[int]:
         return None
     # Require an explicit question delimiter after number to avoid
     # treating expression numbers as question anchors.
-    m = re.match(r"^(?:q(?:uestion)?\s*)?(\d{1,3})(?!\d)\s*[\).:-]\s*", txt, flags=re.IGNORECASE)
+    m = QUESTION_ANCHOR_RE.match(txt)
     if not m:
         return None
     qn = safe_int(m.group(1), 0)
@@ -82,25 +96,6 @@ def _question_number_from_line(text: str) -> Optional[int]:
     return qn if qn > 0 else None
 
 
-@dataclass
-class OCRLine:
-    text: str
-    x1: float
-    y1: float
-    x2: float
-    y2: float
-    confidence: float
-    page_index: int
-    width: float
-    height: float
-
-    @property
-    def y_mid(self) -> float:
-        return (self.y1 + self.y2) / 2.0
-
-    @property
-    def bbox(self) -> List[float]:
-        return [self.x1, self.y1, self.x2, self.y2]
 
 
 def _collect_lines(images: List[str], *, force_fallback: bool = False) -> List[OCRLine]:
@@ -111,22 +106,9 @@ def _collect_lines(images: List[str], *, force_fallback: bool = False) -> List[O
         width = float(res.get("width") or 1.0)
         height = float(res.get("height") or 1.0)
         for row in (res.get("lines") or []):
-            text = str(row.get("text") or "").strip()
-            if not text:
-                continue
-            out.append(
-                OCRLine(
-                    text=text,
-                    x1=float(row.get("x1") or 0.0),
-                    y1=float(row.get("y1") or 0.0),
-                    x2=float(row.get("x2") or 0.0),
-                    y2=float(row.get("y2") or 0.0),
-                    confidence=safe_float(row.get("confidence", row.get("conf")), 0.0),
-                    page_index=page_index,
-                    width=width,
-                    height=height,
-                )
-            )
+            line = OCRLine.from_dict(row, page_index=page_index, width=width, height=height)
+            if line.text:
+                out.append(line)
     out.sort(key=lambda ln: (ln.page_index, ln.y1, ln.x1))
     return out
 
@@ -213,19 +195,15 @@ def _extract_question_and_subpart_entities(lines: List[OCRLine]) -> Tuple[List[D
 
 def _extract_margin_marks(lines: List[OCRLine], questions: List[Dict[str, Any]], subparts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     anchors: List[Tuple[int, Optional[str], int, float]] = []
-    for q in questions:
-        bbox = q.get("bbox") or [0, 0, 0, 0]
-        anchors.append((safe_int(q.get("number"), 0), None, safe_int(q.get("page"), 0), safe_float(bbox[1], 0.0)))
-    for sp in subparts:
-        bbox = sp.get("bbox") or [0, 0, 0, 0]
-        anchors.append((safe_int(sp.get("q"), 0), _norm_label(sp.get("label")), safe_int(sp.get("page"), 0), safe_float(bbox[1], 0.0)))
-
+    # ... (skipping unchanged code for brevity in target)
+    anchors.sort(key=lambda a: (a[2], a[3])) # This is just to find the context
+    
     margin_candidates: List[Dict[str, Any]] = []
     for ln in lines:
-        if safe_float(ln.confidence, 0.0) < 0.75:
+        if safe_float(ln.confidence, 0.0) < MARGIN_MARK_CONF_THRESHOLD:
             continue
         right_ratio = ln.x1 / max(1.0, ln.width)
-        if right_ratio < 0.62 and (ln.x2 / max(1.0, ln.width)) < 0.78:
+        if right_ratio < MARGIN_X_RATIO_MIN and (ln.x2 / max(1.0, ln.width)) < MARGIN_X_RATIO_MAX:
             continue
         mark = _parse_mark_value(ln.text)
         if mark is None:
@@ -255,7 +233,7 @@ def _extract_margin_marks(lines: List[OCRLine], questions: List[Dict[str, Any]],
         if not same_page:
             continue
         nearest = min(same_page, key=lambda m: abs(float(m["y_mid"]) - y))
-        if abs(float(nearest["y_mid"]) - y) > 48.0:
+        if abs(float(nearest["y_mid"]) - y) > ANCHOR_Y_DISTANCE_THRESHOLD:
             continue
         nearest["used"] = True
         out.append(
@@ -387,7 +365,7 @@ def _extract_section_math(lines: List[OCRLine]) -> List[Dict[str, Any]]:
 
             # Allow multi-line expressions; cap excessive vertical span.
             y_span = max(w["bbox"][3] for w in window) - min(w["bbox"][1] for w in window)
-            if y_span > (window[0]["line"].height * 0.2):
+            if y_span > (window[0]["line"].height * SECTION_MATH_Y_SPAN_RATIO):
                 continue
 
             expr_text = _join_raw_tokens(window)
@@ -529,7 +507,7 @@ def _extract_headers(lines: List[OCRLine]) -> Tuple[List[Dict[str, Any]], Option
         if not txt:
             continue
         low = txt.lower()
-        if ln.y1 <= ln.height * 0.22:
+        if ln.y1 <= ln.height * VISUAL_HEADER_HEIGHT_RATIO:
             if re.search(r"\b(section|part)\b", low):
                 headers.append(
                     {

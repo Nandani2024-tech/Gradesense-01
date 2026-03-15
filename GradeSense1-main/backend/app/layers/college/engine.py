@@ -11,10 +11,10 @@ from app.core.logging_config import logger
 from .alignment import align_packets_to_blueprint
 from .blueprint import assemble_blueprint
 from .contracts import CollegePipelineResult
-from .layout import detect_page_blocks
-from .normalization import normalize_answer_pages
+from app.layers.college.layout import detect_page_blocks
+from app.layers.college.normalization import normalize_answer_pages
 from .recovery import build_gate, compute_confidence_vectors, run_recovery
-from .region_ocr import extract_region_text
+from app.layers.universal.region_ocr import extract_region_text
 from .packet_builder import build_packets
 from .structuring import structure_aligned_answers
 

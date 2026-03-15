@@ -7,9 +7,10 @@ from app.layers.grading_engine import GradingEngine
 from app.core.logging_config import logger
 
 from .config import DEFAULT_TOTAL_POSSIBLE, DEFAULT_TOTAL_AWARDED
-from .extraction_adapter import extract_answers
-from .id_manager_adapter import IDManagerAdapter
-from .llm_adapter import get_llm_client
+from app.services.extraction_pipeline import extract_answers_from_pdf as extract_answers
+from app.layers.grading_engine import IdentityManager
+from app.services.llm import LlmChat
+from app.services.llm.config import get_llm_api_key
 
 async def grade_pdf(
     blueprint: Dict[str, Any],
@@ -45,7 +46,7 @@ async def grade_pdf(
         # ----------------------------
         # Step 3 — Normalize question IDs
         # ----------------------------
-        id_manager = IDManagerAdapter()
+        id_manager = IdentityManager()
         vision_answers = {}
 
         for qn, pkt in packets.items():
@@ -55,7 +56,8 @@ async def grade_pdf(
         # ----------------------------
         # Step 4 — Run grading engine
         # ----------------------------
-        llm_client = get_llm_client()
+        api_key = get_llm_api_key()
+        llm_client = LlmChat(api_key=api_key) if api_key else None
         engine = GradingEngine(llm_client=llm_client)
 
         result = await engine.run_production_grading(

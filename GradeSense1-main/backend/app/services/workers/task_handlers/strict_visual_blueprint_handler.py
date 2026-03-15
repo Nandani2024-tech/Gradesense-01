@@ -1,8 +1,10 @@
-from datetime import datetime, timezone
 from app.core.database import db
-
-def _iso_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from app.utils.datetime_utils import _iso_now
+from app.layers.constants import (
+    STATUS_SUCCESS,
+    STATUS_FAILED,
+    FILE_TYPE_QUESTION_PAPER,
+)
 
 async def _process_strict_visual_exam(exam: dict) -> None:
     exam_id = exam.get("exam_id")
@@ -10,7 +12,7 @@ async def _process_strict_visual_exam(exam: dict) -> None:
         return
 
     file_doc = await db.exam_files.find_one(
-        {"exam_id": exam_id, "file_type": "question_paper"},
+        {"exam_id": exam_id, "file_type": FILE_TYPE_QUESTION_PAPER},
         {"_id": 0, "strict_visual_blueprint_json": 1, "strict_visual_blueprint_validated": 1},
     )
     if file_doc and file_doc.get("strict_visual_blueprint_json"):
@@ -18,12 +20,13 @@ async def _process_strict_visual_exam(exam: dict) -> None:
         await db.exams.update_one(
             {"exam_id": exam_id},
             {"$set": {
-                "strict_visual_blueprint_status": "success" if validated else "failed",
+                "strict_visual_blueprint_status": STATUS_SUCCESS if validated else STATUS_FAILED,
                 "strict_visual_blueprint_warning": not validated,
             }},
         )
         return
-
+    
+    # ... rest of the function ...
     from app.services.storage.gridfs_helpers import get_exam_question_paper_images
     from app.layers.ai_structured.strict_visual_blueprint import (
         STRICT_VISUAL_BLUEPRINT_PROMPT_VERSION,
@@ -35,7 +38,7 @@ async def _process_strict_visual_exam(exam: dict) -> None:
         await db.exams.update_one(
             {"exam_id": exam_id},
             {"$set": {
-                "strict_visual_blueprint_status": "failed",
+                "strict_visual_blueprint_status": STATUS_FAILED,
                 "strict_visual_blueprint_warning": True,
             }},
         )
@@ -53,7 +56,7 @@ async def _process_strict_visual_exam(exam: dict) -> None:
         warning = True
 
     await db.exam_files.update_one(
-        {"exam_id": exam_id, "file_type": "question_paper"},
+        {"exam_id": exam_id, "file_type": FILE_TYPE_QUESTION_PAPER},
         {"$set": {
             "strict_visual_blueprint_json": payload,
             "strict_visual_blueprint_validated": valid,
@@ -67,7 +70,7 @@ async def _process_strict_visual_exam(exam: dict) -> None:
     await db.exams.update_one(
         {"exam_id": exam_id},
         {"$set": {
-            "strict_visual_blueprint_status": "success" if valid else "failed",
+            "strict_visual_blueprint_status": STATUS_SUCCESS if valid else STATUS_FAILED,
             "strict_visual_blueprint_warning": warning,
         }},
     )

@@ -12,7 +12,7 @@ from .anchor_detection import detect_anchors
 from .answer_mapping import map_answers
 from .global_span_builder import build_global_spans
 from .question_blueprint import build_blueprint_from_spans
-from .vision_ocr import ocr_pages
+from app.layers.universal.vision_ocr import ocr_pages
 
 
 def _phase_timer(phase_name: str, timings: Dict[str, float], start: float) -> None:

@@ -13,6 +13,10 @@ from app.services.answer_sheet_pipeline.ocr.region_ocr import run_region_ocr
 from app.services.answer_sheet_pipeline.packets.packet_builder import build_packets
 from app.services.answer_sheet_pipeline.packets.packet_aligner import align_packets_to_blueprint
 from app.services.answer_sheet_pipeline.structuring.accounting_structure import structure_accounting_answer
+from app.layers.constants import (
+    MAPPING_CONFIDENCE_THRESHOLD,
+    PRECISION_ROUNDING,
+)
 
 
 def run_answer_packet_pipeline(
@@ -64,11 +68,12 @@ def run_answer_packet_pipeline(
     for row in aligned:
         packet = row.get("packet")
         structured = structure_accounting_answer(packet)
+        # Use canonical threshold and rounding
         conf = float(packet.get("mapping_confidence", 0.0) or 0.0) if packet else 0.0
         issues: List[str] = []
         if not packet:
             issues.append("missing_packet")
-        elif conf < 0.6:
+        elif conf < MAPPING_CONFIDENCE_THRESHOLD:
             issues.append("low_mapping_confidence")
         if structured.get("totals"):
             for t in structured["totals"]:
@@ -80,7 +85,7 @@ def run_answer_packet_pipeline(
                 "question_id": int(row["question_id"]),
                 "expected": row["expected"],
                 "student_answer_structured": structured,
-                "confidence": round(conf, 4),
+                "confidence": round(conf, PRECISION_ROUNDING),
                 "issues": sorted(set(issues)),
                 "aligned_by": row.get("aligned_by"),
                 "packet": packet,

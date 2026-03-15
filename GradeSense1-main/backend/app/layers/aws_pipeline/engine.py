@@ -13,10 +13,10 @@ from app.utils.blueprint import compute_blueprint_health
 
 from PIL import Image
 
-from .s3_storage import upload_pdf_to_s3
-from .textract_client import start_document_analysis, poll_document_analysis
+from app.layers.aws_pipeline.s3_storage import upload_pdf_to_s3
+from app.layers.aws_pipeline.textract_client import start_document_analysis, poll_document_analysis
 from .text_reconstruction import rebuild_page_text
-from .layout_segmentation import build_span_graph
+from app.layers.college.layout_segmentation import build_span_graph
 from .raw_layer import save_raw_textract_layer, load_raw_textract_layer
 from .blueprint_builder import build_span_evidence, build_blueprint_from_spans
 from .answer_extractor import extract_answer_pages

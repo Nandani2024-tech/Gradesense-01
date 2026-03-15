@@ -9,6 +9,23 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.logging_config import logger
 from app.utils.ocr_provider import get_ocr_provider
+from app.utils.ocr_provider.models import OCRLine
+from app.utils.ocr_provider.patterns import (
+    QUESTION_ANCHOR_RE,
+    SUBPART_RE,
+    WORKING_NOTE_RE,
+    MARK_VALUE_RE,
+    MARK_SPLIT_RE,
+    MARK_ONLY_RE
+)
+from ..constants import (
+    VISUAL_HEADER_HEIGHT_RATIO,
+    MARGIN_MARK_CONF_THRESHOLD,
+    MARGIN_X_RATIO_MIN,
+    MARGIN_X_RATIO_MAX,
+    ANCHOR_Y_DISTANCE_THRESHOLD,
+    PRECISION_ROUNDING
+)
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -41,7 +58,7 @@ def _key(qn: int, sub_label: Optional[str]) -> Tuple[int, Optional[str]]:
 
 
 def _evidence(page_index: int, bbox: List[float], confidence: float) -> List[Any]:
-    return [int(page_index), list(bbox), round(float(confidence), 4)]
+    return [int(page_index), list(bbox), round(float(confidence), PRECISION_ROUNDING)]
 
 
 def _extract_mark_value(text: str) -> Optional[float]:
@@ -50,12 +67,12 @@ def _extract_mark_value(text: str) -> Optional[float]:
         return None
 
     # explicit "... marks" is strongest.
-    m = re.search(r"(\d+(?:\.\d+)?)\s*(?:marks?|mks?|m)\b", t, flags=re.IGNORECASE)
+    m = MARK_VALUE_RE.search(t)
     if m:
         return _to_float(m.group(1), 0.0)
 
-    # Bracketed/standalone margin formats: "(5)", "[2]", "{3}", "<4>"
-    m = re.match(r"^\s*[\(\[\{\<]?\s*(\d+(?:\.\d+)?)\s*[\)\]\}\>]?\s*$", t)
+    # Standalone margin formats: (5), [2], etc.
+    m = MARK_ONLY_RE.match(t)
     if m:
         return _to_float(m.group(1), 0.0)
 
@@ -72,10 +89,10 @@ def _parse_sub_label(prefix: str) -> Optional[str]:
     if not txt:
         return None
 
-    # "(a)", "a.", "(ii)", "ii)"
-    m = re.match(r"^\(?\s*([a-z]|[ivxlcdm]{1,5})\s*\)?\s*[\).:-]?\s*$", txt, flags=re.IGNORECASE)
+    m = SUBPART_RE.match(txt)
     if m:
-        return _norm_sub_label(m.group(1))
+        label = m.group(1) or m.group(2) or m.group(3) or m.group(4)
+        return _norm_sub_label(label)
     return None
 
 
@@ -87,31 +104,12 @@ def _question_number_from_line(text: str) -> Optional[int]:
     if re.match(r"^\s*\d{1,3}\s*[x×*]\s*\d", txt, flags=re.IGNORECASE):
         return None
     # Canonical question numbering: 1., (1), Q1, Question 1, [1]
-    m = re.match(r"^(?:q(?:uestion)?\s*)?[\(\[\{]?\s*(\d{1,3})(?!\d)\s*[\]\}\)]?\s*[\).:-]?\s*", txt, flags=re.IGNORECASE)
+    m = QUESTION_ANCHOR_RE.match(txt)
     if not m:
         return None
     return _to_int(m.group(1), 0)
 
 
-@dataclass
-class OCRLine:
-    text: str
-    x1: float
-    y1: float
-    x2: float
-    y2: float
-    confidence: float
-    page_index: int
-    width: float
-    height: float
-
-    @property
-    def y_mid(self) -> float:
-        return (self.y1 + self.y2) / 2.0
-
-    @property
-    def bbox(self) -> List[float]:
-        return [self.x1, self.y1, self.x2, self.y2]
 
 
 def _collect_ocr_lines(images: List[str]) -> List[OCRLine]:
@@ -122,22 +120,9 @@ def _collect_ocr_lines(images: List[str]) -> List[OCRLine]:
         width = float(res.get("width") or 1.0)
         height = float(res.get("height") or 1.0)
         for row in (res.get("lines") or []):
-            text = str(row.get("text") or "").strip()
-            if not text:
-                continue
-            out.append(
-                OCRLine(
-                    text=text,
-                    x1=float(row.get("x1") or 0.0),
-                    y1=float(row.get("y1") or 0.0),
-                    x2=float(row.get("x2") or 0.0),
-                    y2=float(row.get("y2") or 0.0),
-                    confidence=_to_float(row.get("confidence", row.get("conf")), 0.0),
-                    page_index=page_index,
-                    width=width,
-                    height=height,
-                )
-            )
+            line = OCRLine.from_dict(row, page_index=page_index, width=width, height=height)
+            if line.text:
+                out.append(line)
     out.sort(key=lambda ln: (ln.page_index, ln.y1, ln.x1))
     return out
 
@@ -148,7 +133,7 @@ def _detect_header_total(lines: List[OCRLine]) -> Tuple[Optional[float], Optiona
         # Header must be near top of first page.
         if ln.page_index != 0:
             continue
-        if ln.y1 > (ln.height * 0.24):
+        if ln.y1 > (ln.height * VISUAL_HEADER_HEIGHT_RATIO):
             continue
 
         txt = ln.text.lower()
@@ -305,12 +290,12 @@ def _find_question_anchors(lines: List[OCRLine], valid_questions: set[int]) -> L
 
 def _find_right_margin_mark_candidates(lines: List[OCRLine]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
-    min_conf = 0.78
+    min_conf = MARGIN_MARK_CONF_THRESHOLD
     for ln in lines:
         if _to_float(ln.confidence, 0.0) < min_conf:
             continue
         right_ratio = ln.x1 / max(ln.width, 1.0)
-        if right_ratio < 0.62 and (ln.x2 / max(ln.width, 1.0)) < 0.78:
+        if right_ratio < MARGIN_X_RATIO_MIN and (ln.x2 / max(ln.width, 1.0)) < MARGIN_X_RATIO_MAX:
             continue
         mark = _extract_mark_value(ln.text)
         if mark is None:
@@ -616,7 +601,7 @@ async def resolve_visual_marks(
         if not nearby:
             continue
         nearest = min(nearby, key=lambda c: abs(float(c["y_mid"]) - y))
-        y_threshold = 45.0
+        y_threshold = ANCHOR_Y_DISTANCE_THRESHOLD
         if abs(float(nearest["y_mid"]) - y) > y_threshold:
             continue
 

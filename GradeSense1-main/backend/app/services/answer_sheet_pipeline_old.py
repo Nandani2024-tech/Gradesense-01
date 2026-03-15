@@ -41,25 +41,28 @@ from app.core.logging_config import logger
 from app.utils.ocr_provider import get_ocr_provider
 
 
-ANCHOR_LEFT_RATIO = float(os.getenv("ANCHOR_LEFT_RATIO", "0.38"))
-REGION_OCR_CONF_MIN = float(os.getenv("REGION_OCR_CONF_MIN", "0.52"))
-REGION_OCR_VISION_CONF_MIN = float(os.getenv("REGION_OCR_VISION_CONF_MIN", "0.45"))
+from app.layers.constants import (
+    ANCHOR_LEFT_RATIO as DEFAULT_ANCHOR_LEFT_RATIO,
+    REGION_OCR_CONF_MIN as DEFAULT_REGION_OCR_CONF_MIN,
+    REGION_OCR_VISION_CONF_MIN as DEFAULT_REGION_OCR_VISION_CONF_MIN,
+    PDF_IMAGE_BATCH_PAGES as DEFAULT_PDF_IMAGE_BATCH_PAGES,
+    PDF_IMAGE_JPEG_QUALITY as DEFAULT_PDF_IMAGE_JPEG_QUALITY,
+)
+from app.utils.ocr_provider.patterns import (
+    QUESTION_ANCHOR_RE,
+    SUBPART_RE,
+    MARKS_RE,
+    WORKING_NOTE_RE,
+)
+
+ANCHOR_LEFT_RATIO = float(os.getenv("ANCHOR_LEFT_RATIO", str(DEFAULT_ANCHOR_LEFT_RATIO)))
+REGION_OCR_CONF_MIN = float(os.getenv("REGION_OCR_CONF_MIN", str(DEFAULT_REGION_OCR_CONF_MIN)))
+REGION_OCR_VISION_CONF_MIN = float(os.getenv("REGION_OCR_VISION_CONF_MIN", str(DEFAULT_REGION_OCR_VISION_CONF_MIN)))
 PIPELINE_ENABLED = os.getenv("ANSWER_PACKET_PIPELINE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
-PDF_IMAGE_BATCH_PAGES = int(os.getenv("PDF_IMAGE_BATCH_PAGES", "4"))
-PDF_IMAGE_JPEG_QUALITY = int(os.getenv("PDF_IMAGE_JPEG_QUALITY", "82"))
+PDF_IMAGE_BATCH_PAGES = int(os.getenv("PDF_IMAGE_BATCH_PAGES", str(DEFAULT_PDF_IMAGE_BATCH_PAGES)))
+PDF_IMAGE_JPEG_QUALITY = int(os.getenv("PDF_IMAGE_JPEG_QUALITY", str(DEFAULT_PDF_IMAGE_JPEG_QUALITY)))
 PDF_IMAGE_NORMALIZE = os.getenv("PDF_IMAGE_NORMALIZE", "true").lower() in ("1", "true", "yes", "on")
 
-# anchor regex: capture a question number (with optional leading Q/q and
-# any zero padding) followed by a punctuation or whitespace.  We deliberately
-# avoid the ^ anchor here so that `.search` can find a number anywhere in the
-# region; student writing often places the number after text.
-QUESTION_ANCHOR_RE = re.compile(r"(?:q\.?\s*)?0*(\d{1,3})(?:[\).:]|\b)", re.IGNORECASE)
-SUBPART_RE = re.compile(
-    r"^\s*(?:[\(\[]\s*([a-z])\s*[\)\]]|([a-z])[\).]|[\(\[]\s*(i{1,4}|v|vi{0,3}|ix|x)\s*[\)\]]|(i{1,4}|v|vi{0,3}|ix|x)[\).])",
-    re.IGNORECASE,
-)
-MARKS_RE = re.compile(r"\(?\b(\d+(?:\.\d+)?)\s*(?:marks?|m)\b\)?", re.IGNORECASE)
-WORKING_NOTE_RE = re.compile(r"\b(?:working\s*note|wn|note|calculation|working)\b", re.IGNORECASE)
 TO_ACCOUNT_RE = re.compile(r"^\s*to\s+(.+?)(?:a\/?c|account)\b", re.IGNORECASE)
 BY_ACCOUNT_RE = re.compile(r"^\s*by\s+(.+?)(?:a\/?c|account)\b", re.IGNORECASE)
 AMOUNT_RE = re.compile(r"(\d[\d,]*(?:\.\d+)?)\s*$")
