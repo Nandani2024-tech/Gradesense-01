@@ -7,22 +7,8 @@ from typing import Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-QUESTION_TYPE_LITERAL = Literal[
-    "mcq",
-    "fill_blank",
-    "very_short",
-    "short",
-    "long",
-    "passage",
-    "writing",
-    "letter",
-    "essay",
-    "short_answer",
-    "descriptive",
-    "descriptive_choice",
-    "passage_subparts",
-    "or_group",
-]
+from app.constants.layers import QUESTION_TYPE_LITERAL
+
 
 
 ANSWER_TYPE_LITERAL = Literal["mcq", "written", "blank"]

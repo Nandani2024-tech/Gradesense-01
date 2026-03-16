@@ -18,10 +18,15 @@ def enforce_upsc_strict_caps(
     if not is_upsc or grading_mode != "strict":
         return scores
 
-    q_max_map = {q.get("question_number"): float(q.get("max_marks") or 0) for q in questions}
+    q_max_map = {
+        q.get("question_number"): float(q.get("max_marks") or 0)
+        for q in questions
+    }
     for score in scores:
         q_max = q_max_map.get(score.question_number, 0)
-        obtained = score.obtained_marks if score.obtained_marks is not None else 0
+        obtained = (
+            score.obtained_marks if score.obtained_marks is not None else 0
+        )
         if q_max > 0:
             # Avoid zeroing low-mark questions (1-2 marks) in strict mode.
             if q_max <= 2:

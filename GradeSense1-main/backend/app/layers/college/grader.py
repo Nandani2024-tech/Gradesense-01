@@ -39,10 +39,16 @@ def validate_grading_response(
 ) -> List[Dict[str, Any]]:
     """Validate full response schema and return normalized per-question grades."""
     parsed = parse_tolerant_json(llm_response_text)
-    raw_rows = parsed.get("grades") if isinstance(parsed.get("grades"), list) else []
+    raw_rows = []
+    if isinstance(parsed, dict):
+        grades = parsed.get("grades")
+        if isinstance(grades, list):
+            raw_rows = grades
 
     by_q = {}
     for row in raw_rows:
+        if not isinstance(row, dict):
+            continue
         qid = to_int(row.get("question_id"), -1)
         if qid < 0:
             continue

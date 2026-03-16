@@ -1,5 +1,7 @@
 # Canonical Layer Constants
 
+from typing import Literal
+
 # Confidence thresholds
 MAPPING_CONFIDENCE_THRESHOLD = 0.6
 BLUEPRINT_MATCH_THRESHOLD = 0.8
@@ -11,6 +13,23 @@ PRECISION_ROUNDING = 4
 DEFAULT_QUESTION_TYPE = "descriptive"
 QUESTION_TYPE_MCQ = "mcq"
 QUESTION_TYPE_THEORY = "theory"
+
+QUESTION_TYPE_LITERAL = Literal[
+    "mcq",
+    "fill_blank",
+    "very_short",
+    "short",
+    "long",
+    "passage",
+    "writing",
+    "letter",
+    "essay",
+    "short_answer",
+    "descriptive",
+    "descriptive_choice",
+    "passage_subparts",
+    "or_group",
+]
 
 # Exam Meta
 STRICT_EXAM_TYPE_REGEX = "^college$"
@@ -43,3 +62,6 @@ ALIGNMENT_COVERAGE_GATE = 0.7      # Min coverage ratio for alignment success
 OBJECTIVE_OCR_MIN_CONF = 0.35      # Min confidence for objective OCR fallback
 MCQ_FALLBACK_CONF = 0.45           # Default confidence for MCQ OCR detection
 WRITTEN_FALLBACK_CONF = 0.35       # Default confidence for written OCR fallback
+
+# Subpart Mark Sources
+_EXPLICIT_SOURCES = {"margin", "section_math", "instruction"}
