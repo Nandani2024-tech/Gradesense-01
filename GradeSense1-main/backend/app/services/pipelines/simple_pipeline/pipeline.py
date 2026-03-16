@@ -20,10 +20,12 @@ except ImportError:
 
     _HAS_FULL_ANSWER_PIPE = False
 
-from app.layers.constants import (
-    PRECISION_ROUNDING,
+from app.constants.layers import (
     DEFAULT_QUESTION_TYPE,
+    STATUS_FAILED,
+    STATUS_SUCCESS,
     QUESTION_TYPE_MCQ,
+    PRECISION_ROUNDING,
 )
 
 def run_simple_pipeline(

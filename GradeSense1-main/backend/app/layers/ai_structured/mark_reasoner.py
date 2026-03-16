@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.logging_config import logger
 
-from app.utils.safe_numeric import parse_section_math_expression, safe_float, safe_int
+from app.utils.safe_numeric import parse_section_math_expression, to_float, to_int
 from .validation import normalize_structure_payload
 
 
@@ -35,7 +35,7 @@ def _parse_margin_split_text(value: Any) -> Optional[List[float]]:
     )
     if not m:
         return None
-    parts = [safe_float(p, 0.0) for p in re.split(r"\s*\+\s*", m.group(1))]
+    parts = [to_float(p, 0.0) for p in re.split(r"\s*\+\s*", m.group(1))]
     if len(parts) < 2 or any(p <= 0 for p in parts):
         return None
     return [round(p, 4) for p in parts]
@@ -52,21 +52,21 @@ def _extract_instruction_mark(*texts: Optional[str]) -> Optional[float]:
         # Pattern 1: explicit "marks" (e.g., "for 5 marks", "5 marks", "5 mks")
         m = re.search(r"\b(?:in|for|of)?\s*(\d+(?:\.\d+)?)\s*(?:marks?|mks?|m)\b", txt, flags=re.IGNORECASE)
         if m:
-            val = safe_float(m.group(1), 0.0)
+            val = to_float(m.group(1), 0.0)
             if val > 0:
                 return round(val, 4)
         
         # Pattern 2: bracketed number at the end (e.g., "Describe ... (5)")
         m = re.search(r"[\(\[\{]\s*(\d+(?:\.\d+)?)\s*[\)\]\}]\s*$", txt)
         if m:
-            val = safe_float(m.group(1), 0.0)
+            val = to_float(m.group(1), 0.0)
             if val > 0:
                 return round(val, 4)
 
         # Pattern 3: dot leader or spacing followed by number at end (e.g., "Question ... .... 10")
         m = re.search(r"(?:[\.\s]{3,}|\t)(\d+(?:\.\d+)?)\s*$", txt)
         if m:
-            val = safe_float(m.group(1), 0.0)
+            val = to_float(m.group(1), 0.0)
             if val > 0:
                 return round(val, 4)
                 
@@ -76,7 +76,7 @@ def _extract_instruction_mark(*texts: Optional[str]) -> Optional[float]:
 def _compute_effective_total(questions: List[Dict[str, Any]]) -> float:
     total = 0.0
     for q in questions:
-        marks = max(0.0, safe_float(q.get("marks"), 0.0))
+        marks = max(0.0, to_float(q.get("marks"), 0.0))
         total += marks
     return round(float(total), 4)
 
@@ -96,14 +96,14 @@ def _redistribute_subparts_only(question: Dict[str, Any]) -> bool:
     subparts = list(question.get("subquestions") or [])
     if not subparts:
         return False
-    total = max(0.0, safe_float(question.get("marks"), 0.0))
+    total = max(0.0, to_float(question.get("marks"), 0.0))
     if total <= 0:
         return False
     explicit_idxs: List[int] = []
     explicit_sum = 0.0
     for idx, sq in enumerate(subparts):
         src = _norm_source(sq.get("mark_source"))
-        val = max(0.0, safe_float(sq.get("marks"), 0.0))
+        val = max(0.0, to_float(sq.get("marks"), 0.0))
         if val > 0 and src in _EXPLICIT_SOURCES:
             explicit_idxs.append(idx)
             explicit_sum += val
@@ -119,11 +119,11 @@ def _redistribute_subparts_only(question: Dict[str, Any]) -> bool:
             subparts[idx]["mark_source"] = _norm_source(question.get("mark_source"))
     # Adjust last for rounding drift.
     if missing:
-        current_sum = sum(max(0.0, safe_float(sq.get("marks"), 0.0)) for sq in subparts)
+        current_sum = sum(max(0.0, to_float(sq.get("marks"), 0.0)) for sq in subparts)
         diff = round(float(total - current_sum), 4)
         if abs(diff) > 1e-6:
             last = missing[-1]
-            subparts[last]["marks"] = round(float(max(0.0, safe_float(subparts[last].get("marks"), 0.0) + diff)), 4)
+            subparts[last]["marks"] = round(float(max(0.0, to_float(subparts[last].get("marks"), 0.0) + diff)), 4)
     question["subquestions"] = subparts
     return True
 
@@ -133,7 +133,7 @@ def _build_or_groups(questions: List[Dict[str, Any]], visual_entities: Optional[
     edges: List[Tuple[int, int]] = []
     ai_groups: Dict[str, List[int]] = defaultdict(list)
     for q in questions:
-        qn = safe_int(q.get("number"), 0)
+        qn = to_int(q.get("number"), 0)
         gid = str(q.get("or_group_id") or "").strip()
         if qn > 0 and gid:
             ai_groups[gid].append(qn)
@@ -145,8 +145,8 @@ def _build_or_groups(questions: List[Dict[str, Any]], visual_entities: Optional[
     for row in (visual_entities or {}).get("or_connectors") or []:
         if not isinstance(row, dict):
             continue
-        q1 = safe_int(row.get("q1"), 0)
-        q2 = safe_int(row.get("q2"), 0)
+        q1 = to_int(row.get("q1"), 0)
+        q2 = to_int(row.get("q2"), 0)
         if q1 > 0 and q2 > 0 and q1 != q2:
             edges.append((min(q1, q2), max(q1, q2)))
 
@@ -193,9 +193,9 @@ def _resolve_section_math_blocks(structure: Dict[str, Any], visual_entities: Opt
     for row in (visual_entities or {}).get("section_math") or []:
         if not isinstance(row, dict):
             continue
-        count = safe_int(row.get("count"), 0)
-        per = safe_float(row.get("per"), 0.0)
-        total = safe_float(row.get("total"), 0.0)
+        count = to_int(row.get("count"), 0)
+        per = to_float(row.get("per"), 0.0)
+        total = to_float(row.get("total"), 0.0)
         if count <= 0 or per <= 0 or total <= 0:
             continue
         blocks.append(
@@ -203,11 +203,11 @@ def _resolve_section_math_blocks(structure: Dict[str, Any], visual_entities: Opt
                 "count": count,
                 "per": round(per, 4),
                 "total": round(total, 4),
-                "page": safe_int(row.get("page"), 0),
+                "page": to_int(row.get("page"), 0),
                 "range": row.get("range"),
                 "expr": str(row.get("expr") or f"{count} x {per} = {total}"),
                 "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
-                "confidence": safe_float(row.get("confidence"), 0.0),
+                "confidence": to_float(row.get("confidence"), 0.0),
             }
         )
 
@@ -220,16 +220,16 @@ def _resolve_section_math_blocks(structure: Dict[str, Any], visual_entities: Opt
             if parsed:
                 count, per, total = parsed
             else:
-                count = safe_int(block.get("question_count"), 0)
-                per = safe_float(block.get("per_question_marks"), 0.0)
-                total = safe_float(block.get("total_marks"), 0.0)
+                count = to_int(block.get("question_count"), 0)
+                per = to_float(block.get("per_question_marks"), 0.0)
+                total = to_float(block.get("total_marks"), 0.0)
             if count <= 0 or per <= 0 or total <= 0:
                 continue
             range_raw = block.get("range")
             range_obj = None
             if isinstance(range_raw, dict):
-                start = safe_int(range_raw.get("start"), 0)
-                end = safe_int(range_raw.get("end"), 0)
+                start = to_int(range_raw.get("start"), 0)
+                end = to_int(range_raw.get("end"), 0)
                 if start > 0 and end >= start:
                     range_obj = {"start": start, "end": end}
             blocks.append(
@@ -237,33 +237,33 @@ def _resolve_section_math_blocks(structure: Dict[str, Any], visual_entities: Opt
                     "count": count,
                     "per": round(per, 4),
                     "total": round(total, 4),
-                    "page": safe_int(block.get("page_index"), 0),
+                    "page": to_int(block.get("page_index"), 0),
                     "range": range_obj,
                     "expr": str(block.get("expression") or f"{count} x {per} = {total}"),
                     "bbox": [0, 0, 0, 0],
-                    "confidence": safe_float(block.get("confidence"), 0.0),
+                    "confidence": to_float(block.get("confidence"), 0.0),
                 }
             )
-    blocks.sort(key=lambda b: (safe_int(b.get("page"), 0), str(b.get("expr") or "")))
+    blocks.sort(key=lambda b: (to_int(b.get("page"), 0), str(b.get("expr") or "")))
     return blocks
 
 
 def _infer_start_question_from_visual(row: Dict[str, Any], visual_entities: Optional[Dict[str, Any]]) -> Optional[int]:
     if not isinstance(row, dict):
         return None
-    page = safe_int(row.get("page"), 0)
+    page = to_int(row.get("page"), 0)
     bbox = row.get("bbox") or [0, 0, 0, 0]
-    y_after = safe_float(bbox[3] if len(bbox) >= 4 else 0.0, 0.0)
+    y_after = to_float(bbox[3] if len(bbox) >= 4 else 0.0, 0.0)
     anchors: List[Tuple[int, float, int]] = []
     for q in (visual_entities or {}).get("questions") or []:
         if not isinstance(q, dict):
             continue
-        qn = safe_int(q.get("number"), 0)
+        qn = to_int(q.get("number"), 0)
         if qn <= 0:
             continue
-        qpage = safe_int(q.get("page"), 0)
+        qpage = to_int(q.get("page"), 0)
         qbbox = q.get("bbox") or [0, 0, 0, 0]
-        qy = safe_float(qbbox[1] if len(qbbox) >= 2 else 0.0, 0.0)
+        qy = to_float(qbbox[1] if len(qbbox) >= 2 else 0.0, 0.0)
         anchors.append((qpage, qy, qn))
     anchors.sort(key=lambda it: (it[0], it[1], it[2]))
     for qpage, qy, qn in anchors:
@@ -280,14 +280,14 @@ def _build_section_math_rules(structure: Dict[str, Any], visual_entities: Option
     for row in (visual_entities or {}).get("section_math") or []:
         if not isinstance(row, dict):
             continue
-        count = safe_int(row.get("count"), 0)
-        per = safe_float(row.get("per"), 0.0)
-        total = safe_float(row.get("total"), 0.0)
+        count = to_int(row.get("count"), 0)
+        per = to_float(row.get("per"), 0.0)
+        total = to_float(row.get("total"), 0.0)
         if count <= 0 or per <= 0 or total <= 0:
             continue
-        start_q = safe_int(((row.get("range") or {}).get("start")), 0)
+        start_q = to_int(((row.get("range") or {}).get("start")), 0)
         inferred = _infer_start_question_from_visual(row, visual_entities)
-        inferred_q = safe_int(inferred, 0)
+        inferred_q = to_int(inferred, 0)
         if start_q <= 0:
             start_q = inferred_q
         elif inferred_q > 0 and inferred_q != start_q:
@@ -300,8 +300,8 @@ def _build_section_math_rules(structure: Dict[str, Any], visual_entities: Option
             "marks_per_question": round(per, 4),
             "total": round(total, 4),
             "expr": str(row.get("expr") or f"{count} x {round(per, 4)} = {round(total, 4)}"),
-            "source_page": safe_int(row.get("page"), 0),
-            "confidence": safe_float(row.get("confidence"), 0.0),
+            "source_page": to_int(row.get("page"), 0),
+            "confidence": to_float(row.get("confidence"), 0.0),
             "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
         }
         rules.append(rule)
@@ -311,7 +311,7 @@ def _build_section_math_rules(structure: Dict[str, Any], visual_entities: Option
             count,
             round(per, 4),
             round(total, 4),
-            safe_int(row.get("page"), 0),
+            to_int(row.get("page"), 0),
         )
 
     if not rules:
@@ -322,12 +322,12 @@ def _build_section_math_rules(structure: Dict[str, Any], visual_entities: Option
             if parsed:
                 count, per, total = parsed
             else:
-                count = safe_int(block.get("question_count"), 0)
-                per = safe_float(block.get("per_question_marks"), 0.0)
-                total = safe_float(block.get("total_marks"), 0.0)
+                count = to_int(block.get("question_count"), 0)
+                per = to_float(block.get("per_question_marks"), 0.0)
+                total = to_float(block.get("total_marks"), 0.0)
             if count <= 0 or per <= 0 or total <= 0:
                 continue
-            start_q = safe_int(((block.get("range") or {}).get("start")), 0)
+            start_q = to_int(((block.get("range") or {}).get("start")), 0)
             if start_q <= 0:
                 continue
             rule = {
@@ -336,8 +336,8 @@ def _build_section_math_rules(structure: Dict[str, Any], visual_entities: Option
                 "marks_per_question": round(per, 4),
                 "total": round(total, 4),
                 "expr": str(block.get("expression") or f"{count} x {round(per, 4)} = {round(total, 4)}"),
-                "source_page": safe_int(block.get("page_index"), 0),
-                "confidence": safe_float(block.get("confidence"), 0.0),
+                "source_page": to_int(block.get("page_index"), 0),
+                "confidence": to_float(block.get("confidence"), 0.0),
                 "bbox": [0, 0, 0, 0],
             }
             rules.append(rule)
@@ -347,9 +347,9 @@ def _build_section_math_rules(structure: Dict[str, Any], visual_entities: Option
                 count,
                 round(per, 4),
                 round(total, 4),
-                safe_int(block.get("page_index"), 0),
+                to_int(block.get("page_index"), 0),
             )
-    rules.sort(key=lambda r: (safe_int(r.get("source_page"), 0), safe_int(r.get("start_question"), 0)))
+    rules.sort(key=lambda r: (to_int(r.get("source_page"), 0), to_int(r.get("start_question"), 0)))
     return rules
 
 
@@ -364,15 +364,15 @@ def _ensure_section_rule_anchor_coverage(
     for row in anchors:
         if not isinstance(row, dict):
             continue
-        qn = safe_int(row.get("number"), 0)
+        qn = to_int(row.get("number"), 0)
         if qn <= 0 or qn in by_num:
             continue
         by_num[qn] = row
 
     synthetic_added = 0
     for rule in section_rules:
-        start_q = safe_int(rule.get("start_question"), 0)
-        count = safe_int(rule.get("count"), 0)
+        start_q = to_int(rule.get("start_question"), 0)
+        count = to_int(rule.get("count"), 0)
         if start_q <= 0 or count <= 0:
             continue
         expected = list(range(start_q, start_q + count))
@@ -383,7 +383,7 @@ def _ensure_section_rule_anchor_coverage(
             anchor = {
                 "number": qn,
                 "bbox": list(rule.get("bbox") or [0, 0, 0, 0]),
-                "page": safe_int(rule.get("source_page"), 0),
+                "page": to_int(rule.get("source_page"), 0),
                 "confidence": 0.2,
                 "source": "synthetic",
             }
@@ -392,7 +392,7 @@ def _ensure_section_rule_anchor_coverage(
             synthetic_added += 1
 
     if synthetic_added:
-        anchors.sort(key=lambda r: safe_int(r.get("number"), 0))
+        anchors.sort(key=lambda r: to_int(r.get("number"), 0))
         visual_entities["questions"] = anchors
     return synthetic_added
 
@@ -425,7 +425,7 @@ def _log_anchor_merge_result(visual_entities: Optional[Dict[str, Any]]) -> None:
 
 
 def _section_rule_priority(rule: Dict[str, Any]) -> int:
-    count = safe_int(rule.get("count"), 0)
+    count = to_int(rule.get("count"), 0)
     if count <= 0:
         return 0
     if count == 1:
@@ -445,10 +445,10 @@ def _reconcile_section_rule_starts(section_rules: List[Dict[str, Any]], qnums: L
     reconciled: List[Dict[str, Any]] = []
 
     for rule in section_rules:
-        count = safe_int(rule.get("count"), 0)
+        count = to_int(rule.get("count"), 0)
         if count <= 0:
             continue
-        start = safe_int(rule.get("start_question"), 0)
+        start = to_int(rule.get("start_question"), 0)
 
         if cursor_idx >= len(qnums_sorted):
             reconciled.append(rule)
@@ -474,7 +474,7 @@ def _reconcile_section_rule_starts(section_rules: List[Dict[str, Any]], qnums: L
         if new_start != start:
             rule = dict(rule)
             rule["start_question"] = new_start
-            per = max(0.0, safe_float(rule.get("marks_per_question"), 0.0))
+            per = max(0.0, to_float(rule.get("marks_per_question"), 0.0))
             if per > 0:
                 rule["total"] = round(per * count, 4)
         reconciled.append(rule)
@@ -496,9 +496,9 @@ def _apply_section_rule_conflicts(
     q_to_rule: Dict[int, str] = {}
 
     for idx, rule in enumerate(section_rules):
-        count = safe_int(rule.get("count"), 0)
-        per = max(0.0, safe_float(rule.get("marks_per_question"), 0.0))
-        start_q = safe_int(rule.get("start_question"), 0)
+        count = to_int(rule.get("count"), 0)
+        per = max(0.0, to_float(rule.get("marks_per_question"), 0.0))
+        start_q = to_int(rule.get("start_question"), 0)
         if count <= 0 or per <= 0 or start_q <= 0 or start_q not in qnums:
             continue
         start_idx = qnums.index(start_q)
@@ -527,11 +527,11 @@ def _apply_section_rule_conflicts(
 
             assignments[qn] = {
                 "marks": round(per, 4),
-                "expr": str(rule.get("expr") or f"{count} x {round(per, 4)} = {round(safe_float(rule.get('total'), 0.0), 4)}"),
+                "expr": str(rule.get("expr") or f"{count} x {round(per, 4)} = {round(to_float(rule.get('total'), 0.0), 4)}"),
                 "evidence": {
                     "bbox": list(rule.get("bbox") or [0, 0, 0, 0]),
-                    "page": safe_int(rule.get("source_page"), 0),
-                    "confidence": round(safe_float(rule.get("confidence"), 0.0), 4),
+                    "page": to_int(rule.get("source_page"), 0),
+                    "confidence": round(to_float(rule.get("confidence"), 0.0), 4),
                     "source": "section_math",
                 },
                 "rule_id": rule_id,
@@ -546,12 +546,12 @@ def _apply_section_rule_conflicts(
         if not applied:
             continue
         rule = dict(meta.get("rule") or {})
-        per = max(0.0, safe_float(rule.get("marks_per_question"), 0.0))
-        original_count = safe_int(rule.get("count"), 0)
+        per = max(0.0, to_float(rule.get("marks_per_question"), 0.0))
+        original_count = to_int(rule.get("count"), 0)
         if len(applied) < original_count:
             logger.warning(
                 "SECTION_RULE_PARTIAL_APPLY start=%s count=%s applied=%s questions=%s",
-                safe_int(rule.get("start_question"), 0),
+                to_int(rule.get("start_question"), 0),
                 original_count,
                 len(applied),
                 applied,
@@ -579,18 +579,18 @@ def _apply_section_rule_conflicts(
             resolved_rules.append(seg_rule)
             logger.info(
                 "SECTION_RULE_APPLIED start=%s count=%s marks=%s total=%s questions=%s",
-                safe_int(seg_rule.get("start_question"), 0),
-                safe_int(seg_rule.get("count"), 0),
+                to_int(seg_rule.get("start_question"), 0),
+                to_int(seg_rule.get("count"), 0),
                 round(per, 4),
-                round(safe_float(seg_rule.get("total"), 0.0), 4),
+                round(to_float(seg_rule.get("total"), 0.0), 4),
                 segment,
             )
             for qn in segment:
                 logger.info(
                     "SECTION_RULE_APPLIED_Q q=%s start=%s count=%s marks=%s expr=%s",
                     qn,
-                    safe_int(seg_rule.get("start_question"), 0),
-                    safe_int(seg_rule.get("count"), 0),
+                    to_int(seg_rule.get("start_question"), 0),
+                    to_int(seg_rule.get("count"), 0),
                     round(per, 4),
                     str(seg_rule.get("expr") or ""),
                 )
@@ -612,18 +612,18 @@ def _initial_mark_pass(
 ) -> None:
     for qn in qnums:
         q = by_num[qn]
-        base = max(0.0, safe_float(base_marks.get(qn), 0.0))
+        base = max(0.0, to_float(base_marks.get(qn), 0.0))
         total = base
         source = "inferred"
         mode = "direct"
 
         if qn in q_margin:
-            total = max(0.0, safe_float(q_margin[qn]["marks"], 0.0))
+            total = max(0.0, to_float(q_margin[qn]["marks"], 0.0))
             source = "margin"
             evidence_refs[qn].append(dict(q_margin[qn]["evidence"]))
             logger.info("MARK_REASON_APPLIED q=%s reason=margin marks=%s", qn, round(total, 4))
         elif qn in section_assignments:
-            total = max(0.0, safe_float(section_assignments[qn]["marks"], 0.0))
+            total = max(0.0, to_float(section_assignments[qn]["marks"], 0.0))
             source = "section_math"
             evidence_refs[qn].append(dict(section_assignments[qn]["evidence"]))
             logger.info(
@@ -654,14 +654,14 @@ def _initial_mark_pass(
                     sq["label"] = lbl
                 skey = (qn, lbl)
                 if skey in sq_margin:
-                    val = max(0.0, safe_float(sq_margin[skey]["marks"], 0.0))
+                    val = max(0.0, to_float(sq_margin[skey]["marks"], 0.0))
                     sub_values[idx] = val
                     sub_sources[idx] = "margin"
                     explicit_sum += val
                     explicit_idxs.append(idx)
                     evidence_refs[qn].append(dict(sq_margin[skey]["evidence"]))
-                elif safe_float(sq.get("marks"), 0.0) > 0 and _norm_source(sq.get("mark_source")) in _EXPLICIT_SOURCES:
-                    val = max(0.0, safe_float(sq.get("marks"), 0.0))
+                elif to_float(sq.get("marks"), 0.0) > 0 and _norm_source(sq.get("mark_source")) in _EXPLICIT_SOURCES:
+                    val = max(0.0, to_float(sq.get("marks"), 0.0))
                     sub_values[idx] = val
                     sub_sources[idx] = _norm_source(sq.get("mark_source"))
                     explicit_sum += val
@@ -673,7 +673,7 @@ def _initial_mark_pass(
                 if not split_values:
                     split_values = _parse_margin_split_text(q_margin[qn].get("text"))
                 if split_values and len(split_values) == len(subparts):
-                    sub_values = [round(max(0.0, safe_float(v, 0.0)), 4) for v in split_values]
+                    sub_values = [round(max(0.0, to_float(v, 0.0)), 4) for v in split_values]
                     sub_sources = ["margin" for _ in subparts]
                     explicit_sum = round(sum(sub_values), 4)
                     explicit_idxs = list(range(len(subparts)))
@@ -765,17 +765,17 @@ def _margin_mark_maps(visual_entities: Optional[Dict[str, Any]]) -> Tuple[Dict[i
     for row in (visual_entities or {}).get("margin_marks") or []:
         if not isinstance(row, dict):
             continue
-        qn = safe_int(row.get("q"), 0)
+        qn = to_int(row.get("q"), 0)
         if qn <= 0:
             continue
-        mark = max(0.0, safe_float(row.get("marks"), 0.0))
+        mark = max(0.0, to_float(row.get("marks"), 0.0))
         if mark <= 0:
             continue
         sub = _norm_label(row.get("sub"))
         raw_text = row.get("text") or row.get("raw") or row.get("expression")
         split_values: Optional[List[float]] = None
         if isinstance(row.get("split"), list):
-            split_values = [safe_float(v, 0.0) for v in row.get("split") if safe_float(v, 0.0) > 0]
+            split_values = [to_float(v, 0.0) for v in row.get("split") if to_float(v, 0.0) > 0]
         if not split_values:
             split_values = _parse_margin_split_text(raw_text)
         payload = {
@@ -784,8 +784,8 @@ def _margin_mark_maps(visual_entities: Optional[Dict[str, Any]]) -> Tuple[Dict[i
             "split": split_values or None,
             "evidence": {
                 "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
-                "page": safe_int(row.get("page"), 0),
-                "confidence": round(safe_float(row.get("confidence"), 0.0), 4),
+                "page": to_int(row.get("page"), 0),
+                "confidence": round(to_float(row.get("confidence"), 0.0), 4),
                 "source": "margin",
             },
         }
@@ -802,16 +802,16 @@ def _sync_audit_for_question(
     by_num: Dict[int, Dict[str, Any]],
 ) -> None:
     for row in question_audit_tree:
-        if safe_int(row.get("number"), 0) == qn:
+        if to_int(row.get("number"), 0) == qn:
             q = by_num.get(qn) or {}
-            row["total_marks"] = round(max(0.0, safe_float(q.get("marks"), 0.0)), 4)
+            row["total_marks"] = round(max(0.0, to_float(q.get("marks"), 0.0)), 4)
             row["mark_source"] = _norm_source(q.get("mark_source"))
             row["distribution_mode"] = str(q.get("distribution_mode") or row.get("distribution_mode") or "direct")
             row["confidence"] = round(_source_confidence(q.get("mark_source")), 4)
             row["subparts"] = [
                 {
                     "label": _norm_label(sq.get("label")) or str(sq.get("label") or ""),
-                    "marks": round(max(0.0, safe_float(sq.get("marks"), 0.0)), 4),
+                    "marks": round(max(0.0, to_float(sq.get("marks"), 0.0)), 4),
                     "source": _norm_source(sq.get("mark_source")),
                 }
                 for sq in (q.get("subquestions") or [])
@@ -846,8 +846,8 @@ def _reconcile_header_marks(
         if _norm_source((by_num.get(qn) or {}).get("mark_source")) not in {"margin", "section_math"}
     ]
 
-    zero_mark_candidates = [qn for qn in inferred_candidates if safe_float((by_num.get(qn) or {}).get("marks"), 0.0) <= 0]
-    pattern = _mode_positive([safe_float((by_num.get(qn) or {}).get("marks"), 0.0) for qn in qnums]) or 1.0
+    zero_mark_candidates = [qn for qn in inferred_candidates if to_float((by_num.get(qn) or {}).get("marks"), 0.0) <= 0]
+    pattern = _mode_positive([to_float((by_num.get(qn) or {}).get("marks"), 0.0) for qn in qnums]) or 1.0
 
     if delta > 0:
         # Priority 1: Fill zero-mark questions first.
@@ -870,7 +870,7 @@ def _reconcile_header_marks(
             extra = delta / float(len(inferred_candidates))
             for qn in inferred_candidates:
                 q = by_num[qn]
-                cur = safe_float(q.get("marks"), 0.0)
+                cur = to_float(q.get("marks"), 0.0)
                 q["marks"] = round(cur + extra, 4)
                 q["mark_source"] = "inferred"
                 q["distribution_mode"] = "header_total_spread"
@@ -885,7 +885,7 @@ def _reconcile_header_marks(
             if need <= 1e-6:
                 break
             q = by_num[qn]
-            cur = max(0.0, safe_float(q.get("marks"), 0.0))
+            cur = max(0.0, to_float(q.get("marks"), 0.0))
             if cur <= 0:
                 continue
             cut = min(cur, need)
@@ -900,7 +900,7 @@ def _reconcile_header_marks(
 
 
 def _mode_positive(values: List[float]) -> Optional[float]:
-    vals = [round(v, 4) for v in values if safe_float(v, 0.0) > 0]
+    vals = [round(v, 4) for v in values if to_float(v, 0.0) > 0]
     if not vals:
         return None
     cnt = Counter(vals)
@@ -924,7 +924,7 @@ def resolve_marks(
 
     normalized = normalize_structure_payload(question_structure or {})
     questions = [dict(q) for q in (normalized.get("questions") or [])]
-    questions.sort(key=lambda q: safe_int(q.get("number"), 0))
+    questions.sort(key=lambda q: to_int(q.get("number"), 0))
     if not questions:
         return {
             "resolved_structure": normalized,
@@ -936,9 +936,9 @@ def resolve_marks(
             "question_audit_tree": [],
         }
 
-    by_num: Dict[int, Dict[str, Any]] = {safe_int(q.get("number"), 0): q for q in questions if safe_int(q.get("number"), 0) > 0}
+    by_num: Dict[int, Dict[str, Any]] = {to_int(q.get("number"), 0): q for q in questions if to_int(q.get("number"), 0) > 0}
     qnums = sorted(by_num.keys())
-    base_marks: Dict[int, float] = {qn: max(0.0, safe_float(by_num[qn].get("marks"), 0.0)) for qn in qnums}
+    base_marks: Dict[int, float] = {qn: max(0.0, to_float(by_num[qn].get("marks"), 0.0)) for qn in qnums}
     evidence_refs: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
 
     q_margin, sq_margin = _margin_mark_maps(visual_entities)
@@ -982,15 +982,15 @@ def resolve_marks(
     # Pattern inference for still-missing marks.
     covered_by_rules: set[int] = set()
     for rule in section_rules:
-        covered_by_rules.update(int(qn) for qn in (rule.get("questions") or []) if safe_int(qn, 0) > 0)
+        covered_by_rules.update(int(qn) for qn in (rule.get("questions") or []) if to_int(qn, 0) > 0)
     covered_by_rules.update(section_assignments.keys())
 
-    pattern_mark = _mode_positive([safe_float((by_num.get(qn) or {}).get("marks"), 0.0) for qn in qnums]) or 1.0
+    pattern_mark = _mode_positive([to_float((by_num.get(qn) or {}).get("marks"), 0.0) for qn in qnums]) or 1.0
     for qn in qnums:
         if qn in covered_by_rules:
             continue
         q = by_num[qn]
-        if safe_float(q.get("marks"), 0.0) > 0:
+        if to_float(q.get("marks"), 0.0) > 0:
             continue
         qtype = str(q.get("question_type") or "").strip().lower()
         inferred_default = 1.0 if qtype in {"mcq", "fill_blank", "very_short"} else pattern_mark
@@ -1011,12 +1011,12 @@ def resolve_marks(
     for gid, members in sorted(or_groups_map.items(), key=lambda kv: kv[0]):
         if len(members) < 2:
             continue
-        shared = max(max(0.0, safe_float((by_num.get(qn) or {}).get("marks"), 0.0)) for qn in members)
+        shared = max(max(0.0, to_float((by_num.get(qn) or {}).get("marks"), 0.0)) for qn in members)
         for qn in members:
             q = by_num.get(qn)
             if not q:
                 continue
-            old = max(0.0, safe_float(q.get("marks"), 0.0))
+            old = max(0.0, to_float(q.get("marks"), 0.0))
             q["or_group_id"] = gid
             if abs(old - shared) > 1e-6:
                 q["marks"] = round(shared, 4)
@@ -1033,20 +1033,20 @@ def resolve_marks(
         run = list(rule.get("questions") or [])
         if not run:
             continue
-        run_sum = round(sum(max(0.0, safe_float((by_num.get(qn) or {}).get("marks"), 0.0)) for qn in run), 4)
-        expected_total = round(max(0.0, safe_float(rule.get("total"), 0.0)), 4)
+        run_sum = round(sum(max(0.0, to_float((by_num.get(qn) or {}).get("marks"), 0.0)) for qn in run), 4)
+        expected_total = round(max(0.0, to_float(rule.get("total"), 0.0)), 4)
         if abs(run_sum - expected_total) > 1e-6:
             logger.warning(
                 "SECTION_RULE_MISMATCH start=%s count=%s expected=%s actual=%s",
-                safe_int(rule.get("start_question"), 0),
-                safe_int(rule.get("count"), 0),
+                to_int(rule.get("start_question"), 0),
+                to_int(rule.get("count"), 0),
                 expected_total,
                 run_sum,
             )
             if run_sum > 0:
                 logger.info(
                     "SECTION_RULE_OVERRIDE start=%s reason=validation_failed new_total=%s",
-                    safe_int(rule.get("start_question"), 0),
+                    to_int(rule.get("start_question"), 0),
                     run_sum,
                 )
                 rule["total"] = run_sum
@@ -1057,7 +1057,7 @@ def resolve_marks(
                     continue
                 if _redistribute_subparts_only(q):
                     by_num[qn] = q
-                    logger.info("SUBPART_AUTO_SPLIT q=%s total=%s", qn, round(safe_float(q.get("marks"), 0.0), 4))
+                    logger.info("SUBPART_AUTO_SPLIT q=%s total=%s", qn, round(to_float(q.get("marks"), 0.0), 4))
                     _sync_audit_for_question(qn, question_audit_tree, by_num)
 
     resolved_questions = [by_num[qn] for qn in qnums]
@@ -1067,18 +1067,18 @@ def resolve_marks(
             {
                 "section": None,
                 "expression": str(b.get("expr") or ""),
-                "question_count": safe_int(b.get("count"), 0),
-                "per_question_marks": round(safe_float(b.get("per"), 0.0), 4),
-                "total_marks": round(safe_float(b.get("total"), 0.0), 4),
-                "page_index": safe_int(b.get("page"), 0),
-                "confidence": round(safe_float(b.get("confidence"), 0.0), 4),
+                "question_count": to_int(b.get("count"), 0),
+                "per_question_marks": round(to_float(b.get("per"), 0.0), 4),
+                "total_marks": round(to_float(b.get("total"), 0.0), 4),
+                "page_index": to_int(b.get("page"), 0),
+                "confidence": round(to_float(b.get("confidence"), 0.0), 4),
                 "range": (
                     {
-                        "start": safe_int(((b.get("range") or {}).get("start")), 0),
-                        "end": safe_int(((b.get("range") or {}).get("end")), 0),
+                        "start": to_int(((b.get("range") or {}).get("start")), 0),
+                        "end": to_int(((b.get("range") or {}).get("end")), 0),
                     }
                     if isinstance(b.get("range"), dict)
-                    and safe_int(((b.get("range") or {}).get("start")), 0) > 0
+                    and to_int(((b.get("range") or {}).get("start")), 0) > 0
                     else None
                 ),
             }
@@ -1086,11 +1086,11 @@ def resolve_marks(
         ],
         "section_math_rules": [
             {
-                "start_question": safe_int(rule.get("start_question"), 0),
-                "count": safe_int(rule.get("count"), 0),
-                "marks_per_question": round(safe_float(rule.get("marks_per_question"), 0.0), 4),
-                "total": round(safe_float(rule.get("total"), 0.0), 4),
-                "source_page": safe_int(rule.get("source_page"), 0),
+                "start_question": to_int(rule.get("start_question"), 0),
+                "count": to_int(rule.get("count"), 0),
+                "marks_per_question": round(to_float(rule.get("marks_per_question"), 0.0), 4),
+                "total": round(to_float(rule.get("total"), 0.0), 4),
+                "source_page": to_int(rule.get("source_page"), 0),
             }
             for rule in section_rules
         ],
@@ -1101,20 +1101,20 @@ def resolve_marks(
 
     ai_visual_mismatches: List[Dict[str, Any]] = []
     for qn in qnums:
-        ai_mark = round(max(0.0, safe_float(base_marks.get(qn), 0.0)), 4)
-        resolved_mark = round(max(0.0, safe_float((by_num.get(qn) or {}).get("marks"), 0.0)), 4)
+        ai_mark = round(max(0.0, to_float(base_marks.get(qn), 0.0)), 4)
+        resolved_mark = round(max(0.0, to_float((by_num.get(qn) or {}).get("marks"), 0.0)), 4)
         if abs(ai_mark - resolved_mark) > 1e-6:
             ai_visual_mismatches.append({"question_number": qn, "ai_marks": ai_mark, "visual_marks": resolved_mark})
 
-    for audit in sorted(question_audit_tree, key=lambda x: safe_int(x.get("number"), 0)):
+    for audit in sorted(question_audit_tree, key=lambda x: to_int(x.get("number"), 0)):
         logger.info(
             "QUESTION_AUDIT q=%s total=%s source=%s mode=%s subparts=%s confidence=%.3f",
-            safe_int(audit.get("number"), 0),
-            round(safe_float(audit.get("total_marks"), 0.0), 4),
+            to_int(audit.get("number"), 0),
+            round(to_float(audit.get("total_marks"), 0.0), 4),
             str(audit.get("mark_source") or "inferred"),
             str(audit.get("distribution_mode") or "direct"),
             len(audit.get("subparts") or []),
-            safe_float(audit.get("confidence"), 0.0),
+            to_float(audit.get("confidence"), 0.0),
         )
 
     coverage = round((len(changed_questions) / float(len(qnums))) if qnums else 0.0, 4)
@@ -1122,11 +1122,11 @@ def resolve_marks(
 
     effective_marks_map = []
     for q in resolved_questions:
-        qn = safe_int(q.get("number"), 0)
+        qn = to_int(q.get("number"), 0)
         effective_marks_map.append(
             {
                 "question_number": qn,
-                "marks": round(max(0.0, safe_float(q.get("marks"), 0.0)), 4),
+                "marks": round(max(0.0, to_float(q.get("marks"), 0.0)), 4),
                 "source": _norm_source(q.get("mark_source")),
                 "is_override": qn in changed_questions,
                 "evidence": evidence_refs.get(qn, []),
@@ -1140,7 +1140,7 @@ def resolve_marks(
         "mark_override_coverage": coverage,
         "or_groups_map": {gid: sorted(set(members)) for gid, members in or_groups_map.items() if len(set(members)) >= 2},
         "ai_visual_mismatches": ai_visual_mismatches,
-        "question_audit_tree": sorted(question_audit_tree, key=lambda x: safe_int(x.get("number"), 0)),
+        "question_audit_tree": sorted(question_audit_tree, key=lambda x: to_int(x.get("number"), 0)),
     }
 
 

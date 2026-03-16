@@ -40,11 +40,10 @@ GS4_SYSTEM_PROMPT = """# ROLE: Senior UPSC Mains Evaluator (Strict Administrativ
 def get_upsc_system_prompt(upsc_paper: Optional[str]) -> str:
     """
     Select UPSC prompt variant based on inferred paper.
-
-    Note: This preserves existing behavior in grading.py.
     """
     selected_prompt = UPSC_SYSTEM_PROMPT
     if upsc_paper != "GS-4":
         selected_prompt = GS4_SYSTEM_PROMPT
     return selected_prompt
 
+__all__ = ["UPSC_SYSTEM_PROMPT", "GS4_SYSTEM_PROMPT", "get_upsc_system_prompt"]

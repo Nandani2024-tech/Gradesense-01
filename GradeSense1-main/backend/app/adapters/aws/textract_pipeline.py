@@ -16,7 +16,7 @@ from PIL import Image
 from app.services.aws.s3_storage import upload_pdf_to_s3
 from app.services.aws.textract_client import start_document_analysis, poll_document_analysis
 from app.services.pipelines.aws_text_reconstruction import rebuild_page_text
-from app.adapters.layout_segmentation import build_span_graph
+from app.adapters.layout.layout_segmentation import build_span_graph
 from app.services.pipelines.aws_raw_layer import save_raw_textract_layer, load_raw_textract_layer
 from app.services.pipelines.aws_blueprint_builder import build_span_evidence, build_blueprint_from_spans
 from app.services.pipelines.aws_answer_extractor import extract_answer_pages

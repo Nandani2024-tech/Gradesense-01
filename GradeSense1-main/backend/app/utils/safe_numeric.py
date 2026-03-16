@@ -80,4 +80,7 @@ def parse_section_math_expression(expr: Any) -> Optional[Tuple[int, float, float
     return count, round(each, 4), round(total, 4)
 
 
-__all__ = ["safe_int", "safe_float", "parse_section_math_expression"]
+to_float = safe_float
+to_int = safe_int
+
+__all__ = ["safe_int", "safe_float", "to_int", "to_float", "parse_section_math_expression"]

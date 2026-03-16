@@ -1,6 +1,4 @@
-"""CBSE-style grading helpers for college_v3."""
-
-from __future__ import annotations
+"""CBSE-style grading helpers for college_v3 relocated to adapters."""
 
 import json
 import re

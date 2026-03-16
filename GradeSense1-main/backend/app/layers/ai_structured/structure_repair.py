@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.logging_config import logger
 
-from app.utils.safe_numeric import parse_section_math_expression, safe_float, safe_int
+from app.utils.safe_numeric import parse_section_math_expression, to_float, to_int
 from .validation import normalize_structure_payload
 
 
@@ -27,8 +27,8 @@ def _dedupe_subparts(structure: Dict[str, Any]) -> int:
             if not existing:
                 best[label] = dict(sq)
                 continue
-            ex_score = len(str(existing.get("text") or "").strip()) + safe_float(existing.get("marks"), 0.0)
-            sq_score = len(str(sq.get("text") or "").strip()) + safe_float(sq.get("marks"), 0.0)
+            ex_score = len(str(existing.get("text") or "").strip()) + to_float(existing.get("marks"), 0.0)
+            sq_score = len(str(sq.get("text") or "").strip()) + to_float(sq.get("marks"), 0.0)
             if sq_score > ex_score:
                 best[label] = dict(sq)
                 changed += 1
@@ -46,10 +46,10 @@ def _apply_shared_subparts(structure: Dict[str, Any]) -> int:
         subparts = list(q.get("subquestions") or [])
         if not subparts:
             continue
-        total = max(0.0, safe_float(q.get("marks"), 0.0))
+        total = max(0.0, to_float(q.get("marks"), 0.0))
         if total <= 0:
             continue
-        cur_sum = sum(max(0.0, safe_float(sq.get("marks"), 0.0)) for sq in subparts)
+        cur_sum = sum(max(0.0, to_float(sq.get("marks"), 0.0)) for sq in subparts)
         if abs(cur_sum - total) <= 1e-6:
             continue
         count = len(subparts)
@@ -72,20 +72,20 @@ def _apply_shared_subparts(structure: Dict[str, Any]) -> int:
 def _apply_section_pattern_marks(structure: Dict[str, Any]) -> int:
     changed = 0
     q_rows = sorted(
-        [q for q in (structure.get("questions") or []) if safe_int(q.get("number"), 0) > 0],
-        key=lambda q: safe_int(q.get("number"), 0),
+        [q for q in (structure.get("questions") or []) if to_int(q.get("number"), 0) > 0],
+        key=lambda q: to_int(q.get("number"), 0),
     )
-    qnums = [safe_int(q.get("number"), 0) for q in q_rows]
+    qnums = [to_int(q.get("number"), 0) for q in q_rows]
     if not qnums:
         return 0
-    by_num = {safe_int(q.get("number"), 0): q for q in q_rows}
+    by_num = {to_int(q.get("number"), 0): q for q in q_rows}
 
     rules = list(structure.get("section_math_rules") or [])
     if rules:
         for rule in rules:
-            start_q = safe_int(rule.get("start_question"), 0)
-            count = safe_int(rule.get("count"), 0)
-            per = safe_float(rule.get("marks_per_question"), 0.0)
+            start_q = to_int(rule.get("start_question"), 0)
+            count = to_int(rule.get("count"), 0)
+            per = to_float(rule.get("marks_per_question"), 0.0)
             if start_q <= 0 or count <= 0 or per <= 0 or start_q not in qnums:
                 continue
             start_idx = qnums.index(start_q)
@@ -107,11 +107,11 @@ def _apply_section_pattern_marks(structure: Dict[str, Any]) -> int:
         if parsed:
             count, per, _ = parsed
         else:
-            count = safe_int((block or {}).get("question_count"), 0)
-            per = safe_float((block or {}).get("per_question_marks"), 0.0)
+            count = to_int((block or {}).get("question_count"), 0)
+            per = to_float((block or {}).get("per_question_marks"), 0.0)
         if count <= 0 or per <= 0:
             continue
-        start_q = safe_int(((block or {}).get("range") or {}).get("start"), 0)
+        start_q = to_int(((block or {}).get("range") or {}).get("start"), 0)
         if start_q > 0 and start_q in qnums:
             start_idx = qnums.index(start_q)
             run = qnums[start_idx:start_idx + count]
@@ -122,7 +122,7 @@ def _apply_section_pattern_marks(structure: Dict[str, Any]) -> int:
             q = by_num.get(qn)
             if not q:
                 continue
-            current = max(0.0, safe_float(q.get("marks"), 0.0))
+            current = max(0.0, to_float(q.get("marks"), 0.0))
             source = str(q.get("mark_source") or "inferred").strip().lower()
             if current > 0 and source in {"margin", "section_math"}:
                 continue
@@ -139,13 +139,13 @@ def _propagate_pattern_marks(structure: Dict[str, Any]) -> int:
     if (structure.get("section_math_rules") or []) or (structure.get("section_math_blocks") or []):
         return 0
     changed = 0
-    questions = [q for q in (structure.get("questions") or []) if safe_int(q.get("number"), 0) > 0]
-    positives = [safe_float(q.get("marks"), 0.0) for q in questions if safe_float(q.get("marks"), 0.0) > 0]
+    questions = [q for q in (structure.get("questions") or []) if to_int(q.get("number"), 0) > 0]
+    positives = [to_float(q.get("marks"), 0.0) for q in questions if to_float(q.get("marks"), 0.0) > 0]
     if not positives:
         return 0
     mode_mark = sorted(positives)[len(positives) // 2]
     for q in questions:
-        if safe_float(q.get("marks"), 0.0) > 0:
+        if to_float(q.get("marks"), 0.0) > 0:
             continue
         q["marks"] = round(mode_mark, 4)
         q["mark_source"] = "inferred"
@@ -164,9 +164,9 @@ def _fix_or_group_integrity(structure: Dict[str, Any]) -> int:
     for gid, members in groups.items():
         if len(members) < 2:
             continue
-        shared = max(max(0.0, safe_float(q.get("marks"), 0.0)) for q in members)
+        shared = max(max(0.0, to_float(q.get("marks"), 0.0)) for q in members)
         for q in members:
-            current = max(0.0, safe_float(q.get("marks"), 0.0))
+            current = max(0.0, to_float(q.get("marks"), 0.0))
             if abs(current - shared) <= 1e-6:
                 continue
             q["marks"] = round(shared, 4)
@@ -178,17 +178,17 @@ def _fix_or_group_integrity(structure: Dict[str, Any]) -> int:
 
 def _reanchor_numbering(structure: Dict[str, Any], visual_entities: Optional[Dict[str, Any]]) -> int:
     visual_qs = sorted(
-        [row for row in ((visual_entities or {}).get("questions") or []) if safe_int(row.get("number"), 0) > 0],
-        key=lambda row: (safe_int(row.get("page"), 10**9), safe_float((row.get("bbox") or [0, 10**9, 0, 10**9])[1], 10**9)),
+        [row for row in ((visual_entities or {}).get("questions") or []) if to_int(row.get("number"), 0) > 0],
+        key=lambda row: (to_int(row.get("page"), 10**9), to_float((row.get("bbox") or [0, 10**9, 0, 10**9])[1], 10**9)),
     )
     if not visual_qs:
         return 0
     semantic = sorted(
-        [q for q in (structure.get("questions") or []) if safe_int(q.get("number"), 0) > 0],
+        [q for q in (structure.get("questions") or []) if to_int(q.get("number"), 0) > 0],
         key=lambda q: (
-            safe_int(((q.get("image_evidence") or [{}])[0] or {}).get("page_index"), 10**9),
-            safe_float((((q.get("image_evidence") or [{}])[0] or {}).get("bbox") or [0, 10**9, 0, 10**9])[1], 10**9),
-            safe_int(q.get("number"), 10**9),
+            to_int(((q.get("image_evidence") or [{}])[0] or {}).get("page_index"), 10**9),
+            to_float((((q.get("image_evidence") or [{}])[0] or {}).get("bbox") or [0, 10**9, 0, 10**9])[1], 10**9),
+            to_int(q.get("number"), 10**9),
         ),
     )
     if not semantic:
@@ -198,14 +198,14 @@ def _reanchor_numbering(structure: Dict[str, Any], visual_entities: Optional[Dic
 
     changed = 0
     for q, v in zip(semantic, visual_qs):
-        new_no = safe_int(v.get("number"), 0)
-        old_no = safe_int(q.get("number"), 0)
+        new_no = to_int(v.get("number"), 0)
+        old_no = to_int(q.get("number"), 0)
         if new_no <= 0 or old_no <= 0 or new_no == old_no:
             continue
         q["number"] = new_no
         changed += 1
     if changed:
-        structure["questions"] = sorted(structure.get("questions") or [], key=lambda q: safe_int(q.get("number"), 0))
+        structure["questions"] = sorted(structure.get("questions") or [], key=lambda q: to_int(q.get("number"), 0))
     return changed
 
 
@@ -214,23 +214,23 @@ def _drop_out_of_range_questions(structure: Dict[str, Any], validation_report: D
     for err in (validation_report.get("errors") or []):
         m = re.search(r"question_count_mismatch:actual=\d+\s+expected=(\d+)", str(err or ""))
         if m:
-            expected = safe_int(m.group(1), 0)
+            expected = to_int(m.group(1), 0)
             break
     if not expected or expected <= 0:
         return 0
 
     rows = list(structure.get("questions") or [])
-    kept = [q for q in rows if 1 <= safe_int((q or {}).get("number"), 0) <= expected]
+    kept = [q for q in rows if 1 <= to_int((q or {}).get("number"), 0) <= expected]
     changed = len(rows) - len(kept)
     if changed > 0:
-        structure["questions"] = sorted(kept, key=lambda q: safe_int((q or {}).get("number"), 0))
+        structure["questions"] = sorted(kept, key=lambda q: to_int((q or {}).get("number"), 0))
     return changed
 
 
 def _rebuild_audit_tree(structure: Dict[str, Any]) -> List[Dict[str, Any]]:
     tree: List[Dict[str, Any]] = []
-    for q in sorted((structure.get("questions") or []), key=lambda row: safe_int(row.get("number"), 0)):
-        qn = safe_int(q.get("number"), 0)
+    for q in sorted((structure.get("questions") or []), key=lambda row: to_int(row.get("number"), 0)):
+        qn = to_int(q.get("number"), 0)
         if qn <= 0:
             continue
         source = str(q.get("mark_source") or "inferred").strip().lower()
@@ -245,11 +245,11 @@ def _rebuild_audit_tree(structure: Dict[str, Any]) -> List[Dict[str, Any]]:
         tree.append(
             {
                 "number": qn,
-                "total_marks": round(max(0.0, safe_float(q.get("marks"), 0.0)), 4),
+                "total_marks": round(max(0.0, to_float(q.get("marks"), 0.0)), 4),
                 "subparts": [
                     {
                         "label": str(sq.get("label") or "").strip(),
-                        "marks": round(max(0.0, safe_float(sq.get("marks"), 0.0)), 4),
+                        "marks": round(max(0.0, to_float(sq.get("marks"), 0.0)), 4),
                         "source": str(sq.get("mark_source") or "inferred").strip().lower(),
                     }
                     for sq in (q.get("subquestions") or [])
@@ -275,15 +275,15 @@ def apply_structure_repairs(
     normalized = normalize_structure_payload(structure or {})
     # Preserve optional fields not kept by normalize.
     by_num_extra: Dict[int, Dict[str, Any]] = {
-        safe_int(q.get("number"), 0): {
+        to_int(q.get("number"), 0): {
             "distribution_mode": q.get("distribution_mode"),
             "evidence_refs": q.get("evidence_refs"),
         }
         for q in (structure.get("questions") or [])
-        if safe_int(q.get("number"), 0) > 0
+        if to_int(q.get("number"), 0) > 0
     }
     for q in (normalized.get("questions") or []):
-        qn = safe_int(q.get("number"), 0)
+        qn = to_int(q.get("number"), 0)
         extra = by_num_extra.get(qn) or {}
         if extra.get("distribution_mode") is not None:
             q["distribution_mode"] = extra.get("distribution_mode")

@@ -11,8 +11,8 @@ from app.core.logging_config import logger
 from app.services.pipelines.college.alignment import align_packets_to_blueprint
 from app.services.pipelines.college.blueprint import assemble_blueprint
 from app.services.pipelines.college.contracts import CollegePipelineResult
-from app.adapters.college_layout import detect_page_blocks
-from app.adapters.college_normalization import normalize_answer_pages
+from app.adapters.layout.college_layout import detect_page_blocks
+from app.adapters.normalization.college_normalization import normalize_answer_pages
 from app.services.pipelines.college_recovery import build_gate, compute_confidence_vectors, run_recovery
 from app.services.pipelines.universal.region_ocr import extract_region_text
 from app.services.pipelines.college.packet_builder import build_packets

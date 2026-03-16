@@ -21,7 +21,7 @@ from app.core.config import (
     UNIVERSAL_HARD_STOP,
 )
 from app.services.llm.config import get_llm_api_key, GEMINI_MODEL_NAME
-from app.layers.resolver import resolve_grading_layer
+from app.services.pipelines.grading_resolver import resolve_grading_layer
 from app.layers.upsc.policy import enforce_upsc_strict_caps
 from app.models.submission import QuestionScore, SubQuestionScore, AnnotationData
 from app.services.storage.gridfs_helpers import (
@@ -251,7 +251,7 @@ async def run_grading_orchestrator(
     """Core orchestration logic for AI grading."""
     
     # 1. Deterministic cutover check
-    from app.layers.ai_structured.engine import grade_images_with_locked_blueprint
+    from app.services.pipelines.ai_structured_engine import grade_images_with_locked_blueprint
     
     try:
         exam_doc = None

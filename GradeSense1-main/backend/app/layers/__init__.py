@@ -1,2 +1,1 @@
-"""Domain grading layers (college and UPSC)."""
-
+"""Domain logic layers (college and UPSC)."""

@@ -232,7 +232,7 @@ async def debug_ocr_structure(
     user: User = Depends(get_current_user),
 ):
     """Inspect OCR providers and structured answer segmentation for a submission."""
-    from app.layers.ai_structured.engine import preflight_submission_mapping as ai_preflight
+    from app.services.pipelines.ai_structured_engine import preflight_submission_mapping as ai_preflight
 
     try:
         preflight = await ai_preflight(submission_id=submission_id, user_id=user.user_id)
@@ -249,7 +249,7 @@ async def debug_packet_pipeline(
     user: User = Depends(get_current_user),
 ):
     """Run full packet pipeline and return stage summaries for one submission."""
-    from app.layers.ai_structured.engine import preflight_submission_mapping as ai_preflight
+    from app.services.pipelines.ai_structured_engine import preflight_submission_mapping as ai_preflight
 
     try:
         preflight = await ai_preflight(submission_id=submission_id, user_id=user.user_id)
@@ -278,7 +278,7 @@ async def debug_grading_audit(
     user: User = Depends(get_current_user),
 ):
     """Return packet-first extraction and confidence traces for grading audit."""
-    from app.layers.ai_structured.engine import preflight_submission_mapping as ai_preflight
+    from app.services.pipelines.ai_structured_engine import preflight_submission_mapping as ai_preflight
 
     try:
         preflight = await ai_preflight(submission_id=submission_id, user_id=user.user_id)

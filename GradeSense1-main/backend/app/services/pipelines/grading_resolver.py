@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from typing import Optional
 
 from app.core.config import UNIVERSAL_PIPELINE_ENABLED, UNIVERSAL_PIPELINE_EXAM_TYPES
-from app.layers.college import COLLEGE_SYSTEM_PROMPT
-from app.layers.upsc.prompts import get_upsc_system_prompt
+from app.adapters.llm.college_prompts import COLLEGE_SYSTEM_PROMPT
+from app.adapters.llm.upsc_prompts import get_upsc_system_prompt
 from app.utils.validation import infer_upsc_paper
 
 

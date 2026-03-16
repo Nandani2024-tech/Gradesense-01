@@ -2,10 +2,12 @@ from datetime import timedelta
 from typing import Optional
 from app.core.database import db
 from app.utils.datetime_utils import _iso_now
-from app.layers.constants import (
-    STRICT_EXAM_TYPE_REGEX,
+from app.constants.layers import (
+    STATUS_FAILED,
     STATUS_PENDING,
     STATUS_RUNNING,
+    STATUS_SUCCESS,
+    STRICT_EXAM_TYPE_REGEX,
 )
 from app.services.config.task_constants import STRICT_EXAM_TIMEOUT_MINUTES
 

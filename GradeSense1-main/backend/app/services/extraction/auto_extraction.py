@@ -382,7 +382,7 @@ def _validate_extraction_completeness(extracted_questions: List[dict], expected:
     return {"ok": True, "parsed": nums}
 
 async def auto_extract_questions(exam_id: str, force: bool = False, use_model_answer_fallback: bool = True, lock_owner: Optional[str] = None) -> Dict[str, Any]:
-    from app.layers.ai_structured.engine import extract_and_persist
+    from app.services.pipelines.ai_structured_engine import extract_and_persist
     try:
         return await extract_and_persist(exam_id=exam_id, force=force, lock_owner=lock_owner)
     except Exception as e:

@@ -6,31 +6,10 @@ import json
 import re
 from typing import Any, Dict, List
 
+from app.utils.json_helpers import parse_tolerant_json
+from app.utils.safe_numeric import to_float, to_int
 
-def parse_tolerant_json(raw_text: str) -> Dict[str, Any]:
-    """Parse tolerant JSON object from LLM output."""
-    text = (raw_text or "").strip()
-    if not text:
-        return {}
 
-    candidates = [text]
-    for m in re.finditer(r"```(?:json)?\s*([\s\S]*?)```", text, re.IGNORECASE):
-        block = (m.group(1) or "").strip()
-        if block:
-            candidates.append(block)
-
-    obj = re.search(r"\{[\s\S]*\}", text)
-    if obj:
-        candidates.append(obj.group(0).strip())
-
-    for c in candidates:
-        try:
-            parsed = json.loads(c)
-            if isinstance(parsed, dict):
-                return parsed
-        except Exception:
-            continue
-    return {}
 
 
 def validate_question_grade(
@@ -39,18 +18,18 @@ def validate_question_grade(
     grade_payload: Dict[str, Any],
 ) -> Dict[str, Any]:
     """Validate and clamp AI grade payload for one question."""
-    marks = float(grade_payload.get("marks", 0.0) or 0.0)
-    max_marks_val = float(max_marks or 0.0)
+    marks = to_float(grade_payload.get("marks"), 0.0)
+    max_marks_val = to_float(max_marks, 0.0)
     if max_marks_val <= 0:
         max_marks_val = 1.0
     marks = min(max_marks_val, max(0.0, marks))
 
     return {
-        "question_id": int(question_id),
+        "question_id": to_int(question_id, 0),
         "marks": round(marks, 4),
         "feedback": str(grade_payload.get("feedback", "") or ""),
         "annotations": grade_payload.get("annotations", []) if isinstance(grade_payload.get("annotations"), list) else [],
-        "confidence": float(grade_payload.get("confidence", 0.0) or 0.0),
+        "confidence": to_float(grade_payload.get("confidence"), 0.0),
     }
 
 
@@ -64,17 +43,16 @@ def validate_grading_response(
 
     by_q = {}
     for row in raw_rows:
-        try:
-            qid = int(row.get("question_id"))
-        except Exception:
+        qid = to_int(row.get("question_id"), -1)
+        if qid < 0:
             continue
         by_q[qid] = row
 
     out: List[Dict[str, Any]] = []
     for q in expected_questions or []:
-        qid = int(q.get("question_id") or 0)
+        qid = to_int(q.get("question_id"), 0)
         row = by_q.get(qid) or {}
-        out.append(validate_question_grade(qid, float(q.get("marks") or 0.0), row))
+        out.append(validate_question_grade(qid, to_float(q.get("marks"), 0.0), row))
     return out
 
 

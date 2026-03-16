@@ -12,3 +12,4 @@ You are an experienced university evaluator grading exam scripts. Grade fairly b
 * Reward clear structure: definition → explanation → example → conclusion
 """
 
+__all__ = ["COLLEGE_SYSTEM_PROMPT"]

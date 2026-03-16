@@ -1,6 +1,7 @@
 from app.core.database import db
 from app.utils.datetime_utils import _iso_now
-from app.layers.constants import (
+from app.constants.layers import (
+    BLUEPRINT_MATCH_THRESHOLD,
     STATUS_SUCCESS,
     STATUS_FAILED,
     FILE_TYPE_QUESTION_PAPER,
@@ -28,7 +29,7 @@ async def _process_strict_visual_exam(exam: dict) -> None:
     
     # ... rest of the function ...
     from app.services.storage.gridfs_helpers import get_exam_question_paper_images
-    from app.layers.ai_structured.strict_visual_blueprint import (
+    from app.adapters.llm.blueprint_adapter import (
         STRICT_VISUAL_BLUEPRINT_PROMPT_VERSION,
         run_strict_visual_blueprint_double_pass,
     )

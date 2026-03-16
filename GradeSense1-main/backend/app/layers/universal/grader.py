@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from app.utils.safe_numeric import to_float
+
 
 def objective_grade(question: Dict[str, Any], structured_answer: Dict[str, Any]) -> Dict[str, Any]:
-    max_marks = float(question.get("marks") or 0.0)
+    max_marks = to_float(question.get("marks"), 0.0)
     text = str(structured_answer.get("raw_text") or "").strip()
     if not text:
         return {

@@ -10,15 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.core.logging_config import logger
 from app.utils.ocr_provider import get_ocr_provider
 from app.utils.ocr_provider.models import OCRLine
-from app.utils.ocr_provider.patterns import (
-    QUESTION_ANCHOR_RE,
-    SUBPART_RE,
-    WORKING_NOTE_RE,
-    MARK_VALUE_RE,
-    MARK_SPLIT_RE,
-    MARK_ONLY_RE
-)
-from ..constants import (
+from app.constants.layers import (
     VISUAL_HEADER_HEIGHT_RATIO,
     MARGIN_MARK_CONF_THRESHOLD,
     MARGIN_X_RATIO_MIN,
@@ -26,24 +18,9 @@ from ..constants import (
     ANCHOR_Y_DISTANCE_THRESHOLD,
     PRECISION_ROUNDING
 )
+from app.utils.safe_numeric import to_float, to_int
 
 
-def _to_float(value: Any, default: float = 0.0) -> float:
-    try:
-        if value is None:
-            return float(default)
-        return float(value)
-    except Exception:
-        return float(default)
-
-
-def _to_int(value: Any, default: int = 0) -> int:
-    try:
-        if value is None:
-            return int(default)
-        return int(value)
-    except Exception:
-        return int(default)
 
 
 def _norm_sub_label(label: Optional[str]) -> Optional[str]:
@@ -69,17 +46,17 @@ def _extract_mark_value(text: str) -> Optional[float]:
     # explicit "... marks" is strongest.
     m = MARK_VALUE_RE.search(t)
     if m:
-        return _to_float(m.group(1), 0.0)
+        return to_float(m.group(1), 0.0)
 
     # Standalone margin formats: (5), [2], etc.
     m = MARK_ONLY_RE.match(t)
     if m:
-        return _to_float(m.group(1), 0.0)
+        return to_float(m.group(1), 0.0)
 
     # Common style: "Q1 (5)" or "23. (10)"
     m = re.search(r"[\(\[\{\<]\s*(\d+(?:\.\d+)?)\s*[\)\]\}\>](?:\s|$)", t)
     if m:
-        return _to_float(m.group(1), 0.0)
+        return to_float(m.group(1), 0.0)
 
     return None
 
@@ -107,7 +84,7 @@ def _question_number_from_line(text: str) -> Optional[int]:
     m = QUESTION_ANCHOR_RE.match(txt)
     if not m:
         return None
-    return _to_int(m.group(1), 0)
+    return to_int(m.group(1), 0)
 
 
 
@@ -143,19 +120,19 @@ def _detect_header_total(lines: List[OCRLine]) -> Tuple[Optional[float], Optiona
 
         m = re.search(r"(?:maximum|max(?:imum)?\.?)\s*marks?\s*[:\-]?\s*(\d+(?:\.\d+)?)", txt, flags=re.IGNORECASE)
         if m:
-            mark = _to_float(m.group(1), 0.0)
+            mark = to_float(m.group(1), 0.0)
             score += 2.5
             source = "header_maximum"
         else:
             m = re.search(r"\bm\.?\s*m\.?\s*[:\-]?\s*(\d+(?:\.\d+)?)\b", txt, flags=re.IGNORECASE)
             if m:
-                mark = _to_float(m.group(1), 0.0)
+                mark = to_float(m.group(1), 0.0)
                 score += 2.0
                 source = "header_mm"
             else:
                 m = re.search(r"\btotal\s*marks?\s*[:\-]?\s*(\d+(?:\.\d+)?)\b", txt, flags=re.IGNORECASE)
                 if m:
-                    mark = _to_float(m.group(1), 0.0)
+                    mark = to_float(m.group(1), 0.0)
                     score += 0.8
                     source = "header_total"
 
@@ -180,9 +157,9 @@ def _parse_section_math(lines: List[OCRLine]) -> List[Dict[str, Any]]:
         m = pattern.search(ln.text)
         if not m:
             continue
-        count = _to_int(m.group(1), 0)
-        each = _to_float(m.group(2), 0.0)
-        total = _to_float(m.group(3), 0.0)
+        count = to_int(m.group(1), 0)
+        each = to_float(m.group(2), 0.0)
+        total = to_float(m.group(3), 0.0)
         if count <= 0 or each <= 0 or total <= 0:
             continue
         # Keep only coherent equations.
@@ -223,7 +200,7 @@ def _extract_instruction_mark(*texts: Optional[str]) -> Optional[float]:
         m = re.search(r"\b(?:in|for|of)?\s*(\d+(?:\.\d+)?)\s*(?:marks?|mks?)\b", txt, flags=re.IGNORECASE)
         if not m:
             continue
-        mark = _to_float(m.group(1), 0.0)
+        mark = to_float(m.group(1), 0.0)
         if mark > 0:
             return round(mark, 4)
     return None
@@ -292,7 +269,7 @@ def _find_right_margin_mark_candidates(lines: List[OCRLine]) -> List[Dict[str, A
     out: List[Dict[str, Any]] = []
     min_conf = MARGIN_MARK_CONF_THRESHOLD
     for ln in lines:
-        if _to_float(ln.confidence, 0.0) < min_conf:
+        if to_float(ln.confidence, 0.0) < min_conf:
             continue
         right_ratio = ln.x1 / max(ln.width, 1.0)
         if right_ratio < MARGIN_X_RATIO_MIN and (ln.x2 / max(ln.width, 1.0)) < MARGIN_X_RATIO_MAX:
@@ -411,7 +388,7 @@ def _canonicalize_or_group_ids(
 ) -> Dict[int, str]:
     q_by_num: Dict[int, Dict[str, Any]] = {}
     for q in questions:
-        qn = _to_int(q.get("number"), 0)
+        qn = to_int(q.get("number"), 0)
         if qn > 0:
             q_by_num[qn] = q
 
@@ -432,7 +409,7 @@ def _canonicalize_or_group_ids(
     # AI-provided OR groups are accepted only when contiguous and text has OR signals.
     ai_groups: Dict[str, List[int]] = defaultdict(list)
     for q in questions:
-        qn = _to_int(q.get("number"), 0)
+        qn = to_int(q.get("number"), 0)
         gid = str(q.get("or_group_id") or "").strip()
         if qn > 0 and gid:
             ai_groups[gid].append(qn)
@@ -511,21 +488,21 @@ async def resolve_visual_marks(
     """Resolve visual marks and override AI marks only where evidence exists."""
 
     questions = [dict(q) for q in (question_structure.get("questions") or [])]
-    question_numbers = sorted({_to_int(q.get("number"), 0) for q in questions if _to_int(q.get("number"), 0) > 0})
+    question_numbers = sorted({to_int(q.get("number"), 0) for q in questions if to_int(q.get("number"), 0) > 0})
     valid_q_set = set(question_numbers)
 
     ai_question_marks: Dict[int, float] = {}
     ai_sub_marks: Dict[Tuple[int, Optional[str]], float] = {}
     for q in questions:
-        qn = _to_int(q.get("number"), 0)
+        qn = to_int(q.get("number"), 0)
         if qn <= 0:
             continue
-        ai_question_marks[qn] = _to_float(q.get("marks"), 0.0)
+        ai_question_marks[qn] = to_float(q.get("marks"), 0.0)
         for sq in (q.get("subquestions") or []):
             lbl = _norm_sub_label(sq.get("label"))
             if not lbl:
                 continue
-            ai_sub_marks[_key(qn, lbl)] = _to_float(sq.get("marks"), 0.0)
+            ai_sub_marks[_key(qn, lbl)] = to_float(sq.get("marks"), 0.0)
 
     # Collect OCR line geometry once for all detectors.
     lines = _collect_ocr_lines(question_paper_images)
@@ -548,14 +525,14 @@ async def resolve_visual_marks(
     visual_or_map = _detect_visual_or_groups(lines, anchors)
     canonical_or_map = _canonicalize_or_group_ids(questions, visual_or_map)
     for q in questions:
-        qn = _to_int(q.get("number"), 0)
+        qn = to_int(q.get("number"), 0)
         if qn <= 0:
             continue
         q["or_group_id"] = canonical_or_map.get(qn)
 
     # 1) Right-margin assignment (question and subpart anchors).
     for anchor in sorted(anchors, key=lambda a: (a["page_index"], a["y_mid"])):
-        inline_mark = _to_float(anchor.get("inline_mark"), 0.0)
+        inline_mark = to_float(anchor.get("inline_mark"), 0.0)
         if inline_mark <= 0:
             continue
         qn = int(anchor["question_number"])
@@ -567,12 +544,12 @@ async def resolve_visual_marks(
         if sub:
             visual_sub_marks[_key(qn, sub)] = inline_mark
             sub_mark_source[_key(qn, sub)] = "instruction"
-            sub_mark_confidence[_key(qn, sub)] = round(_to_float(anchor.get("confidence"), 0.0), 4)
+            sub_mark_confidence[_key(qn, sub)] = round(to_float(anchor.get("confidence"), 0.0), 4)
         else:
             visual_question_marks[qn] = max(visual_question_marks.get(qn, 0.0), inline_mark)
             question_mark_source[qn] = "instruction"
-            question_mark_confidence[qn] = round(_to_float(anchor.get("confidence"), 0.0), 4)
-        evidence = _evidence(int(anchor["page_index"]), list(anchor.get("bbox") or [0, 0, 0, 0]), _to_float(anchor.get("confidence"), 0.0))
+            question_mark_confidence[qn] = round(to_float(anchor.get("confidence"), 0.0), 4)
+        evidence = _evidence(int(anchor["page_index"]), list(anchor.get("bbox") or [0, 0, 0, 0]), to_float(anchor.get("confidence"), 0.0))
         effective_marks_map.append(
             {
                 "question_number": qn,
@@ -608,15 +585,15 @@ async def resolve_visual_marks(
         nearest["used"] = True
         qn = int(anchor["question_number"])
         sub = _norm_sub_label(anchor.get("sub_label"))
-        mark_val = max(0.0, _to_float(nearest["mark"], 0.0))
+        mark_val = max(0.0, to_float(nearest["mark"], 0.0))
         if sub:
             visual_sub_marks[_key(qn, sub)] = mark_val
             sub_mark_source[_key(qn, sub)] = "margin"
-            sub_mark_confidence[_key(qn, sub)] = round(_to_float(nearest["confidence"], 0.0), 4)
+            sub_mark_confidence[_key(qn, sub)] = round(to_float(nearest["confidence"], 0.0), 4)
         else:
             visual_question_marks[qn] = max(visual_question_marks.get(qn, 0.0), mark_val)
             question_mark_source[qn] = "margin"
-            question_mark_confidence[qn] = round(_to_float(nearest["confidence"], 0.0), 4)
+            question_mark_confidence[qn] = round(to_float(nearest["confidence"], 0.0), 4)
 
         evidence = _evidence(page, nearest["bbox"], nearest["confidence"])
         effective_marks_map.append(
@@ -641,12 +618,12 @@ async def resolve_visual_marks(
     # CASE B: 1 x 12 means one parent question gets 12 marks.
     q_meta: List[Dict[str, Any]] = []
     for q in questions:
-        qn = _to_int(q.get("number"), 0)
+        qn = to_int(q.get("number"), 0)
         if qn <= 0:
             continue
         section = str(q.get("section") or "").strip().lower()
         ev_rows = [ev for ev in (q.get("image_evidence") or []) if isinstance(ev, dict)]
-        page_idx = min((_to_int(ev.get("page_index"), 10**9) for ev in ev_rows), default=10**9)
+        page_idx = min((to_int(ev.get("page_index"), 10**9) for ev in ev_rows), default=10**9)
         q_meta.append({"qn": qn, "section": section, "page": page_idx})
     q_meta.sort(key=lambda row: (row["page"], row["qn"]))
 
@@ -665,8 +642,8 @@ async def resolve_visual_marks(
         return ""
 
     for expr in section_exprs:
-        count = max(0, _to_int(expr.get("question_count", expr.get("count")), 0))
-        each = max(0.0, _to_float(expr.get("per_question_marks", expr.get("each")), 0.0))
+        count = max(0, to_int(expr.get("question_count", expr.get("count")), 0))
+        each = max(0.0, to_float(expr.get("per_question_marks", expr.get("each")), 0.0))
         if count <= 0 or each <= 0:
             continue
         page = int(expr.get("page_index") or 0)
@@ -703,7 +680,7 @@ async def resolve_visual_marks(
                 continue
             visual_question_marks[qn] = each
             question_mark_source[qn] = "section_math"
-            question_mark_confidence[qn] = round(min(1.0, _to_float(expr.get("confidence"), 0.0)), 4)
+            question_mark_confidence[qn] = round(min(1.0, to_float(expr.get("confidence"), 0.0)), 4)
             effective_marks_map.append(
                 {
                     "question_number": qn,
@@ -712,7 +689,7 @@ async def resolve_visual_marks(
                     "evidence": _evidence(
                         int(expr.get("page_index", 0)),
                         list(expr.get("bbox") or [0, 0, 0, 0]),
-                        _to_float(expr.get("confidence"), 0.0),
+                        to_float(expr.get("confidence"), 0.0),
                     ),
                     "source": "section_math",
                 }
@@ -723,7 +700,7 @@ async def resolve_visual_marks(
 
     # 2b) Instruction-mark fallback (explicit "X marks").
     for q in questions:
-        qn = _to_int(q.get("number"), 0)
+        qn = to_int(q.get("number"), 0)
         if qn <= 0 or qn in visual_question_marks:
             continue
         instr_mark = _extract_instruction_mark(q.get("instruction"), q.get("question_text"))
@@ -740,9 +717,9 @@ async def resolve_visual_marks(
                 "sub_label": None,
                 "marks": round(instr_mark, 4),
                 "evidence": _evidence(
-                    _to_int(primary_ev.get("page_index"), 0),
+                    to_int(primary_ev.get("page_index"), 0),
                     list(primary_ev.get("bbox") or [0, 0, 0, 0]),
-                    _to_float(primary_ev.get("visual_confidence"), 0.0),
+                    to_float(primary_ev.get("visual_confidence"), 0.0),
                 ),
                 "source": "instruction",
             }
@@ -751,7 +728,7 @@ async def resolve_visual_marks(
     # 3) OR propagation from visual marks only (share detected branch marks).
     groups: Dict[str, List[int]] = defaultdict(list)
     for q in questions:
-        qn = _to_int(q.get("number"), 0)
+        qn = to_int(q.get("number"), 0)
         if qn <= 0:
             continue
         gid = str(q.get("or_group_id") or "").strip()
@@ -764,12 +741,12 @@ async def resolve_visual_marks(
         representative = max(
             marked,
             key=lambda qn: (
-                _to_float(visual_question_marks.get(qn), 0.0),
-                _to_float(question_mark_confidence.get(qn), 0.0),
+                to_float(visual_question_marks.get(qn), 0.0),
+                to_float(question_mark_confidence.get(qn), 0.0),
             ),
         )
-        shared = _to_float(visual_question_marks.get(representative), 0.0)
-        shared_conf = _to_float(question_mark_confidence.get(representative), 0.0)
+        shared = to_float(visual_question_marks.get(representative), 0.0)
+        shared_conf = to_float(question_mark_confidence.get(representative), 0.0)
         shared_source = str(question_mark_source.get(representative) or "inferred")
         for qn in members:
             if qn in visual_question_marks:
@@ -795,14 +772,14 @@ async def resolve_visual_marks(
     override_subparts: set[Tuple[int, Optional[str]]] = set()
 
     for q in questions:
-        qn = _to_int(q.get("number"), 0)
+        qn = to_int(q.get("number"), 0)
         if qn <= 0:
             continue
         q_out = dict(q)
-        base_q_mark = _to_float(ai_question_marks.get(qn), _to_float(q.get("marks"), 0.0))
+        base_q_mark = to_float(ai_question_marks.get(qn), to_float(q.get("marks"), 0.0))
         final_q_mark = base_q_mark
         if qn in visual_question_marks:
-            final_q_mark = _to_float(visual_question_marks.get(qn), base_q_mark)
+            final_q_mark = to_float(visual_question_marks.get(qn), base_q_mark)
             override_questions.add(qn)
             logger.info(
                 "MARK_OVERRIDE_APPLIED q=%s sub=- ai=%s visual=%s",
@@ -816,19 +793,19 @@ async def resolve_visual_marks(
             q_out["mark_confidence"] = round(question_mark_confidence.get(qn, 0.0), 4)
         else:
             q_out["mark_source"] = "inferred"
-            q_out["mark_confidence"] = round(_to_float(q.get("ai_confidence"), 0.0), 4)
-        q_out["confidence"] = round(_to_float(q.get("ai_confidence"), _to_float(q.get("confidence"), 0.0)), 4)
+            q_out["mark_confidence"] = round(to_float(q.get("ai_confidence"), 0.0), 4)
+        q_out["confidence"] = round(to_float(q.get("ai_confidence"), to_float(q.get("confidence"), 0.0)), 4)
 
         sub_rows = []
         for sq in (q_out.get("subquestions") or []):
             sq_out = dict(sq)
             sub_label = _norm_sub_label(sq.get("label"))
             sq_source_hint = str(sq.get("mark_source") or "inferred").strip().lower()
-            base_sq_mark = _to_float(ai_sub_marks.get(_key(qn, sub_label)), _to_float(sq.get("marks"), 0.0))
+            base_sq_mark = to_float(ai_sub_marks.get(_key(qn, sub_label)), to_float(sq.get("marks"), 0.0))
             final_sq_mark = base_sq_mark
             sq_key = _key(qn, sub_label)
             if sq_key in visual_sub_marks:
-                final_sq_mark = _to_float(visual_sub_marks.get(sq_key), base_sq_mark)
+                final_sq_mark = to_float(visual_sub_marks.get(sq_key), base_sq_mark)
                 override_subparts.add(sq_key)
                 logger.info(
                     "MARK_OVERRIDE_APPLIED q=%s sub=%s ai=%s visual=%s",
@@ -846,17 +823,17 @@ async def resolve_visual_marks(
                 sq_out["mark_confidence"] = round(sub_mark_confidence.get(sq_key, 0.0), 4)
             else:
                 sq_out["mark_source"] = sq_source_hint if sq_source_hint in {"margin", "section_math", "instruction"} else "inferred"
-                sq_out["mark_confidence"] = round(_to_float(sq.get("mark_confidence"), 0.0), 4)
-            sq_out["confidence"] = round(_to_float(sq.get("confidence"), 0.0), 4)
+                sq_out["mark_confidence"] = round(to_float(sq.get("mark_confidence"), 0.0), 4)
+            sq_out["confidence"] = round(to_float(sq.get("confidence"), 0.0), 4)
             sub_rows.append(sq_out)
 
-        sub_sum = sum(_to_float(sq.get("marks"), 0.0) for sq in sub_rows)
+        sub_sum = sum(to_float(sq.get("marks"), 0.0) for sq in sub_rows)
         authoritative_sub_sum = sum(
-            _to_float(sq.get("marks"), 0.0)
+            to_float(sq.get("marks"), 0.0)
             for sq in sub_rows
             if str(sq.get("mark_source") or "inferred").strip().lower() in {"margin", "section_math", "instruction"}
         )
-        q_mark = _to_float(q_out.get("marks"), 0.0)
+        q_mark = to_float(q_out.get("marks"), 0.0)
 
         # Parent mark may be raised only by explicit subpart mark evidence.
         if authoritative_sub_sum > q_mark + 1e-6:
@@ -881,14 +858,14 @@ async def resolve_visual_marks(
                 round(base_q_mark, 4),
                 round(authoritative_sub_sum, 4),
             )
-            q_mark = _to_float(q_out.get("marks"), 0.0)
+            q_mark = to_float(q_out.get("marks"), 0.0)
 
         q_out["subquestions"] = sub_rows
         resolved_questions.append(q_out)
-        resolved_q_marks[qn] = _to_float(q_out.get("marks"), 0.0)
+        resolved_q_marks[qn] = to_float(q_out.get("marks"), 0.0)
 
     resolved_structure = {
-        "questions": sorted(resolved_questions, key=lambda r: _to_int(r.get("number"), 0)),
+        "questions": sorted(resolved_questions, key=lambda r: to_int(r.get("number"), 0)),
         "section_math_blocks": section_exprs,
         "total_questions": len(resolved_questions),
         "total_marks": round(_compute_effective_total(resolved_q_marks, resolved_questions), 4),
@@ -899,8 +876,8 @@ async def resolve_visual_marks(
     # Compare only overridden question marks against AI hints.
     ai_visual_mismatches: List[Dict[str, Any]] = []
     for qn in sorted(override_questions):
-        ai_mark = round(_to_float(ai_question_marks.get(qn), 0.0), 4)
-        visual_mark = round(_to_float(visual_question_marks.get(qn), 0.0), 4)
+        ai_mark = round(to_float(ai_question_marks.get(qn), 0.0), 4)
+        visual_mark = round(to_float(visual_question_marks.get(qn), 0.0), 4)
         if abs(ai_mark - visual_mark) > 1e-6:
             ai_visual_mismatches.append(
                 {
@@ -921,9 +898,9 @@ async def resolve_visual_marks(
 
     visual_mark_map: Dict[str, float] = {}
     for qn in sorted(override_questions):
-        visual_mark_map[f"{qn}:"] = round(_to_float(visual_question_marks.get(qn), 0.0), 4)
+        visual_mark_map[f"{qn}:"] = round(to_float(visual_question_marks.get(qn), 0.0), 4)
     for qn, sub in sorted(override_subparts, key=lambda item: (item[0], item[1] or "")):
-        visual_mark_map[f"{qn}:{sub or ''}"] = round(_to_float(visual_sub_marks.get(_key(qn, sub), 0.0), 0.0), 4)
+        visual_mark_map[f"{qn}:{sub or ''}"] = round(to_float(visual_sub_marks.get(_key(qn, sub), 0.0), 0.0), 4)
 
     override_q_ratio = round(
         (len(override_questions) / float(len(question_numbers))) if question_numbers else 0.0,
@@ -932,7 +909,7 @@ async def resolve_visual_marks(
 
     return {
         "resolved_structure": resolved_structure,
-        "header_total_marks": round(_to_float(header_total, 0.0), 4) if header_total is not None else None,
+        "header_total_marks": round(to_float(header_total, 0.0), 4) if header_total is not None else None,
         "header_evidence": header_evidence,
         "header_total_confidence": header_total_confidence,
         "header_total_source": header_source,

@@ -362,7 +362,7 @@ async def preflight_submission_mapping(submission_id: str, user: User = Depends(
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can run preflight mapping")
 
-    from app.layers.ai_structured.engine import preflight_submission_mapping as ai_preflight
+    from app.services.pipelines.ai_structured_engine import preflight_submission_mapping as ai_preflight
 
     try:
         return await ai_preflight(submission_id=submission_id, user_id=user.user_id)

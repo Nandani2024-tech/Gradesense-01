@@ -7,7 +7,7 @@ import json
 from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.utils.safe_numeric import safe_float, safe_int
+from app.utils.safe_numeric import to_float, to_int
 
 
 
@@ -16,10 +16,10 @@ def _normalize_subquestion(sub: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "label": str(sub.get("label") or "").strip(),
         "text": str(sub.get("text") or "").strip(),
-        "marks": round(safe_float(sub.get("marks"), 0.0), 2),
+        "marks": round(to_float(sub.get("marks"), 0.0), 2),
         "mark_source": str(sub.get("mark_source") or "inferred").strip().lower(),
-        "mark_confidence": round(safe_float(sub.get("mark_confidence"), 0.0), 2),
-        "confidence": round(safe_float(sub.get("confidence"), 0.0), 2),
+        "mark_confidence": round(to_float(sub.get("mark_confidence"), 0.0), 2),
+        "confidence": round(to_float(sub.get("confidence"), 0.0), 2),
     }
 
 
@@ -29,7 +29,7 @@ def normalize_structure_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     for q in questions:
         if not isinstance(q, dict):
             continue
-        qn = safe_int(q.get("number"), 0)
+        qn = to_int(q.get("number"), 0)
         if qn <= 0:
             continue
         subquestions = [_normalize_subquestion(sq) for sq in (q.get("subquestions") or []) if isinstance(sq, dict)]
@@ -41,15 +41,15 @@ def normalize_structure_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "instruction": (str(q.get("instruction") or "").strip() or None),
                 "question_text": str(q.get("question_text") or "").strip(),
                 "question_type": str(q.get("question_type") or "descriptive").strip().lower(),
-                "marks": round(safe_float(q.get("marks"), 0.0), 2),
+                "marks": round(to_float(q.get("marks"), 0.0), 2),
                 "options": list(q.get("options") or []) or None,
                 "subquestions": subquestions,
                 "or_group_id": (str(q.get("or_group_id") or "").strip() or None),
                 "image_evidence": list(q.get("image_evidence") or []),
-                "ai_confidence": round(safe_float(q.get("ai_confidence"), 0.0), 2),
+                "ai_confidence": round(to_float(q.get("ai_confidence"), 0.0), 2),
                 "mark_source": str(q.get("mark_source") or "inferred").strip().lower(),
-                "mark_confidence": round(safe_float(q.get("mark_confidence"), 0.0), 2),
-                "confidence": round(safe_float(q.get("confidence"), safe_float(q.get("ai_confidence"), 0.0)), 2),
+                "mark_confidence": round(to_float(q.get("mark_confidence"), 0.0), 2),
+                "confidence": round(to_float(q.get("confidence"), to_float(q.get("ai_confidence"), 0.0)), 2),
             }
         )
 
@@ -68,9 +68,9 @@ def normalize_structure_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         if or_counts.get(str(gid), 0) < 2:
             q["or_group_id"] = None
 
-    total_questions = safe_int(payload.get("total_questions"), len(normalized_questions))
-    total_marks = round(safe_float(payload.get("total_marks"), 0.0), 4)
-    effective_total_marks = round(safe_float(payload.get("effective_total_marks"), total_marks), 4)
+    total_questions = to_int(payload.get("total_questions"), len(normalized_questions))
+    total_marks = round(to_float(payload.get("total_marks"), 0.0), 4)
+    effective_total_marks = round(to_float(payload.get("effective_total_marks"), total_marks), 4)
     section_math_blocks = []
     for block in (payload.get("section_math_blocks") or []):
         if not isinstance(block, dict):
@@ -78,19 +78,19 @@ def normalize_structure_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         range_raw = block.get("range")
         range_obj = None
         if isinstance(range_raw, dict):
-            start = safe_int(range_raw.get("start"), 0)
-            end = safe_int(range_raw.get("end"), 0)
+            start = to_int(range_raw.get("start"), 0)
+            end = to_int(range_raw.get("end"), 0)
             if start > 0 and end >= start:
                 range_obj = {"start": start, "end": end}
         section_math_blocks.append(
             {
                 "section": (str(block.get("section") or "").strip() or None),
                 "expression": str(block.get("expression") or "").strip(),
-                "question_count": _to_int(block.get("question_count"), 0),
-                "per_question_marks": round(_to_float(block.get("per_question_marks"), 0.0), 2),
-                "total_marks": round(_to_float(block.get("total_marks"), 0.0), 2),
-                "page_index": _to_int(block.get("page_index"), 0),
-                "confidence": round(_to_float(block.get("confidence"), 0.0), 2),
+                "question_count": to_int(block.get("question_count"), 0),
+                "per_question_marks": round(to_float(block.get("per_question_marks"), 0.0), 2),
+                "total_marks": round(to_float(block.get("total_marks"), 0.0), 2),
+                "page_index": to_int(block.get("page_index"), 0),
+                "confidence": round(to_float(block.get("confidence"), 0.0), 2),
                 "range": range_obj,
             }
         )
@@ -99,10 +99,10 @@ def normalize_structure_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     for rule in (payload.get("section_math_rules") or []):
         if not isinstance(rule, dict):
             continue
-        start_q = _to_int(rule.get("start_question"), 0)
-        count = _to_int(rule.get("count"), 0)
-        per = round(_to_float(rule.get("marks_per_question"), 0.0), 4)
-        total = round(_to_float(rule.get("total"), 0.0), 4)
+        start_q = to_int(rule.get("start_question"), 0)
+        count = to_int(rule.get("count"), 0)
+        per = round(to_float(rule.get("marks_per_question"), 0.0), 4)
+        total = round(to_float(rule.get("total"), 0.0), 4)
         if start_q <= 0 or count <= 0 or per <= 0 or total <= 0:
             continue
         section_math_rules.append(
@@ -111,7 +111,7 @@ def normalize_structure_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "count": count,
                 "marks_per_question": per,
                 "total": total,
-                "source_page": _to_int(rule.get("source_page"), 0),
+                "source_page": to_int(rule.get("source_page"), 0),
             }
         )
 
@@ -132,14 +132,14 @@ def compute_or_groups_map(questions: List[Dict[str, Any]]) -> Dict[str, List[int
         gid = str(q.get("or_group_id") or "").strip()
         if not gid:
             continue
-        grouped[gid].append(int(q.get("number")))
+        grouped[gid].append(to_int(q.get("number"), 0))
     return {k: sorted(set(v)) for k, v in grouped.items()}
 
 
 def compute_attempt_rules(questions: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     rules: Dict[str, Dict[str, Any]] = {}
     for q in questions:
-        qn = int(q.get("number"))
+        qn = to_int(q.get("number"), 0)
         sub_count = len(q.get("subquestions") or [])
         q_type = str(q.get("question_type") or "").lower()
         attempt_rule = "sum"
@@ -161,11 +161,11 @@ def compute_effective_total(questions: List[Dict[str, Any]]) -> float:
         grouped[q.get("or_group_id")].append(q)
 
     def _q_marks(q: Dict[str, Any]) -> float:
-        parent = _to_float(q.get("marks"), 0.0)
+        parent = to_float(q.get("marks"), 0.0)
         if parent > 0:
             return parent
         # If parent marks explicitly 0 or missing, sum subquestions
-        sub_sum = sum(_to_float(sq.get("marks"), 0.0) for sq in (q.get("subquestions") or []))
+        sub_sum = sum(to_float(sq.get("marks"), 0.0) for sq in (q.get("subquestions") or []))
         return max(parent, sub_sum)
 
     total = 0.0
@@ -206,8 +206,8 @@ def validate_structure(
     subpart_overflow: List[Dict[str, Any]] = []
     visual_evidence_missing: List[int] = []
     for q in questions:
-        parent_marks = _to_float(q.get("marks"), 0.0)
-        sub_sum = sum(_to_float(sq.get("marks"), 0.0) for sq in (q.get("subquestions") or []))
+        parent_marks = to_float(q.get("marks"), 0.0)
+        sub_sum = sum(to_float(sq.get("marks"), 0.0) for sq in (q.get("subquestions") or []))
         if parent_marks > 0 and sub_sum > parent_marks + 1e-6:
             subpart_overflow.append(
                 {
@@ -250,7 +250,7 @@ def validate_structure(
     if expected_total_marks is not None and expected_total_marks > 0:
         if abs(effective_total_marks - float(expected_total_marks)) > 1e-6:
             errors.append(
-                f"total_marks_mismatch:actual={effective_total_marks} expected={round(float(expected_total_marks), 4)}"
+                f"total_marks_mismatch:actual={effective_total_marks} expected={round(to_float(expected_total_marks), 4)}"
             )
 
     if baseline_numbers is not None and sorted(set(baseline_numbers)) != unique_numbers:

@@ -1,5 +1,5 @@
 """College grading layer."""
 
-from .prompts import COLLEGE_SYSTEM_PROMPT
+from .grader import grade_submission
 
-__all__ = ["COLLEGE_SYSTEM_PROMPT"]
+__all__ = ["grade_submission"]

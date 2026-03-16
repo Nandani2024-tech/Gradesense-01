@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.logging_config import logger
 
-from app.utils.safe_numeric import parse_section_math_expression, safe_float, safe_int
+from app.utils.safe_numeric import parse_section_math_expression, to_float, to_int
 from .validation import normalize_structure_payload
 
 
@@ -26,14 +26,14 @@ def _compute_or_groups_map(questions: List[Dict[str, Any]]) -> Dict[str, List[in
         gid = str(q.get("or_group_id") or "").strip()
         if not gid:
             continue
-        grouped[gid].append(safe_int(q.get("number"), 0))
+        grouped[gid].append(to_int(q.get("number"), 0))
     return {gid: sorted({n for n in nums if n > 0}) for gid, nums in grouped.items() if len(set(nums)) >= 2}
 
 
 def _compute_attempt_rules(questions: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     rules: Dict[str, Dict[str, Any]] = {}
     for q in questions:
-        qn = safe_int(q.get("number"), 0)
+        qn = to_int(q.get("number"), 0)
         if qn <= 0:
             continue
         sub_count = len(q.get("subquestions") or [])
@@ -55,7 +55,7 @@ def _compute_attempt_rules(questions: List[Dict[str, Any]]) -> Dict[str, Dict[st
 def _compute_effective_total(questions: List[Dict[str, Any]]) -> float:
     total = 0.0
     for q in questions:
-        marks = max(0.0, safe_float(q.get("marks"), 0.0))
+        marks = max(0.0, to_float(q.get("marks"), 0.0))
         total += marks
     return round(total, 4)
 
@@ -71,7 +71,7 @@ def validate_structure(
 ) -> Dict[str, Any]:
     normalized = normalize_structure_payload(structure or {})
     questions = list(normalized.get("questions") or [])
-    q_numbers = [safe_int(q.get("number"), 0) for q in questions if safe_int(q.get("number"), 0) > 0]
+    q_numbers = [to_int(q.get("number"), 0) for q in questions if to_int(q.get("number"), 0) > 0]
 
     errors: List[str] = []
     warnings: List[str] = []
@@ -99,14 +99,14 @@ def validate_structure(
     duplicate_subparts = 0
     subpart_overflow: List[Dict[str, Any]] = []
     for q in questions:
-        qn = safe_int(q.get("number"), 0)
-        q_marks = max(0.0, safe_float(q.get("marks"), 0.0))
+        qn = to_int(q.get("number"), 0)
+        q_marks = max(0.0, to_float(q.get("marks"), 0.0))
         subparts = list(q.get("subquestions") or [])
         labels = [str(sq.get("label") or "").strip().lower() for sq in subparts if str(sq.get("label") or "").strip()]
         if len(labels) != len(set(labels)):
             duplicate_subparts += 1
 
-        sub_sum = round(sum(max(0.0, safe_float(sq.get("marks"), 0.0)) for sq in subparts), 4)
+        sub_sum = round(sum(max(0.0, to_float(sq.get("marks"), 0.0)) for sq in subparts), 4)
         logger.info("SUBPART_SUM_CHECK q=%s parent=%s sub_sum=%s subparts=%s", qn, round(q_marks, 4), sub_sum, len(subparts))
         if subparts and abs(sub_sum - q_marks) > 1e-6:
             subpart_sum_errors += 1
@@ -131,27 +131,27 @@ def validate_structure(
 
     # Section math consistency.
     section_mismatch = 0
-    ordered = sorted(questions, key=lambda q: safe_int(q.get("number"), 0))
-    by_num = {safe_int(q.get("number"), 0): q for q in ordered}
-    qnums = [safe_int(q.get("number"), 0) for q in ordered if safe_int(q.get("number"), 0) > 0]
+    ordered = sorted(questions, key=lambda q: to_int(q.get("number"), 0))
+    by_num = {to_int(q.get("number"), 0): q for q in ordered}
+    qnums = [to_int(q.get("number"), 0) for q in ordered if to_int(q.get("number"), 0) > 0]
 
     rules = list(normalized.get("section_math_rules") or [])
     if rules:
         for rule in rules:
-            start_q = safe_int(rule.get("start_question"), 0)
-            count = safe_int(rule.get("count"), 0)
-            per = safe_float(rule.get("marks_per_question"), 0.0)
-            total = safe_float(rule.get("total"), 0.0)
+            start_q = to_int(rule.get("start_question"), 0)
+            count = to_int(rule.get("count"), 0)
+            per = to_float(rule.get("marks_per_question"), 0.0)
+            total = to_float(rule.get("total"), 0.0)
             if start_q <= 0 or count <= 0 or per <= 0 or start_q not in qnums:
                 continue
             start_idx = qnums.index(start_q)
             run_nums = qnums[start_idx:start_idx + count]
-            run_sum = round(sum(max(0.0, safe_float((by_num.get(qn) or {}).get("marks"), 0.0)) for qn in run_nums), 4)
+            run_sum = round(sum(max(0.0, to_float((by_num.get(qn) or {}).get("marks"), 0.0)) for qn in run_nums), 4)
             if abs(run_sum - round(total, 4)) > 1e-6:
                 section_mismatch += 1
             for qn in run_nums:
                 q = by_num.get(qn) or {}
-                if abs(max(0.0, safe_float(q.get("marks"), 0.0)) - per) > 1e-6:
+                if abs(max(0.0, to_float(q.get("marks"), 0.0)) - per) > 1e-6:
                     section_mismatch += 1
     else:
         cursor = 0
@@ -160,11 +160,11 @@ def validate_structure(
             if parsed:
                 count, per, _ = parsed
             else:
-                count = safe_int((block or {}).get("question_count"), 0)
-                per = safe_float((block or {}).get("per_question_marks"), 0.0)
+                count = to_int((block or {}).get("question_count"), 0)
+                per = to_float((block or {}).get("per_question_marks"), 0.0)
             if count <= 0 or per <= 0:
                 continue
-            start_q = safe_int(((block or {}).get("range") or {}).get("start"), 0)
+            start_q = to_int(((block or {}).get("range") or {}).get("start"), 0)
             if start_q > 0 and start_q in qnums:
                 start_idx = qnums.index(start_q)
                 run = [by_num.get(qn) for qn in qnums[start_idx:start_idx + count]]
@@ -174,7 +174,7 @@ def validate_structure(
             for q in run:
                 if not q:
                     continue
-                if abs(max(0.0, safe_float(q.get("marks"), 0.0)) - per) > 1e-6 and str(q.get("mark_source") or "").strip().lower() != "margin":
+                if abs(max(0.0, to_float(q.get("marks"), 0.0)) - per) > 1e-6 and str(q.get("mark_source") or "").strip().lower() != "margin":
                     section_mismatch += 1
     if section_mismatch > 0:
         errors.append(f"section_math_inconsistency:{section_mismatch}")
@@ -183,12 +183,12 @@ def validate_structure(
     # OR integrity.
     or_groups_map = _compute_or_groups_map(questions)
     or_integrity_errors = 0
-    by_num = {safe_int(q.get("number"), 0): q for q in questions}
+    by_num = {to_int(q.get("number"), 0): q for q in questions}
     for _, members in or_groups_map.items():
         if len(members) < 2:
             or_integrity_errors += 1
             continue
-        marks = [round(max(0.0, safe_float((by_num.get(qn) or {}).get("marks"), 0.0)), 4) for qn in members]
+        marks = [round(max(0.0, to_float((by_num.get(qn) or {}).get("marks"), 0.0)), 4) for qn in members]
         if len(set(marks)) > 1:
             or_integrity_errors += 1
     if or_integrity_errors > 0:
@@ -197,14 +197,14 @@ def validate_structure(
 
     # Visual evidence coverage.
     visual_map = {
-        safe_int(row.get("number"), 0)
+        to_int(row.get("number"), 0)
         for row in ((visual_entities or {}).get("questions") or [])
-        if safe_int(row.get("number"), 0) > 0
+        if to_int(row.get("number"), 0) > 0
     }
     evidence_covered = 0
     evidence_missing: List[int] = []
     for q in questions:
-        qn = safe_int(q.get("number"), 0)
+        qn = to_int(q.get("number"), 0)
         has_image = bool(q.get("image_evidence") or [])
         has_visual = qn in visual_map
         if has_image or has_visual:
@@ -217,7 +217,7 @@ def validate_structure(
         repair_tasks.append("low_visual_coverage")
 
     # Mark coverage and total.
-    marked_questions = sum(1 for q in questions if max(0.0, safe_float(q.get("marks"), 0.0)) > 0)
+    marked_questions = sum(1 for q in questions if max(0.0, to_float(q.get("marks"), 0.0)) > 0)
     mark_coverage = round((marked_questions / float(len(questions))) if questions else 0.0, 4)
     if mark_coverage < 0.8:
         errors.append(f"mark_coverage_low:{mark_coverage}")

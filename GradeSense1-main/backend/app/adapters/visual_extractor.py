@@ -15,19 +15,24 @@ from app.utils.ocr_provider.patterns import (
     SUBPART_RE,
     WORKING_NOTE_RE,
     MARK_SPLIT_RE,
-    MARK_ONLY_RE
+    MARK_ONLY_RE,
+    MARK_VALUE_RE
 )
-from app.layers.constants import (
+from app.constants.layers import (
+    MCQ_FALLBACK_CONF,
+    OBJECTIVE_OCR_MIN_CONF,
+    REGION_OCR_CONF_MIN,
+    WRITTEN_FALLBACK_CONF,
     VISUAL_HEADER_HEIGHT_RATIO,
     MARGIN_MARK_CONF_THRESHOLD,
     MARGIN_X_RATIO_MIN,
     MARGIN_X_RATIO_MAX,
     ANCHOR_Y_DISTANCE_THRESHOLD,
     SECTION_MATH_Y_SPAN_RATIO,
-    PRECISION_ROUNDING
+    PRECISION_ROUNDING,
 )
 
-from app.layers.ai_structured.safe_numeric import parse_section_math_expression, safe_float, safe_int
+from app.utils.safe_numeric import parse_section_math_expression, safe_float, safe_int
 
 
 def _norm_label(value: Any) -> Optional[str]:

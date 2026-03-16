@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
 
-from app.layers.college.normalization import normalize_answer_pages
+from app.adapters.normalization.college_normalization import normalize_answer_pages
 
 
 def ingest_pdf_pages(answer_images: List[str]) -> Tuple[List[str], List[Dict[str, Any]]]:

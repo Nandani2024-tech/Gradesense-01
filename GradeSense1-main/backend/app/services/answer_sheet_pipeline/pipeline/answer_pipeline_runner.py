@@ -13,7 +13,10 @@ from app.services.answer_sheet_pipeline.ocr.region_ocr import run_region_ocr
 from app.services.answer_sheet_pipeline.packets.packet_builder import build_packets
 from app.services.answer_sheet_pipeline.packets.packet_aligner import align_packets_to_blueprint
 from app.services.answer_sheet_pipeline.structuring.accounting_structure import structure_accounting_answer
-from app.layers.constants import (
+from app.constants.layers import (
+    DEFAULT_POLLING_INTERVAL_SECONDS,
+    FILE_TYPE_QUESTION_PAPER,
+    PDF_IMAGE_BATCH_PAGES,
     MAPPING_CONFIDENCE_THRESHOLD,
     PRECISION_ROUNDING,
 )

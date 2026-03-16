@@ -1,15 +1,12 @@
-"""AI-structured extraction/alignment/grading layer."""
-
-from app.services.pipelines.ai_structured_engine import (
-    extract_and_persist,
-    preflight_submission_mapping,
-    grade_images_with_locked_blueprint,
-    align_submission_for_grading,
-)
+from .mark_reasoner import resolve_marks
+from .validation import normalize_structure_payload, validate_structure
+from .structure_repair import apply_structure_repairs
+from .structure_validator import validate_structure as validate_consistency
 
 __all__ = [
-    "extract_and_persist",
-    "preflight_submission_mapping",
-    "grade_images_with_locked_blueprint",
-    "align_submission_for_grading",
+    "resolve_marks",
+    "normalize_structure_payload",
+    "validate_structure",
+    "apply_structure_repairs",
+    "validate_consistency",
 ]

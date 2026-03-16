@@ -1,5 +1,5 @@
 """Universal layout wrappers."""
 
-from app.layers.college.layout import detect_page_blocks
+from app.adapters.layout.college_layout import detect_page_blocks
 
 __all__ = ["detect_page_blocks"]

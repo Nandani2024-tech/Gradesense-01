@@ -12,7 +12,7 @@ from app.services.pipelines.college_v3.anchor_detection import detect_anchors
 from app.services.pipelines.college_v3.answer_mapping import map_answers
 from app.services.pipelines.college_v3.global_span_builder import build_global_spans
 from app.services.pipelines.college_v3.question_blueprint import build_blueprint_from_spans
-from app.layers.universal.vision_ocr import ocr_pages
+from app.adapters.ocr_adapter import ocr_pages
 
 
 def _phase_timer(phase_name: str, timings: Dict[str, float], start: float) -> None:

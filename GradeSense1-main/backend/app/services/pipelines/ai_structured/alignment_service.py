@@ -15,12 +15,12 @@ from app.services.llm.config import get_llm_api_key
 from app.services.llm import ImageContent, LlmChat, UserMessage
 from app.utils.ocr_provider import get_ocr_provider
 from app.utils.ocr_provider.patterns import ANSWER_MCQ_RE, ANSWER_QUESTION_RE
-from app.layers.constants import (
+from app.constants.layers import (
     ALIGNMENT_COVERAGE_GATE,
+    PRECISION_ROUNDING,
     OBJECTIVE_OCR_MIN_CONF,
     MCQ_FALLBACK_CONF,
     WRITTEN_FALLBACK_CONF,
-    PRECISION_ROUNDING
 )
 
 from app.utils.cache import get_alignment_cache, set_alignment_cache
