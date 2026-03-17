@@ -8,7 +8,7 @@ from typing import List
 from bson import ObjectId
 
 from app.core.database import db
-from app.infrastructure.storage.gridfs_storage import fs
+from app.services.files import retrieve_images, get_file_from_gridfs
 from app.core.logging_config import logger
 
 
@@ -24,10 +24,7 @@ async def get_exam_model_answer_images(exam_id: str) -> List[str]:
         # Try GridFS first (new storage)
         if file_doc.get("gridfs_id"):
             try:
-                from bson import ObjectId
-                gridfs_file = fs.get(ObjectId(file_doc["gridfs_id"]))
-                images = pickle.loads(gridfs_file.read())
-                return images
+                return retrieve_images(file_doc["gridfs_id"])
             except Exception as e:
                 logger.error(f"Error retrieving from GridFS: {e}")
         
@@ -54,10 +51,7 @@ async def get_exam_question_paper_images(exam_id: str) -> List[str]:
         # Try GridFS first (new storage)
         if file_doc.get("gridfs_id"):
             try:
-                from bson import ObjectId
-                gridfs_file = fs.get(ObjectId(file_doc["gridfs_id"]))
-                images = pickle.loads(gridfs_file.read())
-                return images
+                return retrieve_images(file_doc["gridfs_id"])
             except Exception as e:
                 logger.error(f"Error retrieving from GridFS: {e}")
         
@@ -82,8 +76,7 @@ async def get_exam_question_paper_pdf_bytes(exam_id: str) -> bytes:
     if not file_doc or not file_doc.get("gridfs_id"):
         return b""
     try:
-        gridfs_file = fs.get(ObjectId(file_doc["gridfs_id"]))
-        return gridfs_file.read() or b""
+        return get_file_from_gridfs(file_doc["gridfs_id"]) or b""
     except Exception as e:
         logger.error(f"Error retrieving question paper PDF from GridFS: {e}")
         return b""

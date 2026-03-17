@@ -21,11 +21,14 @@ from app.routes.debug import (
 from app.routes.exams import get_blueprint_health as _get_blueprint_health
 from app.routes.grading import grade_papers_background as _grade_papers_background
 from app.routes.submissions import preflight_submission_mapping as _preflight_submission_mapping
+from app.schemas.responses import (
+    GradingJobResponse, PreflightMappingResponse, MessageResponse, BlueprintHealthResponse
+)
 
 router = APIRouter(prefix="/universal", tags=["universal"])
 
 
-@router.post("/upload-answer-pdf")
+@router.post("/upload-answer-pdf", response_model=GradingJobResponse)
 async def upload_answer_pdf_universal(
     exam_id: str = Form(...),
     files: List[UploadFile] = File(...),
@@ -35,7 +38,7 @@ async def upload_answer_pdf_universal(
     return await _grade_papers_background(exam_id=exam_id, files=files, user=user)
 
 
-@router.post("/preflight-map")
+@router.post("/preflight-map", response_model=PreflightMappingResponse)
 async def preflight_map_universal(
     submission_id: str = Form(...),
     user: User = Depends(get_current_user),
@@ -44,7 +47,7 @@ async def preflight_map_universal(
     return await _preflight_submission_mapping(submission_id=submission_id, user=user)
 
 
-@router.post("/grade")
+@router.post("/grade", response_model=GradingJobResponse)
 async def grade_universal(
     exam_id: str = Form(...),
     files: List[UploadFile] = File(...),
@@ -54,7 +57,7 @@ async def grade_universal(
     return await _grade_papers_background(exam_id=exam_id, files=files, user=user)
 
 
-@router.get("/blueprint-health")
+@router.get("/blueprint-health", response_model=BlueprintHealthResponse)
 async def blueprint_health_universal(
     exam_id: str,
     user: User = Depends(get_current_user),
@@ -63,7 +66,7 @@ async def blueprint_health_universal(
     return await _get_blueprint_health(exam_id=exam_id, user=user)
 
 
-@router.get("/debug/ocr-structure")
+@router.get("/debug/ocr-structure", response_model=PreflightMappingResponse)
 async def ocr_structure_universal(
     submission_id: str,
     user: User = Depends(get_current_user),
@@ -72,7 +75,7 @@ async def ocr_structure_universal(
     return await _debug_ocr_structure(submission_id=submission_id, user=user)
 
 
-@router.get("/debug/packet-pipeline")
+@router.get("/debug/packet-pipeline", response_model=PreflightMappingResponse)
 async def packet_pipeline_universal(
     submission_id: str,
     user: User = Depends(get_current_user),
@@ -81,7 +84,7 @@ async def packet_pipeline_universal(
     return await _debug_packet_pipeline(submission_id=submission_id, user=user)
 
 
-@router.get("/debug/grading-audit/{submission_id}")
+@router.get("/debug/grading-audit/{submission_id}", response_model=PreflightMappingResponse)
 async def grading_audit_universal(
     submission_id: str,
     user: User = Depends(get_current_user),

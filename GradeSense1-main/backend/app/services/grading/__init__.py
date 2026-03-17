@@ -25,6 +25,10 @@ from .grading_contract import build_grading_contract
 from .grading_applier import apply_grading_contract
 from .question_classifier import classify_question_type
 
+# Job orchestration services
+from . import grading_job_service
+from . import grading_service
+
 __all__ = [
     "AnswerNormalizer",
     "RubricBuilder",
@@ -45,4 +49,6 @@ __all__ = [
     "build_grading_contract",
     "apply_grading_contract",
     "classify_question_type",
+    "grading_job_service",
+    "grading_service",
 ]

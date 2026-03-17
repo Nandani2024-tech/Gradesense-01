@@ -64,7 +64,7 @@ async def _process_grading_job_core(job_id: str, exam_id: str, files_data: List[
         get_exam_model_answer_text,
         get_exam_model_answer_map,
     )
-    from app.student import extract_student_info_from_paper, parse_student_from_filename, get_or_create_student
+    from app.services.students import student_service
     from app.services.answer_sheet_pipeline import pdf_to_clean_images
     from app.services.file_processing.pdf_converter import pdf_to_images
     from app.services.notifications.notifications_service import create_notification
@@ -162,16 +162,13 @@ async def _process_grading_job_core(job_id: str, exam_id: str, files_data: List[
                     errors.append({"filename": filename, "error": "Failed to extract images from PDF"})
                     continue
                 
-                # Student extraction
-                student_id, student_name = await extract_student_info_from_paper(images, filename)
-                if not student_id or not student_name:
-                    filename_id, filename_name = parse_student_from_filename(filename)
-                    student_id = student_id or filename_id
-                    student_name = student_name or filename_name
-                
-                if not student_id or not student_name:
-                    student_id = student_id or f"AUTO_{uuid.uuid4().hex[:6]}"
-                    student_name = student_name or f"Student {student_id}"
+                # Student extraction & Resolution
+                user_id, student_id, student_name = await student_service.orchestrate_student_id(
+                    images=images,
+                    filename=filename,
+                    batch_id=exam.get("batch_id"),
+                    teacher_id=teacher_id
+                )
 
                 exam = await _wait_for_question_paper_extraction(await _refresh_exam_state())
                 
@@ -230,7 +227,7 @@ async def _process_grading_job_core(job_id: str, exam_id: str, files_data: List[
                 submission_doc = {
                     "submission_id": submission_id,
                     "exam_id": exam_id,
-                    "student_id": student_id,
+                    "student_id": user_id,
                     "student_name": student_name,
                     "pdf_gridfs_id": str(pdf_gridfs_id),
                     "images_gridfs_id": str(images_gridfs_id),
