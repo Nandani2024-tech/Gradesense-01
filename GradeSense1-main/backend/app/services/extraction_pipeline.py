@@ -1,8 +1,9 @@
 import asyncio
 from app.services.answer_sheet_pipeline import pdf_to_clean_images, run_answer_packet_pipeline
 from app.core.logging_config import logger
+from app.adapters.interfaces import AbstractOCRService
 
-async def extract_answers_from_pdf(pdf_bytes: bytes, questions: list):
+async def extract_answers_from_pdf(pdf_bytes: bytes, questions: list, ocr_service: AbstractOCRService):
     """
     Centralized extraction logic: PDF -> Images -> Answer Packets.
     """
@@ -13,7 +14,8 @@ async def extract_answers_from_pdf(pdf_bytes: bytes, questions: list):
     packets = await asyncio.to_thread(
         run_answer_packet_pipeline,
         answer_images=images,
-        questions=questions
+        questions=questions,
+        ocr_service=ocr_service
     )
     # log packet summary for debugging
     try:

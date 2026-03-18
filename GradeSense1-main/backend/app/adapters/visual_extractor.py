@@ -8,9 +8,9 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.logging_config import logger
-from app.utils.ocr_provider import get_ocr_provider
-from app.utils.ocr_provider.models import OCRLine
-from app.utils.ocr_provider.patterns import (
+from app.infrastructure.ocr.provider import get_ocr_provider
+from app.infrastructure.ocr.provider.models import OCRLine
+from app.infrastructure.ocr.provider.patterns import (
     QUESTION_ANCHOR_RE,
     SUBPART_RE,
     WORKING_NOTE_RE,
@@ -32,7 +32,7 @@ from app.constants.layers import (
     PRECISION_ROUNDING,
 )
 
-from app.utils.safe_numeric import parse_section_math_expression, safe_float, safe_int
+from app.infrastructure.serialization.safe_numeric import parse_section_math_expression, safe_float, safe_int
 
 
 def _norm_label(value: Any) -> Optional[str]:

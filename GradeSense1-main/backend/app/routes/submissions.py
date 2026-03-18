@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import Optional, List
 import os
+from app.core.exceptions import CustomServiceException
 
 from app.deps import get_current_user
 from app.models.user import User
@@ -53,10 +54,10 @@ async def get_submission(
             user_role=user.role
         )
         return SubmissionDetailResponse(**submission)
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
     except Exception as e:
         logger.error(f"Error fetching submission {submission_id}: {e}")
-        if isinstance(e, HTTPException):
-            raise e
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -70,13 +71,16 @@ async def update_submission(
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can update submissions")
 
-    result = await submission_service.update_submission(
-        submission_id=submission_id,
-        updates=updates,
-        user_id=user.user_id
-    )
+    try:
+        result = await submission_service.update_submission(
+            submission_id=submission_id,
+            updates=updates,
+            user_id=user.user_id
+        )
 
-    return SubmissionUpdateResponse(message="Submission updated", **result)
+        return SubmissionUpdateResponse(message="Submission updated", **result)
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
 @router.put("/submissions/{submission_id}/unapprove", response_model=MessageResponse)
@@ -85,8 +89,11 @@ async def unapprove_submission(submission_id: str, user: User = Depends(get_curr
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can unapprove submissions")
 
-    await submission_service.unapprove_submission(submission_id)
-    return MessageResponse(message="Submission reverted to pending review")
+    try:
+        await submission_service.unapprove_submission(submission_id)
+        return MessageResponse(message="Submission reverted to pending review")
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
 @router.delete("/submissions/{submission_id}", response_model=MessageResponse)
@@ -95,8 +102,11 @@ async def delete_submission(submission_id: str, user: User = Depends(get_current
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can delete submissions")
 
-    await submission_service.delete_submission(submission_id, user.user_id)
-    return MessageResponse(message="Submission deleted successfully")
+    try:
+        await submission_service.delete_submission(submission_id, user.user_id)
+        return MessageResponse(message="Submission deleted successfully")
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
 @router.post("/submissions/{submission_id}/preflight-map", response_model=PreflightMappingResponse)
@@ -105,8 +115,11 @@ async def preflight_submission_mapping(submission_id: str, user: User = Depends(
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can run preflight mapping")
 
-    data = await submission_service.preflight_mapping(submission_id=submission_id, user_id=user.user_id)
-    return PreflightMappingResponse(**data)
+    try:
+        data = await submission_service.preflight_mapping(submission_id=submission_id, user_id=user.user_id)
+        return PreflightMappingResponse(**data)
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
 @router.get("/exams/{exam_id}/submissions", response_model=List[SubmissionBriefResponse])
@@ -118,10 +131,10 @@ async def get_exam_submissions(exam_id: str, user: User = Depends(get_current_us
 
         submissions = await submission_service.get_exam_submissions(exam_id, user.user_id)
         return [SubmissionBriefResponse(**s) for s in submissions]
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
     except Exception as e:
         logger.error(f"Error fetching submissions for exam {exam_id}: {e}")
-        if isinstance(e, HTTPException):
-            raise e
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -131,9 +144,12 @@ async def bulk_approve_submissions(exam_id: str, user: User = Depends(get_curren
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can approve submissions")
 
-    modified_count = await submission_service.bulk_approve_submissions(
-        exam_id=exam_id,
-        teacher_id=user.user_id
-    )
+    try:
+        modified_count = await submission_service.bulk_approve_submissions(
+            exam_id=exam_id,
+            teacher_id=user.user_id
+        )
 
-    return MessageResponse(message=f"Approved {modified_count} submissions")
+        return MessageResponse(message=f"Approved {modified_count} submissions")
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)

@@ -1,6 +1,6 @@
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone, timedelta
-from fastapi import HTTPException
+from app.core.exceptions import CustomServiceException
 from app.repositories import AdminRepo, ExamRepo, SubmissionRepo, AnalyticsRepo, StudentRepo
 from app.core.logging_config import logger
 from app.core.logging_config import logger
@@ -49,10 +49,13 @@ class AdminService:
             return {"active_now": 0, "pending_feedback": 0, "api_health": 0.0, "system_status": "Unknown"}
 
     async def get_user_details(self, user_id: str) -> Dict[str, Any]:
-        from app.deps import DEFAULT_FEATURES, DEFAULT_QUOTAS
+        from app.services.config_service import config_service
+        from app.services.quota_service import quota_service
+        DEFAULT_FEATURES = config_service.get_default_features()
+        DEFAULT_QUOTAS = quota_service.get_default_quotas()
         user = await self.admin_repo.find_one_user({"user_id": user_id}, projection={"password": 0})
         if not user:
-            raise HTTPException(status_code=404, detail="User not found")
+            raise CustomServiceException(status_code=404, message="User not found")
 
         if "feature_flags" not in user: user["feature_flags"] = DEFAULT_FEATURES
         if "quotas" not in user: user["quotas"] = DEFAULT_QUOTAS
@@ -64,12 +67,12 @@ class AdminService:
         exams_this_month = await self.exam_repo.count_exams({"teacher_id": user_id, "created_at": {"$gte": month_start}})
         
         # This aggregation is a bit complex, might need more repo methods
-        papers_this_month_data = await self.submission_repo.collection.aggregate([
+        papers_this_month_data = await self.submission_repo.aggregate_submissions([
             {"$lookup": {"from": "exams", "localField": "exam_id", "foreignField": "exam_id", "as": "exam"}},
             {"$unwind": "$exam"},
             {"$match": {"exam.teacher_id": user_id, "created_at": {"$gte": month_start}}},
             {"$count": "total"}
-        ]).to_list(1)
+        ], limit=1)
 
         total_students = await self.student_repo.count_students({"teacher_id": user_id})
         total_batches = await self.analytics_repo.count_batches({"teacher_id": user_id})
@@ -85,13 +88,13 @@ class AdminService:
     async def update_user_features(self, user_id: str, features: Dict[str, Any]) -> bool:
         result = await self.admin_repo.update_user({"user_id": user_id}, {"$set": {"feature_flags": features}})
         if result.modified_count == 0:
-            raise HTTPException(status_code=404, detail="User not found")
+            raise CustomServiceException(status_code=404, message="User not found")
         return True
 
     async def update_user_quotas(self, user_id: str, quotas: Dict[str, Any]) -> bool:
         result = await self.admin_repo.update_user({"user_id": user_id}, {"$set": {"quotas": quotas}})
         if result.modified_count == 0:
-            raise HTTPException(status_code=404, detail="User not found")
+            raise CustomServiceException(status_code=404, message="User not found")
         return True
 
     async def update_user_status(self, user_id: str, status: str, reason: Optional[str], admin_email: str) -> bool:
@@ -103,7 +106,7 @@ class AdminService:
         if reason: update_data["status_reason"] = reason
         result = await self.admin_repo.update_user({"user_id": user_id}, {"$set": update_data})
         if result.modified_count == 0:
-            raise HTTPException(status_code=404, detail="User not found")
+            raise CustomServiceException(status_code=404, message="User not found")
         return True
 
     async def get_all_users(self) -> List[Dict[str, Any]]:

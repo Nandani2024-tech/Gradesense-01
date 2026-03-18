@@ -2,8 +2,8 @@ import base64
 import asyncio
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
-from fastapi import HTTPException
 
+from app.core.exceptions import CustomServiceException
 from app.repositories import SubmissionRepo, ExamRepo, AnalyticsRepo
 from app.core.logging_config import logger
 from app.services.score_normalization import normalize_submission_scores
@@ -32,7 +32,7 @@ class SubmissionService:
             projection
         )
         if not submission:
-            raise HTTPException(status_code=404, detail="Submission not found")
+            raise CustomServiceException(status_code=404, message="Submission not found")
 
         # GridFS retrieval
         if include_images:
@@ -77,7 +77,7 @@ class SubmissionService:
 
         if user_role == "student":
             if not exam or not exam.get("results_published"):
-                raise HTTPException(status_code=403, detail="Results not yet published")
+                raise CustomServiceException(status_code=403, message="Results not yet published")
             visibility = exam.get("student_visibility", {})
             if not visibility.get("show_answer_sheet", True):
                 submission["file_images"] = []
@@ -131,7 +131,7 @@ class SubmissionService:
 
         original_submission = await self.submission_repo.find_one_submission({"submission_id": submission_id})
         if not original_submission:
-            raise HTTPException(status_code=404, detail="Submission not found")
+            raise CustomServiceException(status_code=404, message="Submission not found")
 
         question_scores = updates.get("question_scores", [])
         total_score = sum(qs.get("obtained_marks", 0) for qs in question_scores)
@@ -180,12 +180,20 @@ class SubmissionService:
         """Approve all submissions for an exam."""
         exam = await self.exam_repo.find_one_exam({"exam_id": exam_id, "teacher_id": teacher_id})
         if not exam:
-            raise HTTPException(status_code=404, detail="Exam not found")
+            raise CustomServiceException(status_code=404, message="Exam not found")
+
+        result = await self.submission_repo.update_many_submissions(
+            {"exam_id": exam_id, "status": {"$ne": "teacher_reviewed"}},
+            {"$set": {"status": "teacher_reviewed", "is_reviewed": True}}
+        )
+
+        return result.modified_count
+
     async def unapprove_submission(self, submission_id: str) -> None:
         """Revert a submission back to pending review status."""
         submission = await self.submission_repo.find_one_submission({"submission_id": submission_id})
         if not submission:
-            raise HTTPException(status_code=404, detail="Submission not found")
+            raise CustomServiceException(status_code=404, message="Submission not found")
 
         await self.submission_repo.update_submission(
             submission_id,
@@ -196,19 +204,17 @@ class SubmissionService:
         """Delete a specific submission."""
         submission = await self.submission_repo.find_one_submission({"submission_id": submission_id})
         if not submission:
-            raise HTTPException(status_code=404, detail="Submission not found")
+            raise CustomServiceException(status_code=404, message="Submission not found")
 
         exam = await self.exam_repo.find_one_exam({
             "exam_id": submission["exam_id"],
             "teacher_id": user_id
         })
         if not exam:
-            raise HTTPException(status_code=403, detail="You don't have permission to delete this submission")
+            raise CustomServiceException(status_code=403, message="You don't have permission to delete this submission")
 
         await self.submission_repo.delete_submission(submission_id)
-        # Also delete re-evaluations (using analytics_repo potentially if we add it or add it to submission_repo)
-        # For now I'll use submission_repo.collection for things not yet abstraction or add to repo
-        await self.submission_repo.collection.database.re_evaluations.delete_many({"submission_id": submission_id})
+        await self.submission_repo.delete_re_evaluations_by_submission_id(submission_id)
 
     async def get_submissions(
         self,
@@ -270,20 +276,13 @@ class SubmissionService:
         """Get all submissions for a specific exam."""
         exam = await self.exam_repo.find_one_exam({"exam_id": exam_id, "teacher_id": user_id})
         if not exam:
-            raise HTTPException(status_code=404, detail="Exam not found")
+            raise CustomServiceException(status_code=404, message="Exam not found")
 
         return await self.submission_repo.find_submissions(
             {"exam_id": exam_id},
             projection={"file_data": 0, "file_images": 0},
             limit=1000
         )
-
-        result = await self.submission_repo.update_many_submissions(
-            {"exam_id": exam_id, "status": {"$ne": "teacher_reviewed"}},
-            {"$set": {"status": "teacher_reviewed", "is_reviewed": True}}
-        )
-
-        return result.modified_count
 
     async def create_submission(
         self,
@@ -377,15 +376,15 @@ class SubmissionService:
         except RuntimeError as exc:
             reason = str(exc)
             if reason == "submission_not_found":
-                raise HTTPException(status_code=404, detail="Submission not found")
+                raise CustomServiceException(status_code=404, message="Submission not found")
             if reason == "exam_not_found":
-                raise HTTPException(status_code=404, detail="Exam not found")
+                raise CustomServiceException(status_code=404, message="Exam not found")
             if reason == "blueprint_not_locked":
-                raise HTTPException(status_code=409, detail="Blueprint is not locked for this exam")
-            raise HTTPException(status_code=400, detail=f"Preflight failed: {reason}")
+                raise CustomServiceException(status_code=409, message="Blueprint is not locked for this exam")
+            raise CustomServiceException(status_code=400, message=f"Preflight failed: {reason}")
         except Exception as exc:
             logger.error("Preflight mapping failed for submission %s: %s", submission_id, exc, exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Preflight failed: {str(exc)}")
+            raise CustomServiceException(status_code=500, message=f"Preflight failed: {str(exc)}")
 
 submission_service = SubmissionService()
 

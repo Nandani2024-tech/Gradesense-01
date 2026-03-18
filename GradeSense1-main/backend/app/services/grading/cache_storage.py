@@ -1,12 +1,13 @@
 import json
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Tuple
-from app.core.database import db
+from app.repositories import GradingRepo
 from app.core.logging_config import logger
 from app.models.submission import QuestionScore
 from .constants import GRADING_CACHE_VERSION, DISABLE_GRADING_CACHE
 
 # In-memory grading cache
+grading_repo = GradingRepo()
 grading_cache = {}
 grading_cache_meta = {}
 
@@ -23,7 +24,7 @@ async def get_cached_grading(paper_hash: str, skip_cache: bool = False) -> Optio
 
     # Check database cache
     try:
-        cached_result = await db.grading_results.find_one({"paper_hash": paper_hash})
+        cached_result = await grading_repo.find_one_grading_result({"paper_hash": paper_hash})
         if cached_result and "results" in cached_result:
             logger.info(f"Cache hit (db) for paper {paper_hash}")
             results_data = json.loads(cached_result["results"])
@@ -54,7 +55,7 @@ async def save_grading_to_cache(paper_hash: str, scores: List[QuestionScore], pa
         
         # Update database cache
         results_json = json.dumps([s.model_dump() for s in scores])
-        await db.grading_results.update_one(
+        await grading_repo.update_grading_result(
             {"paper_hash": paper_hash},
             {"$set": {
                 "paper_hash": paper_hash,

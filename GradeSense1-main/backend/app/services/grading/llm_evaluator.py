@@ -2,7 +2,7 @@ import json
 import re
 from typing import Dict, Any, Optional
 from app.services.grading.score_validator import ScoreValidator
-from app.services.llm import UserMessage
+from app.adapters.interfaces import AbstractLLMService
 from app.services.grading.constants import (
     LLM_PROMPT_TEMPLATE,
     JSON_EXTRACTOR_PATTERN
@@ -14,8 +14,8 @@ class LlmEvaluator:
     Implements a 6-step semantic evaluation process for grading OCR-derived student answers.
     """
     
-    def __init__(self, llm_client=None):
-        self.llm_client = llm_client
+    def __init__(self, llm_service: AbstractLLMService = None):
+        self.llm_service = llm_service
         self.validator = ScoreValidator()
 
     def _build_prompt(self, 
@@ -64,9 +64,9 @@ class LlmEvaluator:
         )
         
         try:
-            if self.llm_client:
-                # Actual LLM call using the correct interface
-                raw_response = await self.llm_client.send_message(UserMessage(prompt))
+            if self.llm_service:
+                # Actual LLM call using the base adapter interface
+                raw_response = await self.llm_service.predict(prompt)
             else:
                 # Mock response for standalone testing
                 raw_response = json.dumps({

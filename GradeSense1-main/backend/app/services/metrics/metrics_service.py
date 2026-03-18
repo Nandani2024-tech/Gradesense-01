@@ -7,16 +7,18 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict
 
-from app.core.database import db
+from app.repositories import MetricsRepo
 from app.core.logging_config import logger
 
+
+metrics_repo = MetricsRepo()
 
 async def log_api_metric(endpoint: str, method: str, response_time_ms: int, 
                          status_code: int, error_type: Optional[str], 
                          user_id: Optional[str], ip_address: Optional[str]):
     """Log API metrics to database"""
     try:
-        await db.api_metrics.insert_one({
+        await metrics_repo.insert_api_metric({
             "endpoint": endpoint,
             "method": method,
             "response_time_ms": response_time_ms,
@@ -37,7 +39,7 @@ async def log_user_event(event_type: str, user_id: str, role: str,
         country = "Unknown"
         region = "Unknown"
         
-        await db.metrics_logs.insert_one({
+        await metrics_repo.insert_metrics_log({
             "event_id": f"evt_{uuid.uuid4().hex[:12]}",
             "event_type": event_type,
             "user_id": user_id,
@@ -58,12 +60,12 @@ async def cleanup_old_metrics():
         one_year_ago = (datetime.now(timezone.utc) - timedelta(days=365)).isoformat()
         
         # Delete old metrics logs
-        result1 = await db.metrics_logs.delete_many({"timestamp": {"$lt": one_year_ago}})
-        logger.info(f"Deleted {result1.deleted_count} old metrics_logs records")
+        deleted_logs = await metrics_repo.delete_old_logs(one_year_ago)
+        logger.info(f"Deleted {deleted_logs} old metrics_logs records")
         
         # Delete old API metrics
-        result2 = await db.api_metrics.delete_many({"timestamp": {"$lt": one_year_ago}})
-        logger.info(f"Deleted {result2.deleted_count} old api_metrics records")
+        deleted_metrics = await metrics_repo.delete_old_metrics(one_year_ago)
+        logger.info(f"Deleted {deleted_metrics} old api_metrics records")
         
         # Keep grading_analytics forever as it's valuable for long-term insights
         # but delete associated metadata that's less critical

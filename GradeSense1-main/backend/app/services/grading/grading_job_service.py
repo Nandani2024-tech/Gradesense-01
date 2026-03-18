@@ -1,6 +1,9 @@
 from datetime import datetime, timezone
 import uuid
 from typing import Dict, Any, List, Optional
+import asyncio
+
+from app.core.exceptions import CustomServiceException
 from app.repositories import AnalyticsRepo, ExamRepo
 from app.core.logging_config import logger
 
@@ -31,7 +34,7 @@ async def create_grading_job(exam_id: str, teacher_id: str, total_papers: int) -
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
 
-    await analytics_repo.grading_jobs_collection.insert_one(job_record)
+    await analytics_repo.insert_grading_job(job_record)
     
     # Lock the exam
     await exam_repo.update_exam(
@@ -51,8 +54,8 @@ async def update_job_progress(job_id: str, successful_inc: int = 0, failed_inc: 
     """
     Incrementally updates job progress and counters.
     """
-    await analytics_repo.grading_jobs_collection.update_one(
-        {"job_id": job_id},
+    await analytics_repo.update_grading_job(
+        job_id,
         {
             "$inc": {
                 "processed_papers": successful_inc + failed_inc,
@@ -80,8 +83,8 @@ async def mark_job_status(job_id: str, status: str, error: Optional[str] = None)
     if error:
         update_data["error"] = error
         
-    await analytics_repo.grading_jobs_collection.update_one(
-        {"job_id": job_id},
+    await analytics_repo.update_grading_job(
+        job_id,
         {"$set": update_data}
     )
 
@@ -97,26 +100,26 @@ async def release_exam_lock(exam_id: str, job_id: str):
 
 async def get_job_status(job_id: str, user_id: str, user_role: str) -> Dict[str, Any]:
     """Get job status and verify access."""
-    job = await analytics_repo.grading_jobs_collection.find_one({"job_id": job_id}, {"_id": 0})
+    job = await analytics_repo.find_one_grading_job({"job_id": job_id})
     if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+        raise CustomServiceException(status_code=404, message="Job not found")
     if user_role == "teacher" and job["teacher_id"] != user_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+        raise CustomServiceException(status_code=403, message="Access denied")
     return job
 
 async def cancel_job(job_id: str, user_id: str, user_role: str) -> Dict[str, Any]:
     """Cancel an ongoing job."""
-    job = await analytics_repo.grading_jobs_collection.find_one({"job_id": job_id}, {"_id": 0})
+    job = await analytics_repo.find_one_grading_job({"job_id": job_id})
     if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+        raise CustomServiceException(status_code=404, message="Job not found")
 
     if user_role == "teacher" and job["teacher_id"] != user_id:
-        raise HTTPException(status_code=403, detail="Access denied")
+        raise CustomServiceException(status_code=403, message="Access denied")
 
     if job["status"] in ["queued", "processing"]:
-        await analytics_repo.grading_jobs_collection.update_one(
-            {"job_id": job_id},
-            {"$set": {"status": "cancelled", "error": "Cancelled by user"}}
+        await analytics_repo.update_grading_job(
+            job_id,
+            {"$set": {"status": "cancelled", "error": "Cancelled by user", "updated_at": datetime.now(timezone.utc).isoformat()}}
         )
         return {"message": "Job cancelled successfully", "job_id": job_id}
     else:

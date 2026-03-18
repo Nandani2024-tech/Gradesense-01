@@ -4,6 +4,10 @@ from .exam_repo import ExamRepo
 from .feedback_repo import FeedbackRepo
 from .analytics_repo import AnalyticsRepo
 from .admin_repo import AdminRepo
+from .task_repo import TaskRepo
+from .metrics_repo import MetricsRepo
+from .file_repo import FileRepo
+from .grading_repo import GradingRepo
 
 __all__ = [
     "StudentRepo",
@@ -11,5 +15,9 @@ __all__ = [
     "ExamRepo",
     "FeedbackRepo",
     "AnalyticsRepo",
-    "AdminRepo"
+    "AdminRepo",
+    "TaskRepo",
+    "MetricsRepo",
+    "FileRepo",
+    "GradingRepo"
 ]

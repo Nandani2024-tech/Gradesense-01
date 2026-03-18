@@ -6,7 +6,7 @@ from typing import List
 from app.deps import get_current_user
 from app.models.user import User
 from app.schemas.responses import (
-    NotificationListResponse, NotificationActionResponse, MessageResponse
+    NotificationListResponse, NotificationActionResponse, MessageResponse, NotificationItem
 )
 from app.services.notifications.notifications_service import notifications_service
 

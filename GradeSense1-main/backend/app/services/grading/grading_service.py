@@ -2,8 +2,8 @@ import asyncio
 import uuid
 from datetime import datetime, timezone
 from typing import List, Dict, Any
-from fastapi import HTTPException, UploadFile
-
+from fastapi import UploadFile
+from app.core.exceptions import CustomServiceException
 from app.repositories import ExamRepo, SubmissionRepo, AnalyticsRepo
 from app.core.logging_config import logger
 from app.services.files import is_valid_answer_pdf
@@ -25,25 +25,25 @@ async def queue_grading_job(exam_id: str, files: List[UploadFile], user: Any) ->
     """
     # 1. Validation (Moved from route)
     if user.role != "teacher":
-        raise HTTPException(status_code=403, detail="Only teachers can upload papers")
+        raise CustomServiceException(status_code=403, message="Only teachers can upload papers")
 
     exam = await exam_repo.find_one_exam({"exam_id": exam_id, "teacher_id": user.user_id})
     if not exam:
-        raise HTTPException(status_code=404, detail="Exam not found")
+        raise CustomServiceException(status_code=404, message="Exam not found")
     
     extraction_processing = bool(exam.get("question_paper_processing")) or (
         str(exam.get("question_extraction_status", "")).lower() == "processing"
     )
     if extraction_processing:
-        raise HTTPException(
+        raise CustomServiceException(
             status_code=409,
-            detail="Question paper extraction is still in progress. Wait until it finishes, then grade.",
+            message="Question paper extraction is still in progress. Wait until it finishes, then grade.",
         )
 
     if not exam.get("questions"):
-        raise HTTPException(
+        raise CustomServiceException(
             status_code=400,
-            detail="No extracted questions found. Upload/extract question paper first.",
+            message="No extracted questions found. Upload/extract question paper first.",
         )
 
     # 2. Read and validate files
@@ -53,14 +53,14 @@ async def queue_grading_job(exam_id: str, files: List[UploadFile], user: Any) ->
         if not file_bytes:
             continue
         if not is_valid_answer_pdf(file.filename or "", file_bytes):
-            raise HTTPException(
+            raise CustomServiceException(
                 status_code=400,
-                detail=f"Invalid answer-sheet file '{file.filename}'. Only actual PDF answer sheets are accepted.",
+                message=f"Invalid answer-sheet file '{file.filename}'. Only actual PDF answer sheets are accepted.",
             )
         files_data.append({"filename": file.filename, "content": file_bytes})
 
     if not files_data:
-        raise HTTPException(status_code=400, detail="No valid PDF files uploaded")
+        raise CustomServiceException(status_code=400, message="No valid PDF files uploaded")
 
     # 3. Create job via job service
     job_id = await grading_job_service.create_grading_job(
@@ -68,6 +68,7 @@ async def queue_grading_job(exam_id: str, files: List[UploadFile], user: Any) ->
         teacher_id=user.user_id, 
         total_papers=len(files_data)
     )
+    logger.info("GRADING_JOB_QUEUED exam_id=%s job_id=%s paper_count=%s", exam_id, job_id, len(files_data))
 
     # 4. Trigger worker (Async)
     # We pass necessary context to the worker
@@ -113,21 +114,19 @@ async def create_submission_from_file(
     }
     
     await submission_repo.insert_submission(submission)
+    logger.info("SUBMISSION_INSERTED exam_id=%s submission_id=%s student_id=%s", exam_id, submission_id, student_info["student_id"])
     
     # Push lightweight summary into the job
-    await analytics_repo.grading_jobs_collection.update_one(
-        {"job_id": job_id},
-        {"$push": {"submissions": {
-            "submission_id": submission_id,
-            "student_id": student_info["student_id"],
-            "student_name": student_info["student_name"],
-            "status": "ai_graded",
-            "total_score": result.get("total_awarded", 0.0),
-            "percentage": percentage,
-            "brief_feedback": submission.get("brief_feedback"),
-            "logs": result.get("logs", [])
-        }}}
-    )
+    await analytics_repo.add_submission_to_job(job_id, {
+        "submission_id": submission_id,
+        "student_id": student_info["student_id"],
+        "student_name": student_info["student_name"],
+        "status": "ai_graded",
+        "total_score": result.get("total_awarded", 0.0),
+        "percentage": percentage,
+        "brief_feedback": submission.get("brief_feedback"),
+        "logs": result.get("logs", [])
+    })
     
     
     return submission_id
@@ -144,7 +143,7 @@ async def regrade_all_submissions(exam_id: str, user_id: str) -> Dict[str, Any]:
 
     exam = await exam_repo.find_one_exam({"exam_id": exam_id, "teacher_id": user_id})
     if not exam:
-        raise HTTPException(status_code=404, detail="Exam not found")
+        raise CustomServiceException(status_code=404, message="Exam not found")
     
     exam = await blueprint_service.ensure_blueprint_locked(exam_id, context="regrading")
     submissions = await submission_repo.find_submissions({"exam_id": exam_id})
@@ -161,6 +160,7 @@ async def regrade_all_submissions(exam_id: str, user_id: str) -> Dict[str, Any]:
     model_answer_text = await get_exam_model_answer_text(exam_id)
     model_answer_map = await get_exam_model_answer_map(exam_id)
 
+    logger.info("REGRADE_ALL_STARTED exam_id=%s submission_count=%s", exam_id, len(submissions))
     regraded_count = 0
     errors = []
 
@@ -267,19 +267,19 @@ async def grade_student_submissions(exam_id: str, user_id: str) -> Dict[str, Any
     
     exam = await exam_repo.find_one_exam({"exam_id": exam_id})
     if not exam:
-        raise HTTPException(status_code=404, detail="Exam not found")
+        raise CustomServiceException(status_code=404, message="Exam not found")
 
     if exam["teacher_id"] != user_id:
-        raise HTTPException(status_code=403, detail="Not your exam")
+        raise CustomServiceException(status_code=403, message="Not your exam")
 
     if exam.get("exam_mode") != "student_upload":
-        raise HTTPException(status_code=400, detail="Not a student-upload exam")
+        raise CustomServiceException(status_code=400, message="Not a student-upload exam")
     
     exam = await blueprint_service.ensure_blueprint_locked(exam_id, context="student submission grading")
     submissions = await submission_repo.find_student_submissions({"exam_id": exam_id, "status": "submitted"})
 
     if not submissions:
-        raise HTTPException(status_code=400, detail="No submissions to grade")
+        raise CustomServiceException(status_code=400, message="No submissions to grade")
 
     job_id = f"job_{uuid.uuid4().hex[:12]}"
     tasks_created = []
@@ -300,7 +300,7 @@ async def grade_student_submissions(exam_id: str, user_id: str) -> Dict[str, Any
             },
             "result": None
         }
-        await analytics_repo.tasks_collection.insert_one(task_doc)
+        await analytics_repo.insert_task(task_doc)
         tasks_created.append(task_id)
 
     job_doc = {
@@ -319,7 +319,7 @@ async def grade_student_submissions(exam_id: str, user_id: str) -> Dict[str, Any
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "task_ids": tasks_created
     }
-    await analytics_repo.grading_jobs_collection.insert_one(job_doc)
+    await analytics_repo.insert_grading_job(job_doc)
     await exam_repo.update_exam(exam_id, {"$set": {"status": "grading", "grading_job_id": job_id}})
 
     return {

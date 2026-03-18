@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, List, Tuple
 from app.core.logging_config import logger
-from app.utils.safe_numeric import to_float, to_int
+from app.infrastructure.serialization.safe_numeric import to_float, to_int
 
 
 def _section_rule_priority(rule: Dict[str, Any]) -> int:

@@ -1,7 +1,6 @@
 from typing import List, Dict, Any, Optional
 from app.repositories import SubmissionRepo, ExamRepo, AnalyticsRepo, StudentRepo
 from app.services.llm.grading_llm_service import grading_llm_service
-from app.core.database import db
 from app.core.logging_config import logger
 
 class MetricsService:

@@ -12,17 +12,17 @@ from bson import ObjectId
 from pymongo import ReturnDocument
 
 from app.core.logging_config import logger
-from app.core.database import db
-from app.infrastructure.storage.gridfs_storage import fs
+from app.core.exceptions import CustomServiceException
+from app.repositories import ExamRepo, SubmissionRepo, FileRepo
 from app.models.submission import QuestionScore
 from app.services.storage.gridfs_helpers import get_exam_question_paper_images
 
-from app.services.pipelines.ai_structured.alignment_service import ALIGNMENT_COVERAGE_GATE, align_answers
-from app.utils.cache import get_structure_cache, set_structure_cache
+from app.services.pipelines.ai_structured.grading.alignment_service import ALIGNMENT_COVERAGE_GATE, align_answers
+from app.infrastructure.cache import get_structure_cache, set_structure_cache
 from app.services.pipelines.ai_extraction_service import extract_question_structure
-from app.services.pipelines.ai_structured.grading_interface import GRADING_CONTRACT_VERSION, grade_answers_with_contracts
+from app.services.pipelines.ai_structured.grading.grading_interface import GRADING_CONTRACT_VERSION, grade_answers_with_contracts
 from app.services.llm.prompts.ai_structured_prompts import PROMPT_VERSION
-from app.services.pipelines.ai_structured.validation import (
+from app.layers.ai_structured.validation import (
     compute_attempt_rules,
     compute_effective_total,
     compute_or_groups_map,
@@ -31,252 +31,34 @@ from app.services.pipelines.ai_structured.validation import (
     validate_structure,
 )
 
+# Utility Imports
+from app.services.pipelines.ai_structured.utils.common_utils import _utc_now, _iso_now, _to_float
+from app.services.pipelines.ai_structured.utils.structure_utils import (
+    _question_structure_to_legacy_questions,
+    _structure_confidence,
+    _apply_audit_tree_marks,
+    _derive_total_marks,
+)
+from app.services.pipelines.ai_structured.utils.file_utils import _get_submission_images
+from app.services.pipelines.ai_structured.utils.lock_utils import (
+    _acquire_exam_lock,
+    _release_exam_lock,
+    LOCK_TTL_MINUTES,
+)
+from app.services.pipelines.ai_structured.utils.blueprint_utils import (
+    _create_blueprint_snapshot,
+    PIPELINE_VERSION,
+)
+from app.services.pipelines.ai_structured.utils.loaders import _load_exam_and_submission
 
-PIPELINE_VERSION = "ai_structured_v1"
 DEFAULT_MODEL_NAME = "gemini-2.5-flash"
-LOCK_TTL_MINUTES = int(os.getenv("AI_STRUCTURED_LOCK_TTL_MINUTES", "20"))
 OVERALL_REVIEW_THRESHOLD = float(os.getenv("AI_STRUCTURED_REVIEW_THRESHOLD", "0.6"))
 ALIGNMENT_COVERAGE_THRESHOLD = float(os.getenv("AI_STRUCTURED_ALIGNMENT_GATE", str(ALIGNMENT_COVERAGE_GATE)))
 
 
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _iso_now() -> str:
-    return _utc_now().isoformat()
-
-
-def _to_float(value: Any, default: float = 0.0) -> float:
-    try:
-        if value is None:
-            return float(default)
-        return float(value)
-    except Exception:
-        return float(default)
-
-
-def _question_structure_to_legacy_questions(structure: Dict[str, Any]) -> List[Dict[str, Any]]:
-    legacy = []
-    for q in (structure.get("questions") or []):
-        legacy.append(
-            {
-                "question_number": int(q.get("number")),
-                "question_uuid": str(q.get("question_uuid") or f"qv2_{int(q.get('number'))}"),
-                "max_marks": _to_float(q.get("marks"), 0.0),
-                "question_text": str(q.get("question_text") or "").strip(),
-                "rubric": str(q.get("question_text") or "").strip(),
-                "question_type": str(q.get("question_type") or "descriptive"),
-                "or_group_id": q.get("or_group_id"),
-                "sub_questions": [
-                    {
-                        "sub_id": str(sq.get("label") or "").strip(),
-                        "max_marks": _to_float(sq.get("marks"), 0.0),
-                        "rubric": str(sq.get("text") or "").strip(),
-                    }
-                    for sq in (q.get("subquestions") or [])
-                ],
-            }
-        )
-    return legacy
-
-
-def _structure_confidence(structure: Dict[str, Any]) -> float:
-    confidences = [_to_float(q.get("ai_confidence"), 0.0) for q in (structure.get("questions") or [])]
-    if not confidences:
-        return 0.0
-    return round(sum(confidences) / len(confidences), 2)
-
-
-def _apply_audit_tree_marks(structure: Dict[str, Any], question_audit_tree: Optional[List[Dict[str, Any]]]) -> Dict[str, Any]:
-    normalized = normalize_structure_payload(structure or {})
-    audit_rows = [row for row in (question_audit_tree or []) if isinstance(row, dict)]
-    if not audit_rows:
-        return normalized
-
-    by_num: Dict[int, Dict[str, Any]] = {
-        int(q.get("number")): q
-        for q in (normalized.get("questions") or [])
-        if str(q.get("number", "")).isdigit()
-    }
-    for row in audit_rows:
-        qn = int(row.get("number") or 0)
-        if qn <= 0 or qn not in by_num:
-            continue
-        q = by_num[qn]
-        q["marks"] = _to_float(row.get("total_marks"), _to_float(q.get("marks"), 0.0))
-        q["mark_source"] = str(row.get("mark_source") or q.get("mark_source") or "inferred")
-        q["distribution_mode"] = str(row.get("distribution_mode") or q.get("distribution_mode") or "direct")
-        q["evidence_refs"] = list(row.get("evidence_refs") or q.get("evidence_refs") or [])
-
-        audit_sub = {
-            str(s.get("label") or "").strip().lower(): s
-            for s in (row.get("subparts") or [])
-            if str(s.get("label") or "").strip()
-        }
-        if audit_sub:
-            new_sub = []
-            for sq in (q.get("subquestions") or []):
-                lbl = str(sq.get("label") or "").strip().lower()
-                if not lbl:
-                    new_sub.append(sq)
-                    continue
-                a = audit_sub.get(lbl)
-                if not a:
-                    new_sub.append(sq)
-                    continue
-                sq = dict(sq)
-                sq["marks"] = _to_float(a.get("marks"), _to_float(sq.get("marks"), 0.0))
-                sq["mark_source"] = str(a.get("source") or sq.get("mark_source") or "inferred")
-                new_sub.append(sq)
-            q["subquestions"] = new_sub
-        by_num[qn] = q
-
-    normalized["questions"] = [by_num[int(q.get("number"))] for q in (normalized.get("questions") or []) if str(q.get("number", "")).isdigit()]
-    normalized["total_marks"] = compute_effective_total(normalized.get("questions") or [])
-    normalized["effective_total_marks"] = normalized["total_marks"]
-    return normalized
-
-
-def _derive_total_marks(structure: Dict[str, Any]) -> float:
-    grouped: Dict[Optional[str], List[Dict[str, Any]]] = {}
-    for q in (structure.get("questions") or []):
-        grouped.setdefault(q.get("or_group_id"), []).append(q)
-
-    def _q_marks(q: Dict[str, Any]) -> float:
-        marks = _to_float(q.get("marks"), 0.0)
-        if marks > 0:
-            return marks
-        return sum(_to_float(sq.get("marks"), 0.0) for sq in (q.get("subquestions") or []))
-
-    total = 0.0
-    for gid, qs in grouped.items():
-        if gid:
-            total += max((_q_marks(q) for q in qs), default=0.0)
-        else:
-            total += sum(_q_marks(q) for q in qs)
-    return round(total, 2)
-
-
-async def _get_submission_images(submission: Dict[str, Any]) -> List[str]:
-    images = list(submission.get("file_images") or [])
-    if images:
-        return images
-
-    gridfs_id = submission.get("images_gridfs_id")
-    if not gridfs_id:
-        return []
-
-    try:
-        oid = ObjectId(gridfs_id)
-        if fs.exists(oid):
-            import pickle
-
-            return pickle.loads(fs.get(oid).read())
-    except Exception as exc:
-        logger.error("Could not load submission images from GridFS submission=%s error=%s", submission.get("submission_id"), exc)
-    return []
-
-
-async def _acquire_exam_lock(exam_id: str, *, state: str, owner: str) -> Dict[str, Any]:
-    now = _utc_now()
-    stale_before = (now - timedelta(minutes=LOCK_TTL_MINUTES)).isoformat()
-    now_iso = now.isoformat()
-
-    filter_query = {
-        "exam_id": exam_id,
-        "$or": [
-            {"processing_state": {"$exists": False}},
-            {"processing_state": "idle"},
-            {"processing_lock_at": {"$lt": stale_before}},
-            {"processing_lock_owner": owner},
-        ],
-    }
-
-    update = {
-        "$set": {
-            "processing_state": state,
-            "processing_lock_at": now_iso,
-            "processing_lock_owner": owner,
-        }
-    }
-
-    locked_exam = await db.exams.find_one_and_update(
-        filter_query,
-        update,
-        projection={"_id": 0},
-        return_document=ReturnDocument.AFTER,
-    )
-    if not locked_exam:
-        raise RuntimeError(f"processing_lock_busy:{exam_id}:{state}")
-
-    return locked_exam
-
-
-async def _release_exam_lock(exam_id: str, *, owner: str) -> None:
-    await db.exams.update_one(
-        {"exam_id": exam_id, "processing_lock_owner": owner},
-        {
-            "$set": {
-                "processing_state": "idle",
-                "processing_lock_at": _iso_now(),
-            },
-            "$unset": {"processing_lock_owner": ""},
-        },
-    )
-
-
-async def _create_blueprint_snapshot(
-    *,
-    exam: Dict[str, Any],
-    structure: Dict[str, Any],
-    validation_report: Dict[str, Any],
-    extraction_hash: str,
-    model_name: str,
-) -> Tuple[int, Dict[str, Any]]:
-    previous_version = int(exam.get("blueprint_version", 0) or 0)
-    next_version = previous_version + 1
-
-    normalized = normalize_structure_payload(structure)
-    question_count = len(normalized.get("questions") or [])
-    effective_total_marks = _to_float(validation_report.get("effective_total_marks"), 0.0)
-    or_groups_map = validation_report.get("or_groups_map") or compute_or_groups_map(normalized.get("questions") or [])
-    attempt_rules = validation_report.get("attempt_rules") or compute_attempt_rules(normalized.get("questions") or [])
-    structure_conf = _structure_confidence(normalized)
-    shash = structure_hash(normalized)
-    question_audit_tree = list(validation_report.get("question_audit_tree") or structure.get("question_audit_tree") or [])
-    unresolved_flags = list(validation_report.get("unresolved_flags") or validation_report.get("errors") or [])
-
-    snapshot_doc = {
-        "exam_id": exam.get("exam_id"),
-        "blueprint_version": next_version,
-        "structure_hash": shash,
-        "question_count": question_count,
-        "effective_total_marks": effective_total_marks,
-        "or_groups_map": or_groups_map,
-        "attempt_rules": attempt_rules,
-        "locked_at": _iso_now(),
-        "question_structure_v2": normalized,
-        "question_audit_tree": question_audit_tree,
-        "validation_report": validation_report,
-        "unresolved_flags": unresolved_flags,
-        "structure_confidence": structure_conf,
-        "model_name": model_name,
-        "prompt_version": PROMPT_VERSION,
-        "pipeline_version": PIPELINE_VERSION,
-        "extraction_hash": extraction_hash,
-        "created_at": _iso_now(),
-    }
-
-    await db.exam_blueprint_versions.insert_one(snapshot_doc)
-    logger.info(
-        "BLUEPRINT_VERSION_CREATED exam_id=%s version=%s structure_hash=%s",
-        exam.get("exam_id"),
-        next_version,
-        shash,
-    )
-
-    return next_version, snapshot_doc
+exam_repo = ExamRepo()
+submission_repo = SubmissionRepo()
+file_repo = FileRepo()
 
 
 async def extract_and_persist(
@@ -287,16 +69,31 @@ async def extract_and_persist(
     model_name: str = DEFAULT_MODEL_NAME,
 ) -> Dict[str, Any]:
     owner = lock_owner or f"extract_{exam_id}"
+    # ADDED LOGGING START
+    logger.info("[PIPELINE START] AI_EXTRACTION | exam_id=%s | submission_id=N/A", exam_id)
+    # ADDED LOGGING END
 
     locked_exam: Dict[str, Any] = {}
     try:
+        # ADDED LOGGING START
+        logger.info("[STEP START] ACQUIRE_LOCK")
+        # ADDED LOGGING END
         locked_exam = await _acquire_exam_lock(exam_id, state="extracting", owner=owner)
+        # ADDED LOGGING START
+        logger.info("[STEP SUCCESS] ACQUIRE_LOCK")
+        # ADDED LOGGING END
 
+        # ADDED LOGGING START
+        logger.info("[STEP START] LOAD_QUESTION_PAPER")
+        # ADDED LOGGING END
         question_paper_images = await get_exam_question_paper_images(exam_id)
         if not question_paper_images:
+            # ADDED LOGGING START
+            logger.error("[STEP FAILED] LOAD_QUESTION_PAPER | error=missing_question_paper_images")
+            # ADDED LOGGING END
             logger.error("PIPELINE_BLOCKED_EXTRACTION exam_id=%s reason=missing_question_paper_images", exam_id)
-            await db.exams.update_one(
-                {"exam_id": exam_id},
+            await exam_repo.update_exam(
+                exam_id,
                 {
                     "$set": {
                         "blueprint_status": "failed",
@@ -307,16 +104,22 @@ async def extract_and_persist(
                     }
                 },
             )
+            # ADDED LOGGING START
+            logger.info("[PIPELINE END] AI_EXTRACTION")
+            # ADDED LOGGING END
             return {
                 "success": False,
                 "message": "Question paper images not found",
                 "source": "question_paper",
             }
+        # ADDED LOGGING START
+        logger.info("[STEP SUCCESS] LOAD_QUESTION_PAPER")
+        # ADDED LOGGING END
 
         exam_type = str(locked_exam.get("exam_type") or "").lower()
         if exam_type == "college":
-            await db.exams.update_one(
-                {"exam_id": exam_id},
+            await exam_repo.update_exam(
+                exam_id,
                 {"$set": {
                     "strict_visual_blueprint_status": "pending",
                     "strict_visual_blueprint_warning": False,
@@ -326,7 +129,7 @@ async def extract_and_persist(
                     "strict_visual_blueprint_started_at": "",
                 }},
             )
-            await db.exam_files.update_one(
+            await exam_repo.update_exam_file(
                 {"exam_id": exam_id, "file_type": "question_paper"},
                 {"$unset": {
                     "strict_visual_blueprint_json": "",
@@ -335,8 +138,7 @@ async def extract_and_persist(
                     "strict_visual_blueprint_double_pass_diffs": "",
                     "strict_visual_blueprint_generated_at": "",
                     "strict_visual_blueprint_prompt_version": "",
-                }},
-                upsert=True,
+                }}
             )
 
         # Marks must be resolved from visual evidence (header/margin/section math), not exam metadata.
@@ -360,6 +162,9 @@ async def extract_and_persist(
             raw_ocr_text = cached.get("raw_ocr_text") or ""
             retry_count = int(cached.get("retry_count") or 0)
         else:
+            # ADDED LOGGING START
+            logger.info("[STEP START] STRUCTURE_EXTRACTION")
+            # ADDED LOGGING END
             logger.info("STRUCTURE_EXTRACTION_START exam_id=%s pages=%s", exam_id, len(question_paper_images))
             structure, validation_report, raw_ocr_text, retry_count = await extract_question_structure(
                 question_paper_images=question_paper_images,
@@ -368,6 +173,9 @@ async def extract_and_persist(
                 max_retries=3,
                 model_name=model_name,
             )
+            # ADDED LOGGING START
+            logger.info("[STEP SUCCESS] STRUCTURE_EXTRACTION")
+            # ADDED LOGGING END
             set_structure_cache(
                 exam_id,
                 int(locked_exam.get("blueprint_version", 0) or 0),
@@ -397,6 +205,9 @@ async def extract_and_persist(
         normalized["structure_confidence"] = _structure_confidence(normalized)
 
         extraction_hash = structure_hash(normalized)
+        # ADDED LOGGING START
+        logger.info("[STEP START] CREATE_BLUEPRINT_SNAPSHOT")
+        # ADDED LOGGING END
         next_version, snapshot = await _create_blueprint_snapshot(
             exam=locked_exam,
             structure=normalized,
@@ -404,6 +215,9 @@ async def extract_and_persist(
             extraction_hash=extraction_hash,
             model_name=model_name,
         )
+        # ADDED LOGGING START
+        logger.info("[STEP SUCCESS] CREATE_BLUEPRINT_SNAPSHOT")
+        # ADDED LOGGING END
 
         legacy_questions = _question_structure_to_legacy_questions(normalized)
         
@@ -416,7 +230,7 @@ async def extract_and_persist(
                 unresolved_flags.append(msg)
             logger.warning("STRUCTURE_VALIDATION_GATE_FAILED exam_id=%s %s", exam_id, msg)
 
-        await db.questions.delete_many({"exam_id": exam_id})
+        await exam_repo.delete_questions({"exam_id": exam_id})
         if legacy_questions:
             question_docs = []
             for q in legacy_questions:
@@ -426,12 +240,15 @@ async def extract_and_persist(
                     "question_id": q.get("question_uuid") or f"q_{exam_id}_{q.get('question_number')}",
                 }
                 question_docs.append(q_doc)
-            await db.questions.insert_many(question_docs)
+            await exam_repo.insert_questions(question_docs)
 
         effective_total = _to_float(snapshot.get("effective_total_marks"), _to_float(locked_exam.get("total_marks"), 0.0))
 
-        await db.exams.update_one(
-            {"exam_id": exam_id},
+        # ADDED LOGGING START
+        logger.info("[STEP START] UPDATE_EXAM_METADATA")
+        # ADDED LOGGING END
+        await exam_repo.update_exam(
+            exam_id,
             {
                 "$set": {
                     "processing_state": "idle",
@@ -466,6 +283,9 @@ async def extract_and_persist(
                 }
             },
         )
+        # ADDED LOGGING START
+        logger.info("[STEP SUCCESS] UPDATE_EXAM_METADATA")
+        # ADDED LOGGING END
 
         logger.info("BLUEPRINT_LOCKED exam_id=%s version=%s", exam_id, next_version)
         logger.info(
@@ -481,9 +301,10 @@ async def extract_and_persist(
             len(legacy_questions),
             effective_total,
         )
+        logger.info("[PIPELINE END] AI_EXTRACTION")
 
         # Re-alignment required on version bump.
-        realign_update = await db.submissions.update_many(
+        realign_update = await submission_repo.update_many_submissions(
             {
                 "exam_id": exam_id,
                 "$or": [
@@ -518,9 +339,12 @@ async def extract_and_persist(
         }
 
     except Exception as exc:
+        # ADDED LOGGING START
+        logger.error("[STEP FAILED] AI_EXTRACTION | error=%s", exc)
+        # ADDED LOGGING END
         logger.error("PIPELINE_BLOCKED_EXTRACTION exam_id=%s error=%s", exam_id, exc, exc_info=True)
-        await db.exams.update_one(
-            {"exam_id": exam_id},
+        await exam_repo.update_exam(
+            exam_id,
             {
                 "$set": {
                     "question_extraction_status": "failed",
@@ -541,16 +365,7 @@ async def extract_and_persist(
             await _release_exam_lock(exam_id, owner=owner)
 
 
-async def _load_exam_and_submission(submission_id: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    submission = await db.submissions.find_one({"submission_id": submission_id}, {"_id": 0})
-    if not submission:
-        raise RuntimeError("submission_not_found")
 
-    exam = await db.exams.find_one({"exam_id": submission.get("exam_id")}, {"_id": 0})
-    if not exam:
-        raise RuntimeError("exam_not_found")
-
-    return exam, submission
 
 
 async def align_submission_for_grading(
@@ -560,7 +375,23 @@ async def align_submission_for_grading(
     force: bool = False,
     model_name: str = DEFAULT_MODEL_NAME,
 ) -> Dict[str, Any]:
+    # ADDED LOGGING START
+    logger.info("[PIPELINE START] AI_ALIGNMENT | exam_id=unknown | submission_id=%s", submission_id)
+    # ADDED LOGGING END
+    
+    # ADDED LOGGING START
+    logger.info("[STEP START] LOAD_EXAM_AND_SUBMISSION")
+    # ADDED LOGGING END
     exam, submission = await _load_exam_and_submission(submission_id)
+    # ADDED LOGGING START
+    logger.info("[STEP SUCCESS] LOAD_EXAM_AND_SUBMISSION")
+    # ADDED LOGGING END
+
+    # ADDED LOGGING START
+    # Update info with actual exam_id
+    logger.info("[PIPELINE START] AI_ALIGNMENT | exam_id=%s | submission_id=%s", exam.get("exam_id"), submission_id)
+    # ADDED LOGGING END
+
     latest_version = int(exam.get("blueprint_version", 0) or 0)
     submission_version_raw = submission.get("blueprint_version_used")
     try:
@@ -576,8 +407,8 @@ async def align_submission_for_grading(
             submission_version,
             latest_version,
         )
-        await db.submissions.update_one(
-            {"submission_id": submission_id},
+        await submission_repo.update_submission(
+            submission_id,
             {"$set": {"realign_required": True}},
         )
         logger.info(
@@ -590,10 +421,16 @@ async def align_submission_for_grading(
 
     if not exam.get("blueprint_locked") and str(exam.get("blueprint_status", "")).lower() != "ready_locked":
         logger.error("PIPELINE_BLOCKED_ALIGNMENT submission=%s reason=blueprint_not_locked", submission_id)
-        raise RuntimeError("blueprint_not_locked")
+        raise CustomServiceException("blueprint_not_locked", 500)
 
     owner = lock_owner or f"align_{exam.get('exam_id')}_{submission_id}"
+    # ADDED LOGGING START
+    logger.info("[STEP START] ACQUIRE_LOCK")
+    # ADDED LOGGING END
     await _acquire_exam_lock(exam.get("exam_id"), state="aligning", owner=owner)
+    # ADDED LOGGING START
+    logger.info("[STEP SUCCESS] ACQUIRE_LOCK")
+    # ADDED LOGGING END
     try:
         structure = exam.get("question_structure_v2") or {
             "questions": [
@@ -628,9 +465,12 @@ async def align_submission_for_grading(
         blueprint_signature = str(exam.get("active_structure_hash") or structure_hash(structure))
         images = await _get_submission_images(submission)
         if not images:
-            raise RuntimeError("missing_submission_images")
+            raise CustomServiceException("missing_submission_images", 500)
 
         logger.info("ALIGNMENT_START submission=%s exam_id=%s", submission_id, exam.get("exam_id"))
+        # ADDED LOGGING START
+        logger.info("[STEP START] RUN_ALIGNMENT")
+        # ADDED LOGGING END
         alignment_result = await align_answers(
             submission_id=submission_id,
             question_structure=structure,
@@ -639,6 +479,9 @@ async def align_submission_for_grading(
             model_name=model_name,
             use_cache=not force,
         )
+        # ADDED LOGGING START
+        logger.info("[STEP SUCCESS] RUN_ALIGNMENT")
+        # ADDED LOGGING END
 
         coverage = _to_float(alignment_result.get("alignment_coverage"), 0.0)
         coverage_ratio = _to_float(alignment_result.get("coverage_ratio"), 0.0)
@@ -683,8 +526,11 @@ async def align_submission_for_grading(
                 alignment_conf,
             )
 
-        await db.submissions.update_one(
-            {"submission_id": submission_id},
+        # ADDED LOGGING START
+        logger.info("[STEP START] UPDATE_SUBMISSION_DATA")
+        # ADDED LOGGING END
+        await submission_repo.update_submission(
+            submission_id,
             {
                 "$set": {
                     "grading_state": grading_state,
@@ -705,6 +551,9 @@ async def align_submission_for_grading(
                 }
             },
         )
+        # ADDED LOGGING START
+        logger.info("[STEP SUCCESS] UPDATE_SUBMISSION_DATA")
+        # ADDED LOGGING END
 
         logger.info(
             "ALIGNMENT_DONE submission=%s coverage=%.3f confidence=%.3f",
@@ -712,6 +561,9 @@ async def align_submission_for_grading(
             coverage,
             alignment_conf,
         )
+        # ADDED LOGGING START
+        logger.info("[PIPELINE END] AI_ALIGNMENT")
+        # ADDED LOGGING END
 
         return {
             "submission_id": submission_id,
@@ -772,12 +624,17 @@ async def grade_images_with_locked_blueprint(
     model_name: str = DEFAULT_MODEL_NAME,
     job_id: Optional[str] = None,
 ) -> Tuple[List[QuestionScore], Dict[str, Any]]:
+    e_id = exam_id or exam.get("exam_id") or "unknown"
+    # ADDED LOGGING START
+    logger.info("[PIPELINE START] AI_GRADING | exam_id=%s | submission_id=N/A", e_id)
+    # ADDED LOGGING END
+
     if not exam:
-        raise RuntimeError("exam_required")
+        raise CustomServiceException("exam_required", 500)
 
     if not exam.get("blueprint_locked") and str(exam.get("blueprint_status", "")).lower() != "ready_locked":
         logger.error("PIPELINE_BLOCKED_ALIGNMENT exam_id=%s reason=blueprint_not_locked", exam_id or exam.get("exam_id"))
-        raise RuntimeError("blueprint_not_locked")
+        raise CustomServiceException("blueprint_not_locked", 500)
 
     logger.info(
         "BLUEPRINT_VERSION_USED exam_id=%s version=%s",
@@ -785,6 +642,9 @@ async def grade_images_with_locked_blueprint(
         int(exam.get("blueprint_version", 0) or 0),
     )
 
+    # ADDED LOGGING START
+    logger.info("[STEP START] INITIALIZE_GRADING")
+    # ADDED LOGGING END
     structure = exam.get("question_structure_v2")
     if not structure:
         # Compatibility fallback for legacy exams.
@@ -835,8 +695,8 @@ async def grade_images_with_locked_blueprint(
         structure["effective_total_marks"] = header_total_marks
         if exam_id:
             try:
-                await db.exams.update_one(
-                    {"exam_id": exam_id},
+                await exam_repo.update_exam(
+                    exam_id,
                     {"$set": {"total_marks": header_total_marks, "effective_total_marks": header_total_marks}},
                 )
             except Exception as exc:
@@ -852,8 +712,8 @@ async def grade_images_with_locked_blueprint(
         structure["effective_total_marks"] = derived_total
         if exam_id:
             try:
-                await db.exams.update_one(
-                    {"exam_id": exam_id},
+                await exam_repo.update_exam(
+                    exam_id,
                     {"$set": {"total_marks": derived_total, "effective_total_marks": derived_total}},
                 )
             except Exception as exc:
@@ -866,7 +726,13 @@ async def grade_images_with_locked_blueprint(
             exam_id or exam.get("exam_id"),
             validation.get("errors") or [],
         )
+    # ADDED LOGGING START
+    logger.info("[STEP SUCCESS] INITIALIZE_GRADING")
+    # ADDED LOGGING END
 
+    # ADDED LOGGING START
+    logger.info("[STEP START] RUN_GRADING")
+    # ADDED LOGGING END
     alignment_result = await align_answers(
         submission_id=f"adhoc_{exam_id or exam.get('exam_id')}",
         question_structure=structure,
@@ -898,7 +764,7 @@ async def grade_images_with_locked_blueprint(
             mapping_coverage,
             ALIGNMENT_COVERAGE_THRESHOLD,
         )
-        raise RuntimeError("alignment_coverage_low")
+        raise CustomServiceException("alignment_coverage_low", 500)
 
     grading_result = await grade_answers_with_contracts(
         question_structure=structure,
@@ -950,6 +816,12 @@ async def grade_images_with_locked_blueprint(
         "pipeline_version": PIPELINE_VERSION,
         "model_name": model_name,
     }
+    # ADDED LOGGING START
+    logger.info("[STEP SUCCESS] RUN_GRADING")
+    # ADDED LOGGING END
+    # ADDED LOGGING START
+    logger.info("[PIPELINE END] AI_GRADING")
+    # ADDED LOGGING END
 
     return grading_result.get("question_scores", []), packet_meta
 
@@ -965,3 +837,36 @@ __all__ = [
     "preflight_submission_mapping",
 ]
 
+
+# MODULE INTERFACE START
+utc_now = _utc_now
+iso_now = _iso_now
+to_float = _to_float
+question_structure_to_legacy_questions = _question_structure_to_legacy_questions
+structure_confidence = _structure_confidence
+apply_audit_tree_marks = _apply_audit_tree_marks
+derive_total_marks = _derive_total_marks
+get_submission_images = _get_submission_images
+acquire_exam_lock = _acquire_exam_lock
+release_exam_lock = _release_exam_lock
+create_blueprint_snapshot = _create_blueprint_snapshot
+load_exam_and_submission = _load_exam_and_submission
+__all__ = [
+    "utc_now",
+    "iso_now",
+    "to_float",
+    "question_structure_to_legacy_questions",
+    "structure_confidence",
+    "apply_audit_tree_marks",
+    "derive_total_marks",
+    "get_submission_images",
+    "acquire_exam_lock",
+    "release_exam_lock",
+    "create_blueprint_snapshot",
+    "extract_and_persist",
+    "load_exam_and_submission",
+    "align_submission_for_grading",
+    "preflight_submission_mapping",
+    "grade_images_with_locked_blueprint",
+]
+# MODULE INTERFACE END

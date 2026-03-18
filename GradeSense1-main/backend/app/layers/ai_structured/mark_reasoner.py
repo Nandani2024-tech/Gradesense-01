@@ -4,7 +4,7 @@ from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.logging_config import logger
-from app.utils.safe_numeric import parse_section_math_expression, to_float, to_int
+from app.infrastructure.serialization.safe_numeric import parse_section_math_expression, to_float, to_int
 from .validation import normalize_structure_payload
 
 from app.constants.layers import _EXPLICIT_SOURCES

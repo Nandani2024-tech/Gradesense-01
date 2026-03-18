@@ -3,7 +3,7 @@
 from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 from app.core.logging_config import logger
-from app.utils.safe_numeric import to_float, to_int
+from app.infrastructure.serialization.safe_numeric import to_float, to_int
 from app.constants.layers import _EXPLICIT_SOURCES
 
 from .mark_sources import (

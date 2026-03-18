@@ -1,14 +1,15 @@
 from typing import List
 
-from app.utils.ocr_provider import get_ocr_provider
+from typing import List, Any
+from app.adapters.interfaces import AbstractOCRService
 from app.services.answer_sheet_pipeline.image_utils import _b64_to_cv2
 from app.services.answer_sheet_pipeline.config import ANCHOR_LEFT_RATIO
 from app.services.answer_sheet_pipeline.regex_patterns import QUESTION_ANCHOR_RE, WORKING_NOTE_RE, _normalize_sub_id
 
 
-def run_region_ocr(clean_pages: List[str], page_layout: List[List[dict]]) -> List[dict]:
+def run_region_ocr(clean_pages: List[str], page_layout: List[List[dict]], ocr_service: AbstractOCRService) -> List[dict]:
     """Stage 4 region OCR map using full-page OCR."""
-    ocr = get_ocr_provider()
+    ocr = ocr_service
     regions: List[dict] = []
 
     for page_idx, (page_blocks, page_b64) in enumerate(zip(page_layout, clean_pages)):

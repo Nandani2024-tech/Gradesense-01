@@ -6,7 +6,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.logging_config import logger
-from app.services.pipelines.universal.embeddings import SemanticEmbeddingService, cosine_similarity
+from app.services.pipelines.ai_structured.universal.embeddings import SemanticEmbeddingService, cosine_similarity
 from .anchor_detection import detect_anchors
 
 

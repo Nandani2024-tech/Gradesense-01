@@ -7,7 +7,7 @@ import json
 from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.utils.safe_numeric import to_float, to_int
+from app.infrastructure.serialization.safe_numeric import to_float, to_int
 
 
 

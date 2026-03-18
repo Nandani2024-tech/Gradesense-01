@@ -16,6 +16,10 @@ from .auto_extraction import (
     get_exam_model_answer_text,
     get_exam_model_answer_map
 )
+from .background_tasks import (
+    _process_model_answer_async,
+    _process_question_paper_async
+)
 from .parsing import (
     parse_question_number,
     is_section_heading,

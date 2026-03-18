@@ -10,6 +10,7 @@ from app.schemas.responses import (
     GradingJobResponse,
     BatchUploadResponse
 )
+from app.core.logging_config import logger
 from app.services.uploads.upload_service import upload_service
 from app.services.grading import grading_service
 
@@ -28,6 +29,8 @@ async def upload_model_answer(
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can upload model answers")
 
+    logger.info("UPLOAD_MODEL_ANSWER_REQUEST exam_id=%s user_id=%s", exam_id, user.user_id)
+
     result = await upload_service.upload_model_answer(exam_id, user.user_id, background_tasks, file, link)
     return ModelAnswerUploadResponse(**result)
 
@@ -43,6 +46,8 @@ async def upload_question_paper(
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can upload question papers")
 
+    logger.info("UPLOAD_QUESTION_PAPER_REQUEST exam_id=%s user_id=%s filename=%s", exam_id, user.user_id, file.filename)
+
     result = await upload_service.upload_question_paper(exam_id, user.user_id, background_tasks, file)
     return QuestionPaperUploadResponse(**result)
 
@@ -54,6 +59,7 @@ async def upload_student_papers(
     user: User = Depends(get_current_user)
 ):
     """Upload and grade student papers with background job processing"""
+    logger.info("UPLOAD_STUDENT_PAPERS_REQUEST exam_id=%s user_id=%s file_count=%s", exam_id, user.user_id, len(files))
     data = await grading_service.queue_grading_job(exam_id, files, user)
     return GradingJobResponse(**data)
 
@@ -67,6 +73,8 @@ async def upload_more_papers(
     """Upload additional student papers to an existing exam"""
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can upload papers")
+
+    logger.info("UPLOAD_MORE_PAPERS_REQUEST exam_id=%s user_id=%s file_count=%s", exam_id, user.user_id, len(files))
 
     result = await upload_service.upload_more_papers(exam_id, user.user_id, files)
     return BatchUploadResponse(**result)

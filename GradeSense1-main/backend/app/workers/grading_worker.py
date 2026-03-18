@@ -15,7 +15,9 @@ async def run_grading_pipeline(job_id: str, exam_id: str, files_data: List[dict]
     """
     Background worker task to process all papers in a job.
     """
-    from app.services.grading_pipeline import grade_pdf
+    from app.services.grading_pipeline import GradingPipelineRunner
+    from app.adapters.llm_adapter import GeminiLLMService
+    from app.adapters.ocr_adapter import GoogleOCRService
     try:
         # 1. Update status to processing
         await grading_job_service.mark_job_status(job_id, "processing")
@@ -23,6 +25,11 @@ async def run_grading_pipeline(job_id: str, exam_id: str, files_data: List[dict]
         # 2. Ensure blueprint is locked/updated (Re-fetch if needed)
         blueprint = await blueprint_service.ensure_blueprint_locked(exam_id, context="grading")
         
+        # Instantiate orchestrator with adapters
+        llm_service = GeminiLLMService()
+        ocr_service = GoogleOCRService()
+        runner = GradingPipelineRunner(llm_service=llm_service, ocr_service=ocr_service)
+
         total_papers = len(files_data)
         progress_increment = 1.0 / total_papers if total_papers > 0 else 0.0
 
@@ -33,7 +40,7 @@ async def run_grading_pipeline(job_id: str, exam_id: str, files_data: List[dict]
             async with grading_semaphore:
                 try:
                     # A. Run grading pipeline
-                    result = await grade_pdf(
+                    result = await runner.grade_pdf(
                         blueprint=blueprint,
                         pdf_bytes=file_entry["content"]
                     )

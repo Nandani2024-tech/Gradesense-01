@@ -2,8 +2,8 @@
 
 from datetime import datetime, timezone
 from typing import Dict, Any, List
-from fastapi import HTTPException
-from app.core.database import db
+from app.core.exceptions import CustomServiceException
+from app.repositories import ExamRepo, SubmissionRepo
 from app.core.logging_config import logger
 from app.core.config import (
     COLLEGE_V2_HARD_STOP,
@@ -11,7 +11,7 @@ from app.core.config import (
     UNIVERSAL_PIPELINE_ENABLED,
     UNIVERSAL_PIPELINE_EXAM_TYPES,
 )
-from app.utils.blueprint import (
+from app.services.blueprint import (
     build_blueprint_freeze_payload,
     normalize_question_structure_v2,
     compute_structure_hash,
@@ -21,17 +21,20 @@ from app.utils.blueprint import (
 )
 from app.domain.services import blueprint_domain_service
 
+exam_repo = ExamRepo()
+submission_repo = SubmissionRepo()
+
 async def get_blueprint_health(exam_id: str, user_id: str) -> Dict[str, Any]:
     """Get and update blueprint health for an exam."""
-    exam = await db.exams.find_one({"exam_id": exam_id, "teacher_id": user_id}, {"_id": 0})
+    exam = await exam_repo.find_one_exam({"exam_id": exam_id, "teacher_id": user_id})
     if not exam:
-        raise HTTPException(status_code=404, detail="Exam not found")
+        raise CustomServiceException(status_code=404, message="Exam not found")
 
     questions = exam.get("questions", []) or []
     health = blueprint_domain_service.derive_blueprint_health(exam, questions)
     
-    await db.exams.update_one(
-        {"exam_id": exam_id},
+    await exam_repo.update_exam(
+        exam_id,
         {"$set": {
             "blueprint_health": health,
             "blueprint_checked_at": datetime.now(timezone.utc).isoformat()
@@ -49,9 +52,9 @@ async def get_blueprint_health(exam_id: str, user_id: str) -> Dict[str, Any]:
 
 async def lock_blueprint(exam_id: str, user_id: str) -> Dict[str, Any]:
     """Lock the blueprint for an exam."""
-    exam = await db.exams.find_one({"exam_id": exam_id, "teacher_id": user_id}, {"_id": 0})
+    exam = await exam_repo.find_one_exam({"exam_id": exam_id, "teacher_id": user_id})
     if not exam:
-        raise HTTPException(status_code=404, detail="Exam not found")
+        raise CustomServiceException(status_code=404, message="Exam not found")
         
     if str(exam.get("blueprint_status", "pending")).lower() == "ready_locked":
         return {
@@ -65,15 +68,15 @@ async def lock_blueprint(exam_id: str, user_id: str) -> Dict[str, Any]:
 
     questions = exam.get("questions", []) or []
     if not questions:
-        raise HTTPException(status_code=400, detail="No extracted questions to lock")
+        raise CustomServiceException(status_code=400, message="No extracted questions to lock")
 
     readiness = blueprint_domain_service.evaluate_blueprint_lock_readiness(exam, questions=questions)
     health = readiness.get("health") or {}
     
     if not readiness.get("can_lock"):
-        raise HTTPException(
+        raise CustomServiceException(
             status_code=400,
-            detail={
+            message={
                 "message": "Blueprint lock blocked: blueprint health check failed",
                 "question_count": int(readiness.get("question_count", 0) or 0),
                 "question_paper_pages": int(readiness.get("question_paper_pages", 0) or 0),
@@ -95,7 +98,7 @@ async def lock_blueprint(exam_id: str, user_id: str) -> Dict[str, Any]:
     next_version = int(exam.get("blueprint_version", 0) or 0) + 1
 
     # Save version snapshot
-    await db.exam_blueprint_versions.insert_one(
+    await exam_repo.insert_blueprint_version(
         {
             "exam_id": exam_id,
             "blueprint_version": next_version,
@@ -117,8 +120,8 @@ async def lock_blueprint(exam_id: str, user_id: str) -> Dict[str, Any]:
     )
 
     # Update exam doc
-    await db.exams.update_one(
-        {"exam_id": exam_id},
+    await exam_repo.update_exam(
+        exam_id,
         {"$set": {
             "blueprint_status": "ready_locked",
             "blueprint_locked": True,
@@ -135,16 +138,7 @@ async def lock_blueprint(exam_id: str, user_id: str) -> Dict[str, Any]:
     )
 
     # Mark submissions for realignment
-    await db.submissions.update_many(
-        {
-            "exam_id": exam_id,
-            "$or": [
-                {"blueprint_version_used": {"$exists": False}},
-                {"blueprint_version_used": {"$ne": next_version}},
-            ],
-        },
-        {"$set": {"realign_required": True}},
-    )
+    await submission_repo.mark_submissions_for_realignment(exam_id, next_version)
 
     logger.info("BLUEPRINT_LOCKED exam_id=%s version=%s source=service", exam_id, next_version)
     
@@ -159,15 +153,15 @@ async def lock_blueprint(exam_id: str, user_id: str) -> Dict[str, Any]:
 
 async def unlock_blueprint(exam_id: str, user_id: str) -> Dict[str, Any]:
     """Unlock the blueprint for an exam."""
-    exam = await db.exams.find_one({"exam_id": exam_id, "teacher_id": user_id}, {"_id": 0})
+    exam = await exam_repo.find_one_exam({"exam_id": exam_id, "teacher_id": user_id})
     if not exam:
-        raise HTTPException(status_code=404, detail="Exam not found")
+        raise CustomServiceException(status_code=404, message="Exam not found")
 
     questions = exam.get("questions", []) or []
     health = blueprint_domain_service.derive_blueprint_health(exam, questions)
     
-    await db.exams.update_one(
-        {"exam_id": exam_id},
+    await exam_repo.update_exam(
+        exam_id,
         {"$set": {
             "blueprint_status": "ready_unlocked" if questions else "pending",
             "blueprint_locked": False,
@@ -189,15 +183,15 @@ async def ensure_blueprint_locked(exam_id: str, context: str) -> dict:
     Ensures that the blueprint for an exam is locked. 
     If not locked, attempts to lock it if readiness checks pass.
     """
-    exam = await db.exams.find_one({"exam_id": exam_id}, {"_id": 0})
+    exam = await exam_repo.find_one_exam({"exam_id": exam_id})
     if not exam:
-        raise HTTPException(status_code=404, detail="Exam not found")
+        raise CustomServiceException(status_code=404, message="Exam not found")
 
     processing_state = str(exam.get("processing_state") or "idle").lower()
     if processing_state != "idle":
-        raise HTTPException(
+        raise CustomServiceException(
             status_code=409,
-            detail=f"Exam is currently in '{processing_state}' state. Retry after current pipeline stage completes.",
+            message=f"Exam is currently in '{processing_state}' state. Retry after current pipeline stage completes.",
         )
 
     if bool(exam.get("blueprint_locked")) or str(exam.get("blueprint_status", "pending")).lower() == "ready_locked":
@@ -212,33 +206,33 @@ async def ensure_blueprint_locked(exam_id: str, context: str) -> dict:
     )
 
     if exam_type == "college" and COLLEGE_V2_HARD_STOP:
-        raise HTTPException(
+        raise CustomServiceException(
             status_code=409,
-            detail={
+            message={
                 **blueprint_domain_service.format_blueprint_lock_failure(exam, readiness, context=context),
                 "required_action": "Lock blueprint explicitly from exam settings before grading college papers.",
             },
         )
     if universal_active and UNIVERSAL_HARD_STOP:
-        raise HTTPException(
+        raise CustomServiceException(
             status_code=409,
-            detail={
+            message={
                 **blueprint_domain_service.format_blueprint_lock_failure(exam, readiness, context=context),
                 "required_action": "Lock blueprint explicitly before running universal grading.",
             },
         )
 
     if not readiness.get("can_lock"):
-        raise HTTPException(
+        raise CustomServiceException(
             status_code=409,
-            detail=blueprint_domain_service.format_blueprint_lock_failure(exam, readiness, context=context),
+            message=blueprint_domain_service.format_blueprint_lock_failure(exam, readiness, context=context),
         )
 
     freeze_payload = build_blueprint_freeze_payload(exam)
     if int(freeze_payload.get("question_count", 0) or 0) <= 0:
-        raise HTTPException(
+        raise CustomServiceException(
             status_code=409,
-            detail={
+            message={
                 **blueprint_domain_service.format_blueprint_lock_failure(exam, readiness, context=context),
                 "required_action": "Blueprint has no valid normalized questions. Re-extract questions before grading.",
             },
@@ -249,12 +243,8 @@ async def ensure_blueprint_locked(exam_id: str, context: str) -> dict:
     new_version = current_version + 1
     health = readiness.get("health") or {}
 
-    lock_result = await db.exams.update_one(
-        {
-            "exam_id": exam_id,
-            "blueprint_version": current_version,
-            "$or": [{"blueprint_locked": {"$exists": False}}, {"blueprint_locked": False}],
-        },
+    lock_result = await exam_repo.update_exam(
+        exam_id,
         {"$set": {
             "blueprint_status": "ready_locked",
             "blueprint_locked": True,
@@ -269,13 +259,18 @@ async def ensure_blueprint_locked(exam_id: str, context: str) -> dict:
             "structure_confidence": freeze_payload["structure_confidence"],
             "locked_at": now,
         }},
+        query_override={
+            "exam_id": exam_id,
+            "blueprint_version": current_version,
+            "$or": [{"blueprint_locked": {"$exists": False}}, {"blueprint_locked": False}],
+        }
     )
 
     if lock_result.modified_count == 0:
-        latest_exam = await db.exams.find_one({"exam_id": exam_id}, {"_id": 0})
+        latest_exam = await exam_repo.find_one_exam({"exam_id": exam_id})
         if latest_exam and (bool(latest_exam.get("blueprint_locked")) or str(latest_exam.get("blueprint_status", "")).lower() == "ready_locked"):
             return latest_exam
-        raise HTTPException(status_code=409, detail=f"Could not lock blueprint for {context}; exam state changed.")
+        raise CustomServiceException(status_code=409, message=f"Could not lock blueprint for {context}; exam state changed.")
 
     snapshot_doc = {
         "exam_id": exam_id,
@@ -296,24 +291,11 @@ async def ensure_blueprint_locked(exam_id: str, context: str) -> dict:
         "created_at": now,
     }
     
-    await db.exam_blueprint_versions.update_one(
-        {"exam_id": exam_id, "blueprint_version": new_version},
-        {"$setOnInsert": snapshot_doc},
-        upsert=True,
-    )
+    await exam_repo.update_blueprint_version_upsert(exam_id, new_version, snapshot_doc)
     
-    await db.submissions.update_many(
-        {
-            "exam_id": exam_id,
-            "$or": [
-                {"blueprint_version_used": {"$exists": False}},
-                {"blueprint_version_used": {"$ne": new_version}},
-            ],
-        },
-        {"$set": {"realign_required": True}},
-    )
+    await submission_repo.mark_submissions_for_realignment(exam_id, new_version)
 
     logger.info("BLUEPRINT_LOCKED exam_id=%s version=%s context=%s", exam_id, new_version, context)
     
-    updated_exam = await db.exams.find_one({"exam_id": exam_id}, {"_id": 0})
+    updated_exam = await exam_repo.find_one_exam({"exam_id": exam_id})
     return updated_exam or exam

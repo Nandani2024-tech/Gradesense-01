@@ -3,13 +3,12 @@ from typing import Optional, Dict, Any
 import os
 import uuid
 import httpx
-from fastapi import HTTPException
+from app.core.exceptions import CustomServiceException
 
 from app.repositories import AdminRepo
 from app.models.user import User, ProfileUpdate
 from app.models.admin import RegisterRequest, LoginRequest, SetPasswordRequest
-from app.utils.auth.password import get_password_hash, verify_password
-from app.utils.auth.jwt_tokens import create_access_token
+from app.infrastructure.auth import decode_token, verify_password, get_password_hash, create_access_token
 from app.core.logging_config import logger
 
 class AuthService:
@@ -26,7 +25,7 @@ class AuthService:
         GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
 
         if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
-            raise HTTPException(status_code=500, detail="Google OAuth not configured")
+            raise CustomServiceException(status_code=500, message="Google OAuth not configured")
 
         import json as json_module
         state_data = json_module.loads(state) if state else {}
@@ -50,7 +49,7 @@ class AuthService:
 
             if token_response.status_code != 200:
                 logger.error(f"Token exchange failed: {token_response.text}")
-                raise HTTPException(status_code=400, detail="Failed to exchange authorization code")
+                raise CustomServiceException(status_code=400, message="Failed to exchange authorization code")
 
             tokens = token_response.json()
             access_token = tokens.get("access_token")
@@ -62,7 +61,7 @@ class AuthService:
 
             if user_info_response.status_code != 200:
                 logger.error(f"User info fetch failed: {user_info_response.text}")
-                raise HTTPException(status_code=400, detail="Failed to get user information")
+                raise CustomServiceException(status_code=400, message="Failed to get user information")
 
             user_info = user_info_response.json()
             logger.info(f"Google user info: {user_info.get('email')}")
@@ -72,7 +71,7 @@ class AuthService:
         user_picture = user_info.get("picture")
 
         if not user_email:
-            raise HTTPException(status_code=400, detail="Email not found in Google response")
+            raise CustomServiceException(status_code=400, message="Email not found in Google response")
 
         user_id, user_role, user_exam_type = await self._get_or_create_google_user(
             user_email, user_name, user_picture, preferred_role, state_exam_type
@@ -176,13 +175,13 @@ class AuthService:
         """Register a new user with email and password."""
         existing_user = await self.admin_repo.find_one_user({"email": request.email})
         if existing_user:
-            raise HTTPException(status_code=400, detail="Email already registered")
+            raise CustomServiceException(status_code=400, message="Email already registered")
 
         user_id = str(uuid.uuid4())
         try:
             hashed_password = get_password_hash(request.password)
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise CustomServiceException(status_code=400, message=str(exc)) from exc
 
         new_user = {
             "user_id": user_id,
@@ -223,22 +222,22 @@ class AuthService:
         """Login with email and password."""
         user = await self.admin_repo.find_one_user({"email": request.email})
         if not user:
-            raise HTTPException(status_code=401, detail="Invalid email or password")
+            raise CustomServiceException(status_code=401, message="Invalid email or password")
 
         if "password_hash" not in user:
-            raise HTTPException(
+            raise CustomServiceException(
                 status_code=400,
-                detail="This account uses Google sign-in. Please use the 'Sign in with Google' button."
+                message="This account uses Google sign-in. Please use the 'Sign in with Google' button."
             )
 
         if not verify_password(request.password, user["password_hash"]):
-            raise HTTPException(status_code=401, detail="Invalid email or password")
+            raise CustomServiceException(status_code=401, message="Invalid email or password")
 
         account_status = user.get("account_status", "active")
         if account_status == "banned":
-            raise HTTPException(status_code=403, detail="Account banned. Contact support.")
+            raise CustomServiceException(status_code=403, message="Account banned. Contact support.")
         elif account_status == "disabled":
-            raise HTTPException(status_code=403, detail="Account disabled. Contact support.")
+            raise CustomServiceException(status_code=403, message="Account disabled. Contact support.")
 
         update_fields = {"last_login": datetime.now(timezone.utc).isoformat()}
         if request.exam_type in ["upsc", "college"] and not user.get("exam_type"):
@@ -275,15 +274,15 @@ class AuthService:
         """Allow users to set a password."""
         user = await self.admin_repo.find_one_user({"email": email})
         if not user:
-            raise HTTPException(status_code=404, detail="No account found with this email")
+            raise CustomServiceException(status_code=404, message="No account found with this email")
 
         if "password_hash" in user:
-            raise HTTPException(status_code=400, detail="This account already has a password.")
+            raise CustomServiceException(status_code=400, message="This account already has a password.")
 
         try:
             password_hash = get_password_hash(new_password)
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise CustomServiceException(status_code=400, message=str(exc)) from exc
 
         await self.admin_repo.update_user(
             {"email": email},
@@ -299,16 +298,16 @@ class AuthService:
     async def complete_profile(self, user_id: str, profile: ProfileUpdate) -> Dict[str, Any]:
         """Complete user profile setup."""
         if profile.exam_type and profile.exam_type not in ["upsc", "college"]:
-            raise HTTPException(status_code=400, detail="Invalid exam type")
+            raise CustomServiceException(status_code=400, message="Invalid exam type")
 
         valid_teacher_types = ["school", "college", "competitive", "others"]
         if profile.teacher_type not in valid_teacher_types:
-            raise HTTPException(status_code=400, detail="Invalid teacher type")
+            raise CustomServiceException(status_code=400, message="Invalid teacher type")
 
         if profile.teacher_type == "competitive":
             valid_exam_categories = ["UPSC", "CA", "CLAT", "JEE", "NEET", "others"]
             if not profile.exam_category or profile.exam_category not in valid_exam_categories:
-                raise HTTPException(status_code=400, detail="Exam category required for competitive exams")
+                raise CustomServiceException(status_code=400, message="Exam category required for competitive exams")
 
         update_data = {
             "name": profile.name,
@@ -328,7 +327,7 @@ class AuthService:
 
         updated_user = await self.admin_repo.find_one_user({"user_id": user_id})
         if not updated_user:
-             raise HTTPException(status_code=404, detail="User not found")
+             raise CustomServiceException(status_code=404, message="User not found")
         return updated_user
 
     async def logout(self, session_token: str) -> bool:
@@ -336,5 +335,109 @@ class AuthService:
         if session_token:
             await self.admin_repo.delete_user_session({"session_token": session_token})
         return True
+
+    async def get_current_user_from_request(self, request: Any) -> Optional[Dict[str, Any]]:
+        """
+        Extracted logic from deps.py to get current user from request.
+        Handles both JWT tokens and Session cookies.
+        """
+        session_token = request.cookies.get("session_token")
+
+        if not session_token:
+            auth_header = request.headers.get("Authorization")
+            if auth_header and auth_header.startswith("Bearer "):
+                session_token = auth_header.split(" ")[1]
+
+        if not session_token:
+            raise CustomServiceException(status_code=401, message="Not authenticated")
+
+        # Try to decode as JWT first
+        jwt_payload = decode_token(session_token)
+        if jwt_payload:
+            user_id = jwt_payload.get("user_id")
+            if not user_id:
+                raise CustomServiceException(status_code=401, message="Invalid token")
+
+            user = await self.admin_repo.find_one_user({"user_id": user_id})
+            if not user:
+                raise CustomServiceException(status_code=401, message="User not found")
+
+            account_status = user.get("account_status", "active")
+            if account_status == "banned":
+                raise CustomServiceException(status_code=403, message="Account banned. Contact support.")
+            elif account_status == "disabled":
+                raise CustomServiceException(status_code=403, message="Account disabled. Contact support.")
+
+            return user
+
+        # Fallback to session-based auth (OAuth)
+        session = await self.admin_repo.find_one_user_session(
+            {"session_token": session_token},
+            projection={"_id": 0}
+        )
+
+        if not session:
+            raise CustomServiceException(status_code=401, message="Invalid session")
+
+        expires_at = session.get("expires_at")
+        if isinstance(expires_at, str):
+            expires_at = datetime.fromisoformat(expires_at)
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at < datetime.now(timezone.utc):
+            raise CustomServiceException(status_code=401, message="Session expired")
+
+        user = await self.admin_repo.find_one_user({"user_id": session["user_id"]})
+
+        if not user:
+            raise CustomServiceException(status_code=401, message="User not found")
+
+        account_status = user.get("account_status", "active")
+        if account_status == "banned":
+            raise CustomServiceException(
+                status_code=403,
+                message="Your account has been banned. Contact support for assistance."
+            )
+        elif account_status == "disabled":
+            raise CustomServiceException(
+                status_code=403,
+                message="Your account has been temporarily disabled. Contact support for assistance."
+            )
+
+        # Update last_login timestamp (throttled)
+        await self._update_last_login_if_needed(user)
+
+        return user
+
+    async def _update_last_login_if_needed(self, user: Dict[str, Any]):
+        """Helper to update last_login timestamp if needed."""
+        last_login = user.get("last_login")
+        should_update = False
+
+        if not last_login:
+            should_update = True
+        else:
+            try:
+                if isinstance(last_login, str):
+                    last_login_dt = datetime.fromisoformat(last_login.replace('Z', '+00:00'))
+                else:
+                    last_login_dt = last_login
+
+                if last_login_dt.tzinfo is None:
+                    last_login_dt = last_login_dt.replace(tzinfo=timezone.utc)
+
+                time_since_last_update = datetime.now(timezone.utc) - last_login_dt
+                if time_since_last_update.total_seconds() > 300:  # 5 minutes
+                    should_update = True
+            except:
+                should_update = True
+
+        if should_update:
+            new_last_login = datetime.now(timezone.utc).isoformat()
+            await self.admin_repo.update_user(
+                {"user_id": user["user_id"]},
+                {"$set": {"last_login": new_last_login}}
+            )
+            user["last_login"] = new_last_login
 
 auth_service = AuthService()

@@ -6,8 +6,8 @@ import json
 import re
 from typing import Any, Dict, List
 
-from app.utils.json_helpers import parse_tolerant_json
-from app.utils.safe_numeric import to_float, to_int
+from app.infrastructure.serialization.json_helpers import parse_tolerant_json
+from app.infrastructure.serialization.safe_numeric import to_float, to_int
 
 
 

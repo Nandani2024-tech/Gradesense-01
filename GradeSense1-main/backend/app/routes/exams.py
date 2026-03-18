@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from typing import Optional, List, Any
 
 from app.deps import get_current_user
+from app.core.exceptions import CustomServiceException
 from app.models.user import User
 from app.schemas.exam.exam_create import ExamCreate
 from app.schemas.exam.student_exam_create import StudentExamCreate
@@ -37,15 +38,18 @@ async def get_exams(
     user: User = Depends(get_current_user)
 ) -> List[ExamBriefResponse]:
     """Get all exams"""
-    exams = await exam_service.get_exams(
-        user_id=user.user_id,
-        user_role=user.role,
-        batch_id=batch_id,
-        subject_id=subject_id,
-        status=status,
-        batches=user.batches
-    )
-    return [ExamBriefResponse(**e) for e in exams]
+    try:
+        exams = await exam_service.get_exams(
+            user_id=user.user_id,
+            user_role=user.role,
+            batch_id=batch_id,
+            subject_id=subject_id,
+            status=status,
+            batches=user.batches
+        )
+        return [ExamBriefResponse(**e) for e in exams]
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
 @router.post("/exams", response_model=ExamCreateResponse)
@@ -54,8 +58,13 @@ async def create_exam(exam: ExamCreate, user: User = Depends(get_current_user)):
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can create exams")
 
-    data = await exam_service.create_exam(exam, user.user_id)
-    return ExamCreateResponse(**data)
+    logger.info("CREATE_EXAM_REQUEST user_id=%s exam_name=%s", user.user_id, exam.exam_name)
+
+    try:
+        data = await exam_service.create_exam(exam, user.user_id)
+        return ExamCreateResponse(**data)
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
 @router.get("/exams/{exam_id}", response_model=ExamDetailResponse)
@@ -64,10 +73,10 @@ async def get_exam(exam_id: str, user: User = Depends(get_current_user)) -> Exam
     try:
         exam = await exam_service.get_exam(exam_id)
         return ExamDetailResponse(**exam)
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
     except Exception as e:
         logger.error(f"Error fetching exam {exam_id}: {e}")
-        if isinstance(e, HTTPException):
-            raise e
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -77,8 +86,11 @@ async def update_exam(exam_id: str, update_data: dict, user: User = Depends(get_
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can update exams")
 
-    data = await exam_service.update_exam(exam_id, update_data, user.user_id)
-    return ExamUpdateResponse(**data)
+    try:
+        data = await exam_service.update_exam(exam_id, update_data, user.user_id)
+        return ExamUpdateResponse(**data)
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
 @router.get("/exams/{exam_id}/blueprint-health", response_model=BlueprintHealthResponse)
@@ -86,8 +98,11 @@ async def get_blueprint_health(exam_id: str, user: User = Depends(get_current_us
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can view blueprint health")
 
-    data = await blueprint_service.get_blueprint_health(exam_id, user.user_id)
-    return BlueprintHealthResponse(**data)
+    try:
+        data = await blueprint_service.get_blueprint_health(exam_id, user.user_id)
+        return BlueprintHealthResponse(**data)
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
 @router.post("/exams/{exam_id}/lock-blueprint", response_model=MessageResponse)
@@ -95,8 +110,11 @@ async def lock_blueprint(exam_id: str, user: User = Depends(get_current_user)):
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can lock blueprint")
 
-    data = await blueprint_service.lock_blueprint(exam_id, user.user_id)
-    return MessageResponse(**data)
+    try:
+        data = await blueprint_service.lock_blueprint(exam_id, user.user_id)
+        return MessageResponse(**data)
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
 @router.post("/exams/{exam_id}/unlock-blueprint", response_model=MessageResponse)
@@ -104,8 +122,11 @@ async def unlock_blueprint(exam_id: str, user: User = Depends(get_current_user))
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can unlock blueprint")
 
-    data = await blueprint_service.unlock_blueprint(exam_id, user.user_id)
-    return MessageResponse(**data)
+    try:
+        data = await blueprint_service.unlock_blueprint(exam_id, user.user_id)
+        return MessageResponse(**data)
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
 @router.delete("/exams/{exam_id}", response_model=ExamDeleteResponse)
@@ -114,8 +135,13 @@ async def delete_exam(exam_id: str, user: User = Depends(get_current_user)):
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can delete exams")
 
-    result = await exam_service.delete_exam(exam_id, user.user_id)
-    return ExamDeleteResponse(**result)
+    logger.info("DELETE_EXAM_REQUEST exam_id=%s user_id=%s", exam_id, user.user_id)
+
+    try:
+        result = await exam_service.delete_exam(exam_id, user.user_id)
+        return ExamDeleteResponse(**result)
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
 @router.put("/exams/{exam_id}/close", response_model=MessageResponse)
@@ -124,8 +150,11 @@ async def close_exam(exam_id: str, user: User = Depends(get_current_user)):
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can close exams")
 
-    await exam_service.close_exam(exam_id, user.user_id)
-    return MessageResponse(message="Exam closed successfully")
+    try:
+        await exam_service.close_exam(exam_id, user.user_id)
+        return MessageResponse(message="Exam closed successfully")
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
 @router.put("/exams/{exam_id}/reopen", response_model=MessageResponse)
@@ -134,8 +163,11 @@ async def reopen_exam(exam_id: str, user: User = Depends(get_current_user)):
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can reopen exams")
 
-    await exam_service.reopen_exam(exam_id, user.user_id)
-    return MessageResponse(message="Exam reopened successfully")
+    try:
+        await exam_service.reopen_exam(exam_id, user.user_id)
+        return MessageResponse(message="Exam reopened successfully")
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
 @router.post("/exams/{exam_id}/extract-questions", response_model=ExtractionResponse)
@@ -144,13 +176,16 @@ async def extract_and_update_questions(exam_id: str, user: User = Depends(get_cu
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can update exams")
 
-    result = await exam_service.extract_questions(exam_id, user.user_id)
+    try:
+        result = await exam_service.extract_questions(exam_id, user.user_id)
 
-    return ExtractionResponse(
-        message=result.get("message", "Questions extracted"),
-        updated_count=result.get("count", 0),
-        source=result.get("source", "")
-    )
+        return ExtractionResponse(
+            message=result.get("message", "Questions extracted"),
+            updated_count=result.get("count", 0),
+            source=result.get("source", "")
+        )
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
 @router.post("/exams/{exam_id}/re-extract-questions", response_model=ReExtractResponse)
@@ -159,15 +194,19 @@ async def re_extract_question_structure(exam_id: str, user: User = Depends(get_c
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can re-extract questions")
 
-    result = await exam_service.re_extract_questions(exam_id, user.user_id)
+    logger.info("RE_EXTRACT_QUESTIONS_REQUEST exam_id=%s user_id=%s", exam_id, user.user_id)
+    try:
+        result = await exam_service.re_extract_questions(exam_id, user.user_id)
 
-    return ReExtractResponse(
-        message=result.get("message"),
-        count=result.get("count", 0),
-        total_marks=result.get("total_marks", 0),
-        source=result.get("source", ""),
-        questions=result.get("questions", [])
-    )
+        return ReExtractResponse(
+            message=result.get("message"),
+            count=result.get("count", 0),
+            total_marks=result.get("total_marks", 0),
+            source=result.get("source", ""),
+            questions=result.get("questions", [])
+        )
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
 @router.post("/exams/{exam_id}/infer-topics", response_model=InferredTopicsResponse)
@@ -179,8 +218,11 @@ async def infer_question_topics(
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can infer topics")
 
-    result = await exam_service.infer_topics(exam_id, user.user_id)
-    return InferredTopicsResponse(**result)
+    try:
+        result = await exam_service.infer_topics(exam_id, user.user_id)
+        return InferredTopicsResponse(**result)
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
 @router.put("/exams/{exam_id}/question-topics", response_model=MessageResponse)
@@ -193,8 +235,11 @@ async def update_question_topics(
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can update topics")
 
-    await exam_service.update_question_topics(exam_id, data, user.user_id)
-    return MessageResponse(message="Topics updated successfully")
+    try:
+        await exam_service.update_question_topics(exam_id, data, user.user_id)
+        return MessageResponse(message="Topics updated successfully")
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
 @router.post("/exams/student-mode", response_model=ExamCreateResponse)
@@ -213,20 +258,26 @@ async def create_student_upload_exam(
     qp_bytes = await question_paper.read()
     ma_bytes = await model_answer.read()
 
-    data = await exam_service.create_student_upload_exam(
-        exam_data,
-        qp_bytes, question_paper.content_type,
-        ma_bytes, model_answer.content_type,
-        user.user_id
-    )
-    return ExamCreateResponse(**data)
+    try:
+        data = await exam_service.create_student_upload_exam(
+            exam_data,
+            qp_bytes, question_paper.content_type,
+            ma_bytes, model_answer.content_type,
+            user.user_id
+        )
+        return ExamCreateResponse(**data)
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
 @router.get("/exams/{exam_id}/submissions-status", response_model=SubmissionStatusResponse)
 async def get_submission_status(exam_id: str, user: User = Depends(get_current_user)):
     """Get submission status for a student-upload exam"""
-    result = await exam_service.get_submission_status(exam_id)
-    return SubmissionStatusResponse(**result)
+    try:
+        result = await exam_service.get_submission_status(exam_id)
+        return SubmissionStatusResponse(**result)
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
 @router.post("/exams/{exam_id}/submit", response_model=StudentSubmissionResponse)
@@ -243,16 +294,19 @@ async def submit_student_answer(
 
     file_bytes = await answer_paper.read()
     
-    result = await exam_service.submit_student_answer(
-        exam_id,
-        file_bytes,
-        answer_paper.content_type or 'application/pdf',
-        user.user_id,
-        user.name,
-        user.email
-    )
+    try:
+        result = await exam_service.submit_student_answer(
+            exam_id,
+            file_bytes,
+            answer_paper.content_type or 'application/pdf',
+            user.user_id,
+            user.name,
+            user.email
+        )
 
-    return StudentSubmissionResponse(**result)
+        return StudentSubmissionResponse(**result)
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
 @router.delete("/exams/{exam_id}/remove-student/{student_id}", response_model=MessageResponse)
@@ -265,8 +319,11 @@ async def remove_student_from_exam(
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can remove students")
 
-    await exam_service.remove_student_from_exam(exam_id, student_id, user.user_id)
-    return MessageResponse(message="Student removed from exam")
+    try:
+        await exam_service.remove_student_from_exam(exam_id, student_id, user.user_id)
+        return MessageResponse(message="Student removed from exam")
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
 @router.post("/exams/{exam_id}/publish-results", response_model=MessageResponse)
@@ -279,8 +336,11 @@ async def publish_exam_results(
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can publish results")
 
-    await exam_service.publish_results(exam_id, data, user.user_id)
-    return MessageResponse(message="Results published successfully")
+    try:
+        await exam_service.publish_results(exam_id, data, user.user_id)
+        return MessageResponse(message="Results published successfully")
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
 @router.post("/exams/{exam_id}/unpublish-results", response_model=MessageResponse)
@@ -289,5 +349,8 @@ async def unpublish_exam_results(exam_id: str, user: User = Depends(get_current_
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can unpublish results")
 
-    await exam_service.unpublish_results(exam_id, user.user_id)
-    return MessageResponse(message="Results unpublished")
+    try:
+        await exam_service.unpublish_results(exam_id, user.user_id)
+        return MessageResponse(message="Results unpublished")
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)

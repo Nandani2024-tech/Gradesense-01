@@ -1,7 +1,7 @@
 import re
 from typing import Optional
 
-from app.utils.ocr_provider.patterns import (
+from app.infrastructure.ocr.provider.patterns import (
     QUESTION_ANCHOR_RE,
     SUBPART_RE,
     WORKING_NOTE_RE,

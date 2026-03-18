@@ -42,6 +42,13 @@ class AdminRepo:
     async def delete_user_session(self, query: Dict[str, Any]) -> Any:
         return await self.user_sessions_collection.delete_one(query)
 
+    async def find_one_user_session(self, query: Dict[str, Any], projection: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        if projection and "_id" not in projection:
+            projection["_id"] = 0
+        elif not projection:
+            projection = {"_id": 0}
+        return await self.user_sessions_collection.find_one(query, projection)
+
     async def count_feedback(self, query: Dict[str, Any]) -> int:
         return await self.user_feedback_collection.count_documents(query)
 

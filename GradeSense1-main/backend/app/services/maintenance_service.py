@@ -1,6 +1,6 @@
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
-from fastapi import HTTPException
+from app.core.exceptions import CustomServiceException
 import os
 
 from app.repositories import ExamRepo, SubmissionRepo, AnalyticsRepo
@@ -15,18 +15,17 @@ class MaintenanceService:
     async def force_reextract_questions(self, exam_id: str) -> Dict[str, Any]:
         """Force complete re-extraction of ALL questions."""
         from app.services.extraction import auto_extract_questions
-        from app.core.database import db # For direct access if repo doesn't have it
         
         exam = await self.exam_repo.find_one_exam({"exam_id": exam_id})
         if not exam:
-            raise HTTPException(status_code=404, detail="Exam not found")
+            raise CustomServiceException(status_code=404, message="Exam not found")
         
         # Delete old questions
-        await db.questions.delete_many({"exam_id": exam_id})
+        await self.exam_repo.delete_questions({"exam_id": exam_id})
         
         # Reset exam status
         await self.exam_repo.update_exam(
-            {"exam_id": exam_id},
+            exam_id,
             {"$set": {
                 "questions": [],
                 "questions_count": 0,
@@ -50,10 +49,10 @@ class MaintenanceService:
             projection={"_id": 0, "exam_id": 1, "teacher_id": 1, "questions": 1, "total_marks": 1}
         )
         if not exam:
-            raise HTTPException(status_code=404, detail="Exam not found")
+            raise CustomServiceException(status_code=404, message="Exam not found")
 
         if user.role != "admin" and exam.get("teacher_id") != user.user_id:
-            raise HTTPException(status_code=403, detail="Access denied")
+            raise CustomServiceException(status_code=403, message="Access denied")
 
         submissions = await self.submission_repo.find_submissions(
             {"exam_id": exam_id},
@@ -117,7 +116,6 @@ class MaintenanceService:
 
     async def get_system_status(self) -> Dict[str, Any]:
         """Get database and job queue status."""
-        from app.core.database import db
         
         debug_info = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -132,9 +130,9 @@ class MaintenanceService:
         }
         
         try:
-            await db.command("ping")
+            await self.analytics_repo.ping()
             debug_info["database"]["connection"] = "Connected ✅"
-            collections = await db.list_collection_names()
+            collections = await self.analytics_repo.list_collections()
             debug_info["database"]["collections"] = collections[:10]
             
             one_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
@@ -157,8 +155,7 @@ class MaintenanceService:
 
     async def get_exam_question_details(self, exam_id: str) -> Dict[str, Any]:
         """Debug endpoint to see ALL questions in database for this exam."""
-        from app.core.database import db
-        db_questions = await db.questions.find({"exam_id": exam_id}, {"_id": 0}).to_list(1000)
+        db_questions = await self.exam_repo.find_questions({"exam_id": exam_id}, limit=1000, projection={"_id": 0})
         exam = await self.exam_repo.find_one_exam({"exam_id": exam_id}, projection={"questions": 1})
         exam_questions = exam.get("questions", []) if exam else []
         

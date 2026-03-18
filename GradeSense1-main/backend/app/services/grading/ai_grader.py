@@ -40,6 +40,9 @@ async def grade_with_ai(
         grade_with_ai.last_grading_reference_mode = None
     if not hasattr(grade_with_ai, "last_answer_segments"):
         grade_with_ai.last_answer_segments = {}
+    # FIX START
+    grade_with_ai.last_grading_failed = False
+    # FIX END
 
     # Run Orchestrator
     try:
@@ -69,7 +72,11 @@ async def grade_with_ai(
         return scores
 
     except Exception as e:
-        logger.error(f"AI grading failed: {e}", exc_info=True)
+        # FIX START
+        logger.error(f"[CRITICAL] AI_GRADING_FAILED | exam_id={exam_id} | error={e}", exc_info=True)
+        # Attach failure indicator to the function object as a safe flag
+        grade_with_ai.last_grading_failed = True
+        # FIX END
         # Return empty results as fallback to prevent pipeline crashes
         return []
 
@@ -77,3 +84,6 @@ async def grade_with_ai(
 grade_with_ai.last_packet_meta = {}
 grade_with_ai.last_grading_reference_mode = None
 grade_with_ai.last_answer_segments = {}
+# FIX START
+grade_with_ai.last_grading_failed = False
+# FIX END

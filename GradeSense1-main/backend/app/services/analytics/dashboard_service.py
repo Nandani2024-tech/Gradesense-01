@@ -3,7 +3,6 @@ from datetime import datetime
 from app.repositories import StudentRepo, SubmissionRepo, ExamRepo, AnalyticsRepo
 from .peer_group_service import peer_group_service
 from app.models.user import User
-from app.core.database import db
 from app.core.logging_config import logger
 
 class DashboardService:

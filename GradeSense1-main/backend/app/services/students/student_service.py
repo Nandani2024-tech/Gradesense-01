@@ -2,7 +2,7 @@ import asyncio
 import uuid
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Tuple
-from fastapi import HTTPException
+from app.core.exceptions import CustomServiceException
 
 from app.repositories import StudentRepo, SubmissionRepo, ExamRepo, AnalyticsRepo
 from app.core.logging_config import logger
@@ -28,9 +28,9 @@ class StudentService:
             # Check if student ID already exists
             existing_id = await self.student_repo.get_student_by_id(student_id)
             if existing_id:
-                raise HTTPException(
+                raise CustomServiceException(
                     status_code=400,
-                    detail=f"Student ID {student_id} already exists"
+                    message=f"Student ID {student_id} already exists"
                 )
         else:
             # Auto-generate student ID
@@ -39,7 +39,7 @@ class StudentService:
         # Check if email already exists
         existing = await self.student_repo.get_student_by_email(email)
         if existing:
-            raise HTTPException(status_code=400, detail="Student with this email already exists")
+            raise CustomServiceException(status_code=400, message="Student with this email already exists")
 
         user_id = f"user_{uuid.uuid4().hex[:12]}"
 
@@ -81,13 +81,13 @@ class StudentService:
             }}
         )
         if result.matched_count == 0:
-            raise HTTPException(status_code=404, detail="Student not found")
+            raise CustomServiceException(status_code=404, message="Student not found")
 
     async def delete_student(self, student_user_id: str, teacher_id: str) -> None:
         """Delete a student record."""
         result = await self.student_repo.delete_student(student_user_id)
         if result.deleted_count == 0:
-            raise HTTPException(status_code=404, detail="Student not found")
+            raise CustomServiceException(status_code=404, message="Student not found")
 
     async def get_students(self, teacher_id: str, batch_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Get students managed by a teacher."""
@@ -132,7 +132,7 @@ class StudentService:
         """Get detailed student information with performance analytics."""
         student = await self.student_repo.get_student_by_id(student_user_id)
         if not student:
-            raise HTTPException(status_code=404, detail="Student not found")
+            raise CustomServiceException(status_code=404, message="Student not found")
 
         # Get all submissions for this student
         submissions = await self.submission_repo.find_submissions(
@@ -287,7 +287,7 @@ class StudentService:
         """Get analytics for a specific student."""
         student = await self.student_repo.get_student_by_id(student_id)
         if not student:
-            raise HTTPException(status_code=404, detail="Student not found")
+            raise CustomServiceException(status_code=404, message="Student not found")
 
         submissions = await self.submission_repo.find_submissions(
             {"student_id": student_id},

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
-from fastapi import HTTPException
+from app.core.exceptions import CustomServiceException
 
 from app.repositories import AnalyticsRepo, SubmissionRepo, ExamRepo
 
@@ -39,11 +39,11 @@ class ReEvaluationService:
         """Submit a new re-evaluation request."""
         submission = await self.submission_repo.find_one_submission({"submission_id": submission_id})
         if not submission:
-            raise HTTPException(status_code=404, detail="Submission not found")
+            raise CustomServiceException(status_code=404, message="Submission not found")
 
         exam = await self.exam_repo.find_one_exam({"exam_id": submission["exam_id"]})
         if not exam:
-            raise HTTPException(status_code=404, detail="Exam not found")
+            raise CustomServiceException(status_code=404, message="Exam not found")
 
         request_id = f"rev_{uuid.uuid4().hex[:12]}"
         new_request = {
@@ -75,12 +75,12 @@ class ReEvaluationService:
         """Update re-evaluation request status."""
         re_eval = await self.analytics_repo.find_one_re_evaluation({"request_id": request_id})
         if not re_eval:
-            raise HTTPException(status_code=404, detail="Request not found")
+            raise CustomServiceException(status_code=404, message="Request not found")
 
         # Verify teacher owns the exam
         exam = await self.exam_repo.find_one_exam({"exam_id": re_eval["exam_id"], "teacher_id": user_id})
         if not exam:
-            raise HTTPException(status_code=403, detail="Not authorized to manage this request")
+            raise CustomServiceException(status_code=403, message="Not authorized to manage this request")
 
         status = updates.get("status", "resolved")
         response_text = updates.get("response", "")

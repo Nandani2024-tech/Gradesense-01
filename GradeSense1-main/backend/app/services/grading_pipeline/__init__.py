@@ -1,5 +1,5 @@
-"""Exports for backward compatibility."""
+"""Exports for grading pipeline."""
 
-from .pipeline_runner import grade_pdf
+from .pipeline_runner import GradingPipelineRunner
 
-__all__ = ["grade_pdf"]
+__all__ = ["GradingPipelineRunner"]

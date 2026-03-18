@@ -3,7 +3,7 @@ import uuid
 from typing import Optional, Dict, List, Any
 from datetime import datetime, timezone
 
-from fastapi import HTTPException
+from app.core.exceptions import CustomServiceException
 
 from app.repositories import AdminRepo, ExamRepo, SubmissionRepo, AnalyticsRepo
 from app.core.logging_config import logger
@@ -22,7 +22,7 @@ class ReportingService:
     async def get_student_deep_dive(self, user_id: str, student_id: str, exam_id: Optional[str] = None) -> Dict[str, Any]:
         """Get detailed student analysis with AI-generated insights"""
         student = await self.admin_repo.find_one_user({"user_id": student_id})
-        if not student: raise HTTPException(status_code=404, detail="Student not found")
+        if not student: raise CustomServiceException(status_code=404, message="Student not found")
 
         sub_query = {"student_id": student_id}
         if exam_id: sub_query["exam_id"] = exam_id
@@ -37,10 +37,10 @@ class ReportingService:
     async def generate_review_packet(self, user_id: str, exam_id: str) -> Dict[str, Any]:
         """Generate AI-powered practice questions based on weak topics"""
         exam = await self.exam_repo.find_one_exam({"exam_id": exam_id, "teacher_id": user_id})
-        if not exam: raise HTTPException(status_code=404, detail="Exam not found")
+        if not exam: raise CustomServiceException(status_code=404, message="Exam not found")
 
         submissions = await self.submission_repo.find_submissions({"exam_id": exam_id}, limit=100)
-        if not submissions: raise HTTPException(status_code=400, detail="No submissions found")
+        if not submissions: raise CustomServiceException(status_code=400, message="No submissions found")
 
         return {"message": "Review packet generated", "practice_questions": []}
 

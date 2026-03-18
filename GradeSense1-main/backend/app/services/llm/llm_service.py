@@ -7,7 +7,10 @@ import asyncio
 import base64
 from typing import List, Optional, Tuple, Any, Dict
 
-from google import genai
+try:
+    from google import genai
+except ImportError:
+    import google.genai as genai
 
 from app.core.logging_config import logger
 from .config import GEMINI_MODEL_NAME

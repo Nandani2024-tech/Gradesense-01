@@ -22,8 +22,8 @@ from .utils import (
     apply_annotations_to_image,
     auto_position_annotations_for_question
 )
-from app.utils.ocr_provider import get_ocr_provider
-from app.utils.vision_ocr_service import get_vision_service
+from app.infrastructure.ocr.provider import get_ocr_provider
+from app.infrastructure.ocr.vision.vision_ocr_service import get_vision_service
 from app.ocr import build_page_segments
 
 
@@ -766,3 +766,11 @@ async def generate_annotated_images_with_vision_ocr(
 
     logger.info(f"OCR annotations applied to {len(annotated_images)} pages")
     return annotated_images
+
+
+# MODULE INTERFACE START
+__all__ = [
+    "generate_annotated_images",
+    "generate_annotated_images_with_vision_ocr",
+]
+# MODULE INTERFACE END

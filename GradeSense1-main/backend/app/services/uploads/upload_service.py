@@ -4,15 +4,17 @@ import asyncio
 import hashlib
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Tuple
-
-from fastapi import HTTPException, UploadFile
+from fastapi import UploadFile
+from typing import Optional
+from app.core.exceptions import CustomServiceException
 import fastapi
 
 from app.repositories import ExamRepo, AnalyticsRepo, StudentRepo, SubmissionRepo
 from app.services.files import file_service
+from app.services.validation_service import validation_service
 from app.services.notifications.notifications_service import create_notification
 from app.core.logging_config import logger
-from app.utils.concurrency import conversion_semaphore
+from app.infrastructure.concurrency import conversion_semaphore
 
 class UploadService:
     def __init__(self):
@@ -30,11 +32,13 @@ class UploadService:
         link: Optional[str] = None
     ) -> Dict[str, Any]:
         """Upload model answer and trigger extraction."""
-        await self.exam_repo.update_exam(exam_id, {"$set": {"model_answer_processing": True}})
-
-        exam = await self.exam_repo.find_one_exam({"exam_id": exam_id, "teacher_id": user_id})
+        exam = await self.exam_repo.find_one_exam({"exam_id": exam_id})
         if not exam:
-            raise HTTPException(status_code=404, detail="Exam not found")
+            raise CustomServiceException(status_code=404, message="Exam not found")
+        
+        validation_service.validate_exam_ownership(exam, user_id)
+        logger.info("UPLOAD_MODEL_ANSWER_STARTED exam_id=%s user_id=%s", exam_id, user_id)
+        await self.exam_repo.update_exam(exam_id, {"$set": {"model_answer_processing": True}})
 
         file_bytes = None
         file_type = None
@@ -42,62 +46,38 @@ class UploadService:
         if link:
             file_bytes, file_type = file_service.download_drive_file(link)
             if not file_bytes:
-                raise HTTPException(status_code=400, detail="Invalid Google Drive link or download failed")
+                raise CustomServiceException(status_code=400, message="Invalid Google Drive link or download failed")
         elif file:
             file_bytes = await file.read()
             file_ext = os.path.splitext(file.filename)[1].lower().replace('.', '')
             file_type = file_ext or file.content_type
         else:
-            raise HTTPException(status_code=400, detail="Either file or link must be provided")
+            raise CustomServiceException(status_code=400, message="Either file or link must be provided")
 
-        if len(file_bytes) > 30 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="File too large. Maximum size is 30MB.")
+        validation_service.validate_file_size(file_bytes)
 
-        try:
-            if file_type in ['zip', 'application/zip', 'application/x-zip-compressed']:
-                all_images = []
-                extracted_files = file_service.extract_zip(file_bytes)
-                for filename, extracted_bytes, extracted_type in extracted_files:
-                    try:
-                        file_images = await file_service.convert_file_to_images(extracted_bytes, extracted_type)
-                        all_images.extend(file_images)
-                    except Exception: continue
-                if not all_images:
-                    raise HTTPException(status_code=400, detail="No valid files found in ZIP")
-                images = all_images
-            else:
-                images = await file_service.convert_file_to_images(file_bytes, file_type)
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Failed to process file: {str(e)}")
-
-        file_id_str = str(uuid.uuid4())
-        gridfs_id = file_service.store_images(
-            images,
-            filename=f"model_answer_{exam_id}_{file_id_str}",
-            exam_id=exam_id,
-            file_type="model_answer"
+        file_id_str, page_count, gridfs_id = await file_service.process_and_store_model_answer(
+            exam_id, file_bytes, file_type
         )
+        logger.info("MODEL_ANSWER_STORED exam_id=%s file_id=%s page_count=%s", exam_id, file_id_str, page_count)
 
-        await self.exam_repo.files_collection.update_one(
+        await self.exam_repo.update_exam_file(
             {"exam_id": exam_id, "file_type": "model_answer"},
             {"$set": {
                 "exam_id": exam_id,
                 "file_type": "model_answer",
                 "file_id": file_id_str,
-                "gridfs_id": str(gridfs_id),
-                "page_count": len(images),
+                "gridfs_id": gridfs_id,
+                "page_count": page_count,
                 "uploaded_at": datetime.now(timezone.utc).isoformat()
-            }},
-            upsert=True
+            }}
         )
 
         await self.exam_repo.update_exam(
             exam_id,
             {"$set": {
                 "model_answer_file_id": file_id_str,
-                "model_answer_pages": len(images),
+                "model_answer_pages": page_count,
                 "has_model_answer": True,
                 "model_answer_processing": True,
                 "model_answer_text_status": "processing",
@@ -113,7 +93,7 @@ class UploadService:
         from app.workers.upload_worker import process_model_answer_background
         background_tasks.add_task(process_model_answer_background, exam_id)
 
-        return {"message": "Model answer uploaded. Extraction is running in the background.", "pages": len(images)}
+        return {"message": "Model answer uploaded. Extraction is running in the background.", "pages": page_count, "processing": True}
 
     async def upload_question_paper(
         self,
@@ -123,21 +103,23 @@ class UploadService:
         file: UploadFile
     ) -> Dict[str, Any]:
         """Upload question paper and trigger extraction."""
-        exam = await self.exam_repo.find_one_exam({"exam_id": exam_id, "teacher_id": user_id})
+        exam = await self.exam_repo.find_one_exam({"exam_id": exam_id})
         if not exam:
-            raise HTTPException(status_code=404, detail="Exam not found")
+            raise CustomServiceException(status_code=404, message="Exam not found")
+        
+        validation_service.validate_exam_ownership(exam, user_id)
+        logger.info("UPLOAD_QUESTION_PAPER_STARTED exam_id=%s user_id=%s", exam_id, user_id)
 
         file_bytes = await file.read()
         file_ext = os.path.splitext(file.filename)[1].lower().replace('.', '')
         file_type = file_ext or file.content_type
 
-        if len(file_bytes) > 30 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="File too large. Maximum size is 30MB.")
+        validation_service.validate_file_size(file_bytes)
 
         file_hash = hashlib.sha256(file_bytes).hexdigest()
         
         # Cache Check
-        existing_exam = await self.exam_repo.collection.find_one({
+        existing_exam = await self.exam_repo.find_one_exam({
             "question_paper_hash": file_hash,
             "question_extraction_status": "completed",
             "has_blueprint": True,
@@ -166,44 +148,21 @@ class UploadService:
             )
             return {"message": "Cache Hit! Blueprint restored.", "pages": existing_exam.get("question_paper_pages", 0), "processing": False}
 
-        try:
-            if file_type in ['zip', 'application/zip', 'application/x-zip-compressed']:
-                all_images = []
-                extracted_files = file_service.extract_zip(file_bytes)
-                for filename, extracted_bytes, extracted_type in extracted_files:
-                    try:
-                        file_images = await file_service.convert_file_to_images(extracted_bytes, extracted_type)
-                        all_images.extend(file_images)
-                    except Exception: continue
-                if not all_images:
-                    raise HTTPException(status_code=400, detail="No valid files found in ZIP")
-                images = all_images
-            else:
-                images = await file_service.convert_file_to_images(file_bytes, file_type)
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Failed to process file: {str(e)}")
-
-        file_id_str = str(uuid.uuid4())
-        gridfs_id = file_service.store_images(
-            images,
-            filename=f"question_paper_{exam_id}_{file_id_str}",
-            exam_id=exam_id,
-            file_type="question_paper"
+        file_id_str, page_count, gridfs_id = await file_service.process_and_store_question_paper(
+            exam_id, file_bytes, file_type
         )
+        logger.info("QUESTION_PAPER_STORED exam_id=%s file_id=%s page_count=%s", exam_id, file_id_str, page_count)
 
-        await self.exam_repo.files_collection.update_one(
+        await self.exam_repo.update_exam_file(
             {"exam_id": exam_id, "file_type": "question_paper"},
             {"$set": {
                 "exam_id": exam_id,
                 "file_type": "question_paper",
                 "file_id": file_id_str,
-                "gridfs_id": str(gridfs_id),
-                "page_count": len(images),
+                "gridfs_id": gridfs_id,
+                "page_count": page_count,
                 "uploaded_at": datetime.now(timezone.utc).isoformat()
-            }},
-            upsert=True
+            }}
         )
 
         if file_type == "pdf":
@@ -215,16 +174,15 @@ class UploadService:
                     exam_id=exam_id,
                     file_type="question_paper_pdf",
                 )
-                await self.exam_repo.files_collection.update_one(
+                await self.exam_repo.update_exam_file(
                     {"exam_id": exam_id, "file_type": "question_paper_pdf"},
                     {"$set": {
                         "exam_id": exam_id,
                         "file_type": "question_paper_pdf",
                         "file_id": file_id_str,
-                        "gridfs_id": str(qp_pdf_gridfs_id),
+                        "gridfs_id": qp_pdf_gridfs_id,
                         "uploaded_at": datetime.now(timezone.utc).isoformat(),
-                    }},
-                    upsert=True,
+                    }}
                 )
             except Exception: pass
 
@@ -232,7 +190,7 @@ class UploadService:
             exam_id,
             {"$set": {
                 "question_paper_file_id": file_id_str,
-                "question_paper_pages": len(images),
+                "question_paper_pages": page_count,
                 "question_paper_hash": file_hash,
                 "has_question_paper": True,
                 "question_paper_processing": True,
@@ -258,7 +216,7 @@ class UploadService:
         from app.workers.upload_worker import process_question_paper_background
         background_tasks.add_task(process_question_paper_background, exam_id)
         
-        return {"message": "Question paper uploaded. Extraction is running.", "pages": len(images), "processing": True}
+        return {"message": "Question paper uploaded. Extraction is running.", "pages": page_count, "processing": True}
 
     async def upload_more_papers(self, exam_id: str, user_id: str, files: List[UploadFile]) -> Dict[str, Any]:
         """Upload and grade papers."""
@@ -269,14 +227,15 @@ class UploadService:
         from app.services.students.student_service import student_service
         from app.services.submissions.submission_service import submission_service
 
-        exam = await self.exam_repo.find_one_exam({"exam_id": exam_id, "teacher_id": user_id})
+        exam = await self.exam_repo.find_one_exam({"exam_id": exam_id})
         if not exam:
             raise HTTPException(status_code=404, detail="Exam not found")
-
-        if exam.get("status") == "closed":
-            raise HTTPException(status_code=400, detail="Cannot upload papers to closed exam")
+        
+        validation_service.validate_exam_ownership(exam, user_id)
+        validation_service.validate_exam_not_closed(exam)
         
         exam = await blueprint_service.ensure_blueprint_locked(exam_id, context="upload more papers")
+        logger.info("UPLOAD_MORE_PAPERS_STARTED exam_id=%s user_id=%s file_count=%s", exam_id, user_id, len(files))
 
         submissions = []
         errors = []
@@ -332,14 +291,15 @@ class UploadService:
                 total_score = sum(s.obtained_marks for s in scores)
                 percentage = (total_score / exam["total_marks"]) * 100 if exam["total_marks"] > 0 else 0
 
-                submission_id = f"sub_{uuid.uuid4().hex[:8]}"
+                _hex = uuid.uuid4().hex
+                submission_id = f"sub_{_hex[:8]}"
                 from app.services.score_normalization import normalize_submission_scores
                 normalized = normalize_submission_scores(
                     {
                         "submission_id": submission_id,
                         "question_scores": [s.model_dump() for s in scores],
                         "total_score": total_score,
-                        "percentage": round(percentage, 2),
+                        "percentage": round(float(percentage), 2),
                     },
                     exam,
                     source="upload_more_papers",
@@ -367,8 +327,10 @@ class UploadService:
                     "total_score": normalized["total_score"],
                     "percentage": normalized["percentage"],
                 })
+                logger.info("SUBMISSION_CREATED exam_id=%s submission_id=%s student_id=%s score=%s", exam_id, submission_id, stu_id, normalized["total_score"])
 
             except Exception as e:
+                logger.error("PAPER_PROCESSING_FAILED exam_id=%s filename=%s error=%s", exam_id, filename, str(e))
                 errors.append({"filename": filename, "error": str(e)})
 
         return {"processed": len(submissions), "submissions": submissions, "errors": errors}

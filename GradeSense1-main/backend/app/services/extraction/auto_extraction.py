@@ -197,7 +197,7 @@ async def extract_question_structure_from_paper(
     # ...
     # This function is too large to just stub. I'll paste the full thing.
     from app.services.extraction.utils import ai_call_with_timeout, create_gemini_chat
-    from app.utils.ocr_provider import get_ocr_provider
+    from app.infrastructure.ocr.provider import get_ocr_provider
     from statistics import median
     import os
 

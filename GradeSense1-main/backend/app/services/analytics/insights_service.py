@@ -4,7 +4,7 @@ import uuid
 from typing import Optional, Dict, List, Any
 from datetime import datetime, timezone
 
-from fastapi import HTTPException
+from app.core.exceptions import CustomServiceException
 
 from app.repositories import AnalyticsRepo, ExamRepo, SubmissionRepo, AdminRepo
 from app.core.logging_config import logger
@@ -72,7 +72,7 @@ class InsightsService:
     async def get_misconceptions_analysis(self, user_id: str, exam_id: str) -> Dict[str, Any]:
         """AI-powered analysis of common misconceptions and why students fail"""
         exam = await self.exam_repo.find_one_exam({"exam_id": exam_id, "teacher_id": user_id})
-        if not exam: raise HTTPException(status_code=404, detail="Exam not found")
+        if not exam: raise CustomServiceException(status_code=404, message="Exam not found")
 
         submissions = await self.submission_repo.find_submissions(
             {"exam_id": exam_id},
@@ -112,7 +112,7 @@ class InsightsService:
     async def get_bluff_index(self, user_id: str, exam_id: str) -> Dict[str, Any]:
         """Detect students who write long but irrelevant answers"""
         exam = await self.exam_repo.find_one_exam({"exam_id": exam_id, "teacher_id": user_id})
-        if not exam: raise HTTPException(status_code=404, detail="Exam not found")
+        if not exam: raise CustomServiceException(status_code=404, message="Exam not found")
 
         submissions = await self.submission_repo.find_submissions({"exam_id": exam_id}, limit=1000)
         return {"bluff_candidates": []}
@@ -129,14 +129,14 @@ class InsightsService:
     async def get_peer_group_suggestions(self, user_id: str, batch_id: str) -> Dict[str, Any]:
         """Auto-suggest study pairs"""
         batch = await self.analytics_repo.find_one_batch({"batch_id": batch_id, "teacher_id": user_id})
-        if not batch: raise HTTPException(status_code=404, detail="Batch not found")
+        if not batch: raise CustomServiceException(status_code=404, message="Batch not found")
         return {"suggestions": []}
 
     async def send_peer_group_email(self, user_id: str, student1_id: str, student2_id: str, message: str) -> Dict[str, Any]:
         """Send notification to suggested peer group"""
         student1 = await self.admin_repo.find_one_user({"user_id": student1_id})
         student2 = await self.admin_repo.find_one_user({"user_id": student2_id})
-        if not student1 or not student2: raise HTTPException(status_code=404, detail="Student not found")
+        if not student1 or not student2: raise CustomServiceException(status_code=404, message="Student not found")
 
         await create_notification(user_id=student1_id, notification_type="peer_group", title="New Partner", message=f"Study with {student2.get('name')}")
         await create_notification(user_id=student2_id, notification_type="peer_group", title="New Partner", message=f"Study with {student1.get('name')}")

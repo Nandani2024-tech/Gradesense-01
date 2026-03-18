@@ -6,7 +6,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.logging_config import logger
-from app.utils.blueprint import compute_blueprint_health
+from app.services.blueprint import compute_blueprint_health
 
 from app.services.pipelines.college_v3.anchor_detection import detect_anchors
 from app.services.pipelines.college_v3.answer_mapping import map_answers

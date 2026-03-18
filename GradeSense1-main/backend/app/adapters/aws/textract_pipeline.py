@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.logging_config import logger
 from app.core.database import db
-from app.utils.blueprint import compute_blueprint_health
+from app.services.blueprint import compute_blueprint_health
 
 from PIL import Image
 

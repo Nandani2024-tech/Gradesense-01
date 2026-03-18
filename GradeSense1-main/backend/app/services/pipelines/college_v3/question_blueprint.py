@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.services.llm.config import get_llm_api_key
 from app.core.logging_config import logger
 from app.services.llm import LlmChat, UserMessage
-from app.utils.blueprint import compute_blueprint_health
+from app.services.blueprint import compute_blueprint_health
 
 
 def _parse_first_json_object(raw_text: str) -> Optional[str]:

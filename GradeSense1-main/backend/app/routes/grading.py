@@ -3,6 +3,8 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
 from typing import List, Any
 import json
+from app.core.logging_config import logger
+from app.core.exceptions import CustomServiceException
 
 from app.deps import get_current_user
 from app.models.user import User
@@ -25,11 +27,15 @@ async def grade_papers_background(
     user: User = Depends(get_current_user)
 ):
     """Start background grading job by delegating to GradingService."""
-    job_id = await grading_service.queue_grading_job(
-        exam_id=exam_id,
-        files=files,
-        user=user
-    )
+    logger.info("GRADE_PAPERS_BG_REQUEST exam_id=%s user_id=%s file_count=%s", exam_id, user.user_id, len(files))
+    try:
+        job_id = await grading_service.queue_grading_job(
+            exam_id=exam_id,
+            files=files,
+            user=user
+        )
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
     return GradingJobResponse(
         job_id=job_id,
@@ -42,8 +48,11 @@ async def grade_papers_background(
 @router.get("/grading-jobs/{job_id}", response_model=GradingJobResponse)
 async def get_grading_job_status(job_id: str, user: User = Depends(get_current_user)) -> GradingJobResponse:
     """Poll grading job status"""
-    job = await grading_job_service.get_job_status(job_id, user.user_id, user.role)
-    return GradingJobResponse(**job)
+    try:
+        job = await grading_job_service.get_job_status(job_id, user.user_id, user.role)
+        return GradingJobResponse(**job)
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
 @router.post("/simple/grade", response_model=SimpleGradingResponse)
@@ -56,6 +65,8 @@ async def simple_grade(
     """Minimal grading path used for simplified workflows."""
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can grade")
+
+    logger.info("GRADING_ACTION_REQUESTed by user_id=%s", user.user_id)
 
     qp_bytes = await question_paper.read()
     ans_bytes = await answer_sheet.read()
@@ -71,8 +82,11 @@ async def simple_grade(
 @router.post("/grading-jobs/{job_id}/cancel", response_model=JobCancelResponse)
 async def cancel_grading_job(job_id: str, user: User = Depends(get_current_user)):
     """Cancel an ongoing grading job"""
-    result = await grading_job_service.cancel_job(job_id, user.user_id, user.role)
-    return JobCancelResponse(**result)
+    try:
+        result = await grading_job_service.cancel_job(job_id, user.user_id, user.role)
+        return JobCancelResponse(**result)
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
 @router.post("/exams/{exam_id}/regrade-all", response_model=RegradeAllResponse)
@@ -84,6 +98,8 @@ async def regrade_all_submissions(
     """Regrade all submissions for an exam with current settings in the background"""
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can regrade exams")
+
+    logger.info("REGRADE_ALL_REQUEST exam_id=%s user_id=%s", exam_id, user.user_id)
 
     grading_service.queue_regrade_all(exam_id, user.user_id, background_tasks)
     
@@ -101,5 +117,8 @@ async def grade_student_submissions(exam_id: str, user: User = Depends(get_curre
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can grade")
 
-    result = await grading_service.grade_student_submissions(exam_id, user.user_id)
-    return GradingJobResponse(**result)
+    try:
+        result = await grading_service.grade_student_submissions(exam_id, user.user_id)
+        return GradingJobResponse(**result)
+    except CustomServiceException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)

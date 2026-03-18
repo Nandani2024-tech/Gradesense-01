@@ -4,13 +4,13 @@ import json
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
-from fastapi import HTTPException
-
+from app.core.exceptions import CustomServiceException
 from app.repositories import ExamRepo, SubmissionRepo, AnalyticsRepo, StudentRepo
 from app.core.logging_config import logger
-from app.utils.validation import infer_upsc_paper
+from app.infrastructure.validation import infer_upsc_paper
 from app.services.storage.gridfs_helpers import get_exam_model_answer_images, get_exam_question_paper_images
-from app.services.files import upload_file_to_gridfs, delete_files_by_exam_id
+from app.services.files import file_service
+from app.services.validation_service import validation_service
 from app.domain.factories import ExamFactory, SubmissionFactory, SubmissionSchema
 from app.services.llm.config import get_llm_api_key, GEMINI_MODEL_NAME
 from app.services.llm import LlmChat, UserMessage
@@ -60,17 +60,12 @@ class ExamService:
 
     async def create_exam(self, exam_data, user_id: str) -> Dict[str, Any]:
         """Create a new exam."""
-        exam_name_normalized = exam_data.exam_name.strip().lower()
-
-        existing_exams = await self.exam_repo.find_exams({
-            "batch_id": exam_data.batch_id,
-            "teacher_id": user_id
-        }, limit=1000, projection={"exam_name": 1, "exam_id": 1})
-
-        for existing in existing_exams:
-            existing_name_normalized = existing.get("exam_name", "").strip().lower()
-            if existing_name_normalized == exam_name_normalized:
-                raise HTTPException(status_code=400, detail=f"An exam named '{exam_data.exam_name}' already exists in this batch")
+        await validation_service.validate_exam_name_unique(
+            exam_data.exam_name, 
+            exam_data.batch_id, 
+            user_id, 
+            self.exam_repo
+        )
 
         from app.schemas.exam.student_exam_create import StudentExamCreate
         student_exam = StudentExamCreate(
@@ -101,7 +96,7 @@ class ExamService:
         """Get exam details including images."""
         exam = await self.exam_repo.find_one_exam({"exam_id": exam_id})
         if not exam:
-            raise HTTPException(status_code=404, detail="Exam not found")
+            raise CustomServiceException(status_code=404, message="Exam not found")
 
         model_answer_imgs = await get_exam_model_answer_images(exam_id)
         if model_answer_imgs:
@@ -118,13 +113,12 @@ class ExamService:
         """Update exam details."""
         exam = await self.exam_repo.find_one_exam({"exam_id": exam_id, "teacher_id": user_id})
         if not exam:
-            raise HTTPException(status_code=404, detail="Exam not found")
+            raise CustomServiceException(status_code=404, message="Exam not found")
 
         update_fields = {}
 
         if "questions" in update_data:
-            if str(exam.get("blueprint_status", "pending")).lower() == "ready_locked":
-                raise HTTPException(status_code=423, detail="Blueprint is locked. Unlock blueprint before editing questions.")
+            validation_service.validate_blueprint_unlocked(exam)
             
             from app.services.domain import blueprint_domain_service
             health = blueprint_domain_service.derive_blueprint_health(exam, update_data["questions"] or [])
@@ -150,9 +144,11 @@ class ExamService:
 
     async def delete_exam(self, exam_id: str, user_id: str) -> Dict[str, Any]:
         """Delete an exam and related data."""
-        exam = await self.exam_repo.find_one_exam({"exam_id": exam_id, "teacher_id": user_id})
+        exam = await self.exam_repo.find_one_exam({"exam_id": exam_id})
         if not exam:
-            raise HTTPException(status_code=404, detail="Exam not found")
+            raise CustomServiceException(status_code=404, message="Exam not found")
+        
+        validation_service.validate_exam_ownership(exam, user_id)
 
         # Cancel active grading jobs
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -173,18 +169,16 @@ class ExamService:
             {"$set": {"status": "cancelled"}}
         )
 
-        await self.submission_repo.update_many_submissions({"exam_id": exam_id}, {"$set": {"deleted": True}}) # Or actually delete
-        # The original code used delete_many
-        await self.submission_repo.collection.delete_many({"exam_id": exam_id})
-        await self.submission_repo.collection.database.re_evaluations.delete_many({"exam_id": exam_id})
-        await self.exam_repo.files_collection.delete_many({"exam_id": exam_id})
+        await self.submission_repo.delete_all_by_exam_id(exam_id)
+        await self.submission_repo.delete_re_evaluations_by_exam_id(exam_id)
+        await self.exam_repo.delete_exam_files_by_exam_id(exam_id)
 
         try:
-            delete_files_by_exam_id(exam_id)
+            file_service.delete_files_by_exam_id(exam_id)
         except Exception as e:
             logger.warning(f"Error cleaning up GridFS files for exam {exam_id}: {e}")
 
-        await self.exam_repo.collection.delete_one({"exam_id": exam_id, "teacher_id": user_id})
+        await self.exam_repo.delete_exam_by_id(exam_id, user_id)
 
         return {
             "message": "Exam deleted successfully",
@@ -194,9 +188,11 @@ class ExamService:
 
     async def close_exam(self, exam_id: str, user_id: str) -> None:
         """Close an exam."""
-        exam = await self.exam_repo.find_one_exam({"exam_id": exam_id, "teacher_id": user_id})
+        exam = await self.exam_repo.find_one_exam({"exam_id": exam_id})
         if not exam:
-            raise HTTPException(status_code=404, detail="Exam not found")
+            raise CustomServiceException(status_code=404, message="Exam not found")
+        
+        validation_service.validate_exam_ownership(exam, user_id)
 
         await self.exam_repo.update_exam(
             exam_id, 
@@ -205,9 +201,11 @@ class ExamService:
 
     async def reopen_exam(self, exam_id: str, user_id: str) -> None:
         """Reopen a closed exam."""
-        exam = await self.exam_repo.find_one_exam({"exam_id": exam_id, "teacher_id": user_id})
+        exam = await self.exam_repo.find_one_exam({"exam_id": exam_id})
         if not exam:
-            raise HTTPException(status_code=404, detail="Exam not found")
+            raise CustomServiceException(status_code=404, message="Exam not found")
+        
+        validation_service.validate_exam_ownership(exam, user_id)
 
         await self.exam_repo.update_exam(
             exam_id,
@@ -216,13 +214,15 @@ class ExamService:
 
     async def infer_topics(self, exam_id: str, user_id: str) -> Dict[str, Any]:
         """Infer question topics."""
-        exam = await self.exam_repo.find_one_exam({"exam_id": exam_id, "teacher_id": user_id})
+        exam = await self.exam_repo.find_one_exam({"exam_id": exam_id})
         if not exam:
-            raise HTTPException(status_code=404, detail="Exam not found")
+            raise CustomServiceException(status_code=404, message="Exam not found")
+        
+        validation_service.validate_exam_ownership(exam, user_id)
 
         questions = exam.get("questions", [])
         if not questions:
-            raise HTTPException(status_code=400, detail="No questions found in exam")
+            raise CustomServiceException(status_code=400, message="No questions found in exam")
 
         subject = await self.analytics_repo.find_one_subject({"subject_id": exam.get("subject_id")}, projection={"name": 1})
         subject_name = subject.get("name", "General") if subject else "General"
@@ -255,9 +255,11 @@ class ExamService:
 
     async def update_question_topics(self, exam_id: str, topics_data: dict, user_id: str) -> None:
         """Manually update question topics."""
-        exam = await self.exam_repo.find_one_exam({"exam_id": exam_id, "teacher_id": user_id})
+        exam = await self.exam_repo.find_one_exam({"exam_id": exam_id})
         if not exam:
-            raise HTTPException(status_code=404, detail="Exam not found")
+            raise CustomServiceException(status_code=404, message="Exam not found")
+        
+        validation_service.validate_exam_ownership(exam, user_id)
 
         questions = exam.get("questions", [])
         topic_updates = topics_data.get("topics", {})
@@ -273,10 +275,10 @@ class ExamService:
         """Get submission status for student-upload exam."""
         exam = await self.exam_repo.find_one_exam({"exam_id": exam_id})
         if not exam:
-            raise HTTPException(status_code=404, detail="Exam not found")
-
+            raise CustomServiceException(status_code=404, message="Exam not found")
+        
         if exam.get("exam_mode") != "student_upload":
-            raise HTTPException(status_code=400, detail="This is not a student-upload exam")
+            raise CustomServiceException(status_code=400, message="This is not a student-upload exam")
 
         submissions = await self.submission_repo.find_student_submissions({"exam_id": exam_id})
 
@@ -308,9 +310,11 @@ class ExamService:
 
     async def publish_results(self, exam_id: str, data: dict, user_id: str) -> None:
         """Publish exam results."""
-        exam = await self.exam_repo.find_one_exam({"exam_id": exam_id, "teacher_id": user_id})
+        exam = await self.exam_repo.find_one_exam({"exam_id": exam_id})
         if not exam:
-            raise HTTPException(status_code=404, detail="Exam not found")
+            raise CustomServiceException(status_code=404, message="Exam not found")
+        
+        validation_service.validate_exam_ownership(exam, user_id)
 
         await self.exam_repo.update_exam(
             exam_id,
@@ -323,9 +327,11 @@ class ExamService:
 
     async def unpublish_results(self, exam_id: str, user_id: str) -> None:
         """Unpublish exam results."""
-        exam = await self.exam_repo.find_one_exam({"exam_id": exam_id, "teacher_id": user_id})
+        exam = await self.exam_repo.find_one_exam({"exam_id": exam_id})
         if not exam:
-            raise HTTPException(status_code=404, detail="Exam not found")
+            raise CustomServiceException(status_code=404, message="Exam not found")
+        
+        validation_service.validate_exam_ownership(exam, user_id)
 
         await self.exam_repo.update_exam(exam_id, {"$set": {"results_published": False}})
 
@@ -341,11 +347,8 @@ class ExamService:
         """Create a student-upload exam."""
         exam_id = f"exam_{uuid.uuid4().hex[:12]}"
 
-        qp_file_ref = f"qp_{exam_id}"
-        upload_file_to_gridfs(qp_bytes, filename=qp_file_ref, content_type=qp_content_type)
-
-        ma_file_ref = f"ma_{exam_id}"
-        upload_file_to_gridfs(ma_bytes, filename=ma_file_ref, content_type=ma_content_type)
+        qp_file_ref = file_service.upload_exam_document(exam_id, qp_bytes, qp_content_type, "qp")
+        ma_file_ref = file_service.upload_exam_document(exam_id, ma_bytes, ma_content_type, "ma")
 
         exam_doc = ExamFactory.student_exam_create_to_exam_doc(exam_data, user_id)
         # ExamFactory might have generated an ID, let's use it or override
@@ -368,26 +371,15 @@ class ExamService:
         """Handle student submission."""
         exam = await self.exam_repo.find_one_exam({"exam_id": exam_id})
         if not exam:
-            raise HTTPException(status_code=404, detail="Exam not found")
+            raise CustomServiceException(status_code=404, message="Exam not found")
 
         if exam.get("exam_mode") != "student_upload":
-            raise HTTPException(status_code=400, detail="This exam does not accept student submissions")
+            raise CustomServiceException(status_code=400, message="This exam does not accept student submissions")
 
-        if user_id not in exam.get("selected_students", []):
-            raise HTTPException(status_code=403, detail="You are not enrolled in this exam")
+        validation_service.validate_student_enrollment(exam, user_id)
+        await validation_service.validate_no_duplicate_submission(exam_id, user_id, self.submission_repo)
 
-        existing = await self.submission_repo.find_one_student_submission({
-            "exam_id": exam_id,
-            "student_id": user_id
-        })
-        if existing:
-            raise HTTPException(status_code=400, detail="You have already submitted. Re-submission is not allowed.")
-
-        file_ref = f"ans_{exam_id}_{user_id}"
-
-        # Note: GridFS usage here is via the old fs object in original code, 
-        # I should probably use upload_file_to_gridfs or add a helper
-        upload_file_to_gridfs(answer_paper_bytes, filename=file_ref, content_type=content_type)
+        file_ref = file_service.upload_student_submission_file(exam_id, user_id, answer_paper_bytes, content_type)
 
         submission_schema_input = SubmissionSchema(
             student_name=user_name,
@@ -414,10 +406,10 @@ class ExamService:
         """Remove student from exam."""
         exam = await self.exam_repo.find_one_exam({"exam_id": exam_id})
         if not exam:
-            raise HTTPException(status_code=404, detail="Exam not found")
+            raise CustomServiceException(status_code=404, message="Exam not found")
 
         if exam["teacher_id"] != user_id:
-            raise HTTPException(status_code=403, detail="Not your exam")
+            raise CustomServiceException(status_code=403, message="Not your exam")
 
         await self.exam_repo.update_exam(
             exam_id,
@@ -432,11 +424,9 @@ class ExamService:
         from app.services.extraction import auto_extract_questions
         
         exam = await self.get_exam(exam_id)
-        if exam.get("teacher_id") != user_id:
-            raise HTTPException(status_code=403, detail="Not your exam")
+        validation_service.validate_exam_ownership(exam, user_id)
             
-        if str(exam.get("blueprint_status", "pending")).lower() == "ready_locked":
-            raise HTTPException(status_code=423, detail="Blueprint is locked. Unlock before re-extracting questions.")
+        validation_service.validate_blueprint_unlocked(exam)
 
         result = await auto_extract_questions(
             exam_id=exam_id,
@@ -445,7 +435,7 @@ class ExamService:
         )
 
         if not result.get("success"):
-            raise HTTPException(status_code=400, detail=result.get("message", "Failed to extract questions"))
+            raise CustomServiceException(status_code=400, message=result.get("message", "Failed to extract questions"))
             
         return result
 
@@ -454,11 +444,9 @@ class ExamService:
         from app.services.extraction import auto_extract_questions
         
         exam = await self.get_exam(exam_id)
-        if exam.get("teacher_id") != user_id:
-            raise HTTPException(status_code=403, detail="Not your exam")
+        validation_service.validate_exam_ownership(exam, user_id)
 
-        if str(exam.get("blueprint_status", "pending")).lower() == "ready_locked":
-            raise HTTPException(status_code=423, detail="Blueprint is locked. Unlock before re-extracting questions.")
+        validation_service.validate_blueprint_unlocked(exam)
 
         result = await auto_extract_questions(
             exam_id=exam_id,
@@ -467,7 +455,7 @@ class ExamService:
         )
 
         if not result.get("success"):
-            raise HTTPException(status_code=500, detail=result.get("message", "Failed to re-extract questions"))
+            raise CustomServiceException(status_code=500, message=result.get("message", "Failed to re-extract questions"))
             
         result["questions"] = (await self.exam_repo.find_one_exam({"exam_id": exam_id})).get("questions", [])
         return result

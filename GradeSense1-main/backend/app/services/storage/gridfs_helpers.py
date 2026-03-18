@@ -7,17 +7,19 @@ from typing import List
 
 from bson import ObjectId
 
-from app.core.database import db
+from app.repositories import ExamRepo
 from app.services.files import retrieve_images, get_file_from_gridfs
 from app.core.logging_config import logger
 
 
+exam_repo = ExamRepo()
+
 async def get_exam_model_answer_images(exam_id: str) -> List[str]:
     """Get model answer images from GridFS or fallback to old storage"""
     # First try GridFS storage (new method)
-    file_doc = await db.exam_files.find_one(
+    file_doc = await exam_repo.find_one_exam_file(
         {"exam_id": exam_id, "file_type": "model_answer"},
-        {"_id": 0, "gridfs_id": 1, "images": 1}
+        projection={"_id": 0, "gridfs_id": 1, "images": 1}
     )
     
     if file_doc:
@@ -33,7 +35,7 @@ async def get_exam_model_answer_images(exam_id: str) -> List[str]:
             return file_doc["images"]
     
     # Fallback to very old storage in exam document
-    exam = await db.exams.find_one({"exam_id": exam_id}, {"_id": 0, "model_answer_images": 1})
+    exam = await exam_repo.find_one_exam({"exam_id": exam_id}, projection={"_id": 0, "model_answer_images": 1})
     if exam and exam.get("model_answer_images"):
         return exam["model_answer_images"]
     
@@ -42,9 +44,9 @@ async def get_exam_model_answer_images(exam_id: str) -> List[str]:
 async def get_exam_question_paper_images(exam_id: str) -> List[str]:
     """Get question paper images from GridFS or fallback to old storage"""
     # First try GridFS storage (new method)
-    file_doc = await db.exam_files.find_one(
+    file_doc = await exam_repo.find_one_exam_file(
         {"exam_id": exam_id, "file_type": "question_paper"},
-        {"_id": 0, "gridfs_id": 1, "images": 1}
+        projection={"_id": 0, "gridfs_id": 1, "images": 1}
     )
     
     if file_doc:
@@ -60,7 +62,7 @@ async def get_exam_question_paper_images(exam_id: str) -> List[str]:
             return file_doc["images"]
     
     # Fallback to very old storage in exam document
-    exam = await db.exams.find_one({"exam_id": exam_id}, {"_id": 0, "question_paper_images": 1})
+    exam = await exam_repo.find_one_exam({"exam_id": exam_id}, projection={"_id": 0, "question_paper_images": 1})
     if exam and exam.get("question_paper_images"):
         return exam["question_paper_images"]
     
@@ -69,9 +71,9 @@ async def get_exam_question_paper_images(exam_id: str) -> List[str]:
 
 async def get_exam_question_paper_pdf_bytes(exam_id: str) -> bytes:
     """Get original question paper PDF bytes from GridFS when available."""
-    file_doc = await db.exam_files.find_one(
+    file_doc = await exam_repo.find_one_exam_file(
         {"exam_id": exam_id, "file_type": "question_paper_pdf"},
-        {"_id": 0, "gridfs_id": 1},
+        projection={"_id": 0, "gridfs_id": 1},
     )
     if not file_doc or not file_doc.get("gridfs_id"):
         return b""
@@ -84,13 +86,13 @@ async def get_exam_question_paper_pdf_bytes(exam_id: str) -> bytes:
 async def exam_has_model_answer(exam_id: str) -> bool:
     """Check if exam has model answer uploaded"""
     # Check new collection first
-    file_doc = await db.exam_files.find_one(
+    file_doc = await exam_repo.find_one_exam_file(
         {"exam_id": exam_id, "file_type": "model_answer"},
-        {"_id": 0}
+        projection={"_id": 0}
     )
     if file_doc:
         return True
     
     # Fallback check
-    exam = await db.exams.find_one({"exam_id": exam_id}, {"_id": 0, "model_answer_images": 1, "has_model_answer": 1})
+    exam = await exam_repo.find_one_exam({"exam_id": exam_id}, projection={"_id": 0, "model_answer_images": 1, "has_model_answer": 1})
     return bool(exam and (exam.get("has_model_answer") or exam.get("model_answer_images")))

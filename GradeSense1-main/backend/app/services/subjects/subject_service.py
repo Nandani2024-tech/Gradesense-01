@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
-from fastapi import HTTPException
+from app.core.exceptions import CustomServiceException
 
 from app.repositories import AnalyticsRepo, ExamRepo
 
@@ -39,7 +39,7 @@ class SubjectService:
             "teacher_id": user_id
         })
         if existing:
-            raise HTTPException(status_code=400, detail="A subject with this name already exists")
+            raise CustomServiceException(status_code=400, message="A subject with this name already exists")
 
         subject_id = f"subj_{uuid.uuid4().hex[:8]}"
         new_subject = {

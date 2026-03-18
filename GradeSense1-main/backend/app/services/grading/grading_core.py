@@ -14,14 +14,14 @@ from typing import List, Dict, Any, Optional, Tuple, Set
 from fastapi import HTTPException
 from PIL import Image
 
-from app.core.database import db
+from app.repositories import ExamRepo, FeedbackRepo
 from app.core.logging_config import logger
 from app.core.config import (
     COLLEGE_V2_HARD_STOP,
     UNIVERSAL_HARD_STOP,
 )
 from app.services.llm.config import get_llm_api_key, GEMINI_MODEL_NAME
-from app.services.pipelines.grading_resolver import resolve_grading_layer
+from app.services.pipelines.ai_structured.grading.grading_resolver import resolve_grading_layer
 from app.layers.upsc.policy import enforce_upsc_strict_caps
 from app.models.submission import QuestionScore, SubQuestionScore, AnnotationData
 from app.services.storage.gridfs_helpers import (
@@ -30,8 +30,8 @@ from app.services.storage.gridfs_helpers import (
     get_exam_question_paper_pdf_bytes,
 )
 from app.services.llm import LlmChat, UserMessage, ImageContent
-from app.utils.annotations.types import AnnotationType
-from app.utils.ocr_provider import get_ocr_provider
+from app.infrastructure.annotations.types import AnnotationType
+from app.infrastructure.ocr.provider import get_ocr_provider
 
 # Internal imports from our new modular structure
 from .grading_applier import apply_grading_contract
@@ -57,6 +57,9 @@ from .aggregation import aggregate_from_sub_marks
 
 # Placeholder for pipeline imports (to be imported lazily if needed in subclasses or elsewhere)
 # Actually, legacy_grading.py had them in various places. I'll include them where safe or use placeholders.
+
+exam_repo = ExamRepo()
+feedback_repo = FeedbackRepo()
 
 def _allow_college_v2_partial_grading(
     *,
@@ -86,11 +89,14 @@ async def fetch_teacher_learning_patterns(teacher_id: str, subject_id: str, exam
                 {"exam_id": exam_id} if exam_id else {}
             ]
         }
-        corrections = await db.grading_feedback.find(
+        corrections = await feedback_repo.find_feedback(
             query,
-            {"_id": 0, "question_number": 1, "question_topic": 1, "teacher_correction": 1, 
-             "teacher_expected_grade": 1, "ai_grade": 1, "created_at": 1, "exam_id": 1}
-        ).sort("created_at", -1).limit(100).to_list(100)
+            limit=100,
+            sort_field="created_at",
+            sort_dir=-1,
+            projection={"_id": 0, "question_number": 1, "question_topic": 1, "teacher_correction": 1, 
+                       "teacher_expected_grade": 1, "ai_grade": 1, "created_at": 1, "exam_id": 1}
+        )
         return corrections
     except Exception as e:
         logger.error(f"Error fetching learning patterns: {e}")
@@ -256,7 +262,7 @@ async def run_grading_orchestrator(
     try:
         exam_doc = None
         if exam_id:
-            exam_doc = await db.exams.find_one({"exam_id": exam_id}, {"_id": 0})
+            exam_doc = await exam_repo.find_one_exam({"exam_id": exam_id}, projection={"_id": 0})
         if not exam_doc:
             exam_doc = {
                 "exam_id": exam_id,

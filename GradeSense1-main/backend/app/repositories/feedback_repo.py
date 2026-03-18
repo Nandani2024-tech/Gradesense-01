@@ -9,9 +9,13 @@ class FeedbackRepo:
         """Insert a new feedback record."""
         return await self.collection.insert_one(doc)
 
-    async def find_feedback(self, query: Dict[str, Any], limit: int = 100, sort_field: Optional[str] = None, sort_dir: int = -1) -> List[Dict[str, Any]]:
+    async def find_feedback(self, query: Dict[str, Any], limit: int = 100, sort_field: Optional[str] = None, sort_dir: int = -1, projection: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Find feedback records based on query."""
-        cursor = self.collection.find(query, {"_id": 0})
+        if projection and "_id" not in projection:
+            projection["_id"] = 0
+        elif not projection:
+            projection = {"_id": 0}
+        cursor = self.collection.find(query, projection)
         if sort_field:
             cursor = cursor.sort(sort_field, sort_dir)
         return await cursor.to_list(limit)

@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from app.core.logging_config import logger, initialize_logging
-from app.utils.gcp_auth import configure_gcp_credentials
+from app.infrastructure.auth.gcp_auth import configure_gcp_credentials
 from app.startup.system_checks import verify_system_dependencies
 from app.startup.job_cleanup import cleanup_orphaned_grading_jobs
 from app.startup.worker_manager import start_background_worker, stop_background_worker

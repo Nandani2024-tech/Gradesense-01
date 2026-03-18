@@ -2,8 +2,8 @@
 
 from typing import Dict, List, Any, Optional
 from collections import Counter
-from app.utils.blueprint.parse import parse_question_numbers
-from app.utils.blueprint.config import SECTION_MARKERS, BLUEPRINT_HEALTH_THRESHOLD
+from app.services.blueprint.parse import parse_question_numbers
+from app.services.blueprint.config import SECTION_MARKERS, BLUEPRINT_HEALTH_THRESHOLD
 
 def _count_sections(questions: List[dict]) -> int:
     """Internal helper to detect sections in question text/rubric."""

@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
 
-from app.core.database import db
+from app.repositories import AnalyticsRepo, ExamRepo, SubmissionRepo, FileRepo
 from app.core.logging_config import logger
 from app.models.submission import QuestionScore, SubQuestionScore
 from .ai_grader import grade_with_ai
@@ -20,7 +20,12 @@ from .constants import (
     DISABLE_ANNOTATIONS
 )
 from app.services.score_normalization import normalize_submission_scores
-from app.utils.annotations.types import AnnotationType, Annotation
+from app.infrastructure.annotations.types import AnnotationType, Annotation
+
+analytics_repo = AnalyticsRepo()
+exam_repo = ExamRepo()
+submission_repo = SubmissionRepo()
+file_repo = FileRepo()
 
 async def process_grading_job_in_background(job_id: str, exam_id: str, files_data: List[dict], exam: dict, teacher_id: str):
     """Entry point for background grading with timeout protection and state management."""
@@ -32,8 +37,8 @@ async def process_grading_job_in_background(job_id: str, exam_id: str, files_dat
         )
     except asyncio.TimeoutError:
         logger.error(f"GRADING_JOB_TIMEOUT job_id={job_id} exam_id={exam_id} - Job timed out.")
-        await db.grading_jobs.update_one(
-            {"job_id": job_id},
+        await analytics_repo.update_grading_job(
+            job_id,
             {
                 "$set": {
                     "status": "timeout",
@@ -44,8 +49,8 @@ async def process_grading_job_in_background(job_id: str, exam_id: str, files_dat
         )
     except Exception as e:
         logger.error(f"GRADING_JOB_FAILED_CRITICAL job_id={job_id} exam_id={exam_id} error={e}", exc_info=True)
-        await db.grading_jobs.update_one(
-            {"job_id": job_id},
+        await analytics_repo.update_grading_job(
+            job_id,
             {
                 "$set": {
                     "status": "failed",
@@ -69,7 +74,7 @@ async def _process_grading_job_core(job_id: str, exam_id: str, files_data: List[
     from app.services.file_processing.pdf_converter import pdf_to_images
     from app.services.notifications.notifications_service import create_notification
     from app.infrastructure.storage.gridfs_storage import fs
-    from app.utils.concurrency import conversion_semaphore
+    from app.infrastructure.concurrency import conversion_semaphore
     import base64
 
     # Acquire lock for processing this exam
@@ -78,7 +83,7 @@ async def _process_grading_job_core(job_id: str, exam_id: str, files_data: List[
     try:
         now_iso = datetime.now(timezone.utc).isoformat()
         stale_before = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
-        locked_exam = await db.exams.find_one_and_update(
+        locked_exam = await exam_repo.find_one_and_update_exam(
             {
                 "exam_id": exam_id,
                 "$or": [
@@ -95,14 +100,14 @@ async def _process_grading_job_core(job_id: str, exam_id: str, files_data: List[
                     "processing_lock_owner": lock_owner,
                 }
             },
-            return_document=True,
+            projection={"_id": 0}
         )
         if not locked_exam:
             raise RuntimeError("processing_lock_busy")
         lock_acquired = True
 
-        await db.grading_jobs.update_one(
-            {"job_id": job_id},
+        await analytics_repo.update_grading_job(
+            job_id,
             {"$set": {"status": "processing", "updated_at": datetime.now(timezone.utc).isoformat()}}
         )
         
@@ -112,7 +117,7 @@ async def _process_grading_job_core(job_id: str, exam_id: str, files_data: List[
         logger.info(f"=== BATCH GRADING START === Processing {len(files_data)} files for exam {exam_id} (Job: {job_id})")
 
         async def _refresh_exam_state() -> dict:
-            latest = await db.exams.find_one({"exam_id": exam_id})
+            latest = await exam_repo.find_one_exam({"exam_id": exam_id})
             return latest or exam
 
         async def _wait_for_question_paper_extraction(current_exam: dict) -> dict:
@@ -174,7 +179,7 @@ async def _process_grading_job_core(job_id: str, exam_id: str, files_data: List[
                 
                 # Grading logic
                 model_answer_imgs = await get_exam_model_answer_images(exam_id)
-                questions_from_db = await db.questions.find({"exam_id": exam_id}).to_list(1000)
+                questions_from_db = await exam_repo.find_questions({"exam_id": exam_id}, limit=1000)
                 questions_to_grade = questions_from_db if questions_from_db else exam.get("questions", [])
 
                 model_answer_text = await get_exam_model_answer_text(exam_id)
@@ -183,7 +188,7 @@ async def _process_grading_job_core(job_id: str, exam_id: str, files_data: List[
                 # Subject name for context
                 subject_name = None
                 if exam.get("subject_id"):
-                    subject_doc = await db.subjects.find_one({"subject_id": exam["subject_id"]})
+                    subject_doc = await analytics_repo.find_one_subject({"subject_id": exam["subject_id"]})
                     subject_name = subject_doc.get("name") if subject_doc else None
 
                 scores = await grade_with_ai(
@@ -210,8 +215,8 @@ async def _process_grading_job_core(job_id: str, exam_id: str, files_data: List[
                 submission_id = f"sub_{uuid.uuid4().hex[:8]}"
                 
                 # Store images in GridFS
-                pdf_gridfs_id = fs.put(pdf_bytes, filename=f"{submission_id}.pdf")
-                images_gridfs_id = fs.put(pickle.dumps(images), filename=f"{submission_id}_images.pkl")
+                pdf_gridfs_id = file_repo.put(pdf_bytes, filename=f"{submission_id}.pdf")
+                images_gridfs_id = file_repo.put(pickle.dumps(images), filename=f"{submission_id}_images.pkl")
                 
                 # Annotations (optional)
                 annotated_images_gridfs_id = None
@@ -219,7 +224,7 @@ async def _process_grading_job_core(job_id: str, exam_id: str, files_data: List[
                     try:
                         from app.services.annotation import generate_annotated_images_with_vision_ocr
                         annotated_images = await generate_annotated_images_with_vision_ocr(images, scores)
-                        annotated_images_gridfs_id = fs.put(pickle.dumps(annotated_images), filename=f"{submission_id}_annotated.pkl")
+                        annotated_images_gridfs_id = file_repo.put(pickle.dumps(annotated_images), filename=f"{submission_id}_annotated.pkl")
                     except Exception as e:
                         logger.warning(f"Annotation failed: {e}")
 
@@ -240,12 +245,12 @@ async def _process_grading_job_core(job_id: str, exam_id: str, files_data: List[
                     "packet_meta": packet_meta
                 }
                 
-                await db.submissions.insert_one(submission_doc)
+                await submission_repo.insert_submission(submission_doc)
                 submissions.append({"submission_id": submission_id, "student_name": student_name})
                 
                 # Update progress
-                await db.grading_jobs.update_one(
-                    {"job_id": job_id},
+                await analytics_repo.update_grading_job(
+                    job_id,
                     {"$set": {"processed_papers": idx + 1, "successful": len(submissions), "failed": len(errors)}}
                 )
 
@@ -254,8 +259,8 @@ async def _process_grading_job_core(job_id: str, exam_id: str, files_data: List[
                 errors.append({"filename": filename, "error": str(e)})
 
         # Final Cleanup & Notification
-        await db.grading_jobs.update_one(
-            {"job_id": job_id},
+        await analytics_repo.update_grading_job(
+            job_id,
             {"$set": {"status": "completed", "completed_at": datetime.now(timezone.utc).isoformat(), "errors": errors}}
         )
         
@@ -269,8 +274,8 @@ async def _process_grading_job_core(job_id: str, exam_id: str, files_data: List[
 
     finally:
         if lock_acquired:
-            await db.exams.update_one(
-                {"exam_id": exam_id},
+            await exam_repo.update_exam(
+                exam_id,
                 {"$set": {"processing_state": "idle", "processing_lock_owner": None}}
             )
         gc.collect()

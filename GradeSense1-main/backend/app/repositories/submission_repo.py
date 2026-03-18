@@ -1,5 +1,6 @@
 from typing import List, Dict, Any, Optional
 from app.core.database import db
+from app.core.logging_config import logger
 
 class SubmissionRepo:
     def __init__(self):
@@ -9,7 +10,10 @@ class SubmissionRepo:
 
     async def insert_submission(self, doc: Dict[str, Any]) -> Any:
         """Insert a new submission."""
-        return await self.collection.insert_one(doc)
+        logger.info("DB_WRITE_START entity=submission action=insert submission_id=%s", doc.get("submission_id"))
+        result = await self.collection.insert_one(doc)
+        logger.info("DB_WRITE_SUCCESS entity=submission action=insert submission_id=%s", doc.get("submission_id"))
+        return result
 
     async def find_submissions(self, query: Dict[str, Any], limit: int = 1000, sort_field: Optional[str] = None, sort_dir: int = -1, projection: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Find submissions based on query."""
@@ -33,7 +37,10 @@ class SubmissionRepo:
 
     async def update_submission(self, submission_id: str, update_doc: Dict[str, Any]) -> Any:
         """Update submission record."""
-        return await self.collection.update_one({"submission_id": submission_id}, update_doc)
+        logger.info("DB_WRITE_START entity=submission action=update submission_id=%s", submission_id)
+        result = await self.collection.update_one({"submission_id": submission_id}, update_doc)
+        logger.info("DB_WRITE_SUCCESS entity=submission action=update submission_id=%s", submission_id)
+        return result
 
     async def delete_submission(self, submission_id: str) -> Any:
         """Delete submission record."""
@@ -66,3 +73,32 @@ class SubmissionRepo:
     async def insert_student_submission(self, doc: Dict[str, Any]) -> Any:
         """Insert a student submission."""
         return await self.student_submissions_collection.insert_one(doc)
+
+    async def delete_all_by_exam_id(self, exam_id: str) -> Any:
+        """Delete all submissions for an exam."""
+        return await self.collection.delete_many({"exam_id": exam_id})
+
+    async def delete_re_evaluations_by_exam_id(self, exam_id: str) -> Any:
+        """Delete all re-evaluations for an exam."""
+        return await db.re_evaluations.delete_many({"exam_id": exam_id})
+
+    async def delete_re_evaluations_by_submission_id(self, submission_id: str) -> Any:
+        """Delete all re-evaluations for a specific submission."""
+        return await db.re_evaluations.delete_many({"submission_id": submission_id})
+
+    async def mark_submissions_for_realignment(self, exam_id: str, next_version: int) -> Any:
+        """Mark submissions as requiring realignment if they use an old blueprint version."""
+        return await self.collection.update_many(
+            {
+                "exam_id": exam_id,
+                "$or": [
+                    {"blueprint_version_used": {"$exists": False}},
+                    {"blueprint_version_used": {"$ne": next_version}},
+                ],
+            },
+            {"$set": {"realign_required": True}},
+        )
+
+    async def aggregate_submissions(self, pipeline: List[Dict[str, Any]], limit: int = 100) -> List[Dict[str, Any]]:
+        """Perform aggregation on submissions collection."""
+        return await self.collection.aggregate(pipeline).to_list(limit)

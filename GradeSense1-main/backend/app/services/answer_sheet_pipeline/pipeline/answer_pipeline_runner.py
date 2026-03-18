@@ -1,5 +1,6 @@
 import os
 from typing import Any, Dict, List, Optional
+from app.adapters.interfaces import AbstractOCRService
 
 from app.core.logging_config import logger
 from app.services.extraction.blueprint import (
@@ -25,6 +26,7 @@ from app.constants.layers import (
 def run_answer_packet_pipeline(
     answer_images: List[str],
     questions: List[dict],
+    ocr_service: AbstractOCRService,
     question_paper_pdf_bytes: Optional[bytes] = None,
 ) -> Dict[str, Any]:
     """
@@ -63,7 +65,7 @@ def run_answer_packet_pipeline(
 
     clean_pages = normalize_answer_pages(answer_images)
     page_layout = detect_page_layout(clean_pages)
-    region_text = run_region_ocr(clean_pages, page_layout)
+    region_text = run_region_ocr(clean_pages, page_layout, ocr_service)
     packets = build_packets(region_text, blueprint)
     aligned = align_packets_to_blueprint(blueprint, packets)
 

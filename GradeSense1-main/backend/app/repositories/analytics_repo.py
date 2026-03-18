@@ -129,3 +129,34 @@ class AnalyticsRepo:
     async def update_many_tasks(self, query: Dict[str, Any], update_doc: Dict[str, Any]) -> Any:
         """Update multiple tasks."""
         return await self.tasks_collection.update_many(query, update_doc)
+
+    async def insert_task(self, doc: Dict[str, Any]) -> Any:
+        """Insert a single task."""
+        return await self.tasks_collection.insert_one(doc)
+
+    async def insert_grading_job(self, doc: Dict[str, Any]) -> Any:
+        """Insert a single grading job."""
+        return await self.grading_jobs_collection.insert_one(doc)
+
+    async def add_submission_to_job(self, job_id: str, submission_summary: Dict[str, Any]) -> Any:
+        """Push a submission summary into the grading job's submissions list."""
+        return await self.grading_jobs_collection.update_one(
+            {"job_id": job_id},
+            {"$push": {"submissions": submission_summary}}
+        )
+
+    async def find_one_grading_job(self, query: Dict[str, Any], projection: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """Find a single grading job."""
+        if projection and "_id" not in projection:
+            projection["_id"] = 0
+        elif not projection:
+            projection = {"_id": 0}
+        return await self.grading_jobs_collection.find_one(query, projection)
+
+    async def ping(self) -> Any:
+        """Ping the database."""
+        return await db.command("ping")
+
+    async def list_collections(self) -> List[str]:
+        """List all collection names."""
+        return await db.list_collection_names()

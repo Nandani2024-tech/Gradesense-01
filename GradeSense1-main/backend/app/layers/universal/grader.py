@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from app.utils.safe_numeric import to_float
+from app.infrastructure.serialization.safe_numeric import to_float
 
 
 def objective_grade(question: Dict[str, Any], structured_answer: Dict[str, Any]) -> Dict[str, Any]:

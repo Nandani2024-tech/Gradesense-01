@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
-from fastapi import HTTPException
+from app.core.exceptions import CustomServiceException
 
 from app.repositories import AnalyticsRepo, AdminRepo, ExamRepo
 
@@ -31,7 +31,7 @@ class BatchService:
         """Get batch details with students and exams."""
         batch = await self.analytics_repo.find_one_batch({"batch_id": batch_id})
         if not batch:
-            raise HTTPException(status_code=404, detail="Batch not found")
+            raise CustomServiceException(status_code=404, message="Batch not found")
 
         # Get students in this batch
         students = await self.admin_repo.find_users(
@@ -59,7 +59,7 @@ class BatchService:
             "teacher_id": user_id
         })
         if existing:
-            raise HTTPException(status_code=400, detail="A batch with this name already exists")
+            raise CustomServiceException(status_code=400, message="A batch with this name already exists")
 
         batch_id = f"batch_{uuid.uuid4().hex[:8]}"
         new_batch = {
@@ -82,14 +82,14 @@ class BatchService:
             "batch_id": {"$ne": batch_id}
         })
         if existing:
-            raise HTTPException(status_code=400, detail="A batch with this name already exists")
+            raise CustomServiceException(status_code=400, message="A batch with this name already exists")
 
         result = await self.analytics_repo.update_batch(
             {"batch_id": batch_id, "teacher_id": user_id},
             {"$set": {"name": name}}
         )
         if result.matched_count == 0:
-            raise HTTPException(status_code=404, detail="Batch not found")
+            raise CustomServiceException(status_code=404, message="Batch not found")
 
     async def delete_batch(self, batch_id: str, user_id: str) -> None:
         """Delete a batch if empty."""
@@ -99,25 +99,25 @@ class BatchService:
             "role": "student"
         })
         if student_count > 0:
-            raise HTTPException(status_code=400, detail=f"Cannot delete batch with {student_count} students. Remove students first.")
+            raise CustomServiceException(status_code=400, message=f"Cannot delete batch with {student_count} students. Remove students first.")
 
         # Check if batch has exams
         exam_count = await self.exam_repo.count_exams({"batch_id": batch_id})
         if exam_count > 0:
-            raise HTTPException(status_code=400, detail=f"Cannot delete batch with {exam_count} exams. Delete exams first.")
+            raise CustomServiceException(status_code=400, message=f"Cannot delete batch with {exam_count} exams. Delete exams first.")
 
         result = await self.analytics_repo.delete_batch({
             "batch_id": batch_id,
             "teacher_id": user_id
         })
         if result.deleted_count == 0:
-            raise HTTPException(status_code=404, detail="Batch not found")
+            raise CustomServiceException(status_code=404, message="Batch not found")
 
     async def set_batch_status(self, batch_id: str, status: str, user_id: str) -> None:
         """Close or reopen a batch."""
         batch = await self.analytics_repo.find_one_batch({"batch_id": batch_id, "teacher_id": user_id})
         if not batch:
-            raise HTTPException(status_code=404, detail="Batch not found")
+            raise CustomServiceException(status_code=404, message="Batch not found")
 
         update_doc = {
             "status": status,
@@ -129,19 +129,19 @@ class BatchService:
         """Add an existing student to a batch."""
         batch = await self.analytics_repo.find_one_batch({"batch_id": batch_id, "teacher_id": user_id})
         if not batch:
-            raise HTTPException(status_code=404, detail="Batch not found")
+            raise CustomServiceException(status_code=404, message="Batch not found")
 
         if batch.get("status") == "closed":
-            raise HTTPException(status_code=400, detail="Cannot add students to a closed batch")
+            raise CustomServiceException(status_code=400, message="Cannot add students to a closed batch")
 
         # Verify student exists and belongs to teacher
         student = await self.admin_repo.find_one_user({"user_id": student_id, "teacher_id": user_id, "role": "student"})
         if not student:
-            raise HTTPException(status_code=404, detail="Student not found")
+            raise CustomServiceException(status_code=404, message="Student not found")
 
         # Check if student is already in batch
         if batch_id in student.get("batches", []):
-            raise HTTPException(status_code=400, detail="Student is already in this batch")
+            raise CustomServiceException(status_code=400, message="Student is already in this batch")
 
         # Add batch to student's batches
         await self.admin_repo.update_user(
@@ -153,19 +153,19 @@ class BatchService:
         """Remove a student from a batch."""
         batch = await self.analytics_repo.find_one_batch({"batch_id": batch_id, "teacher_id": user_id})
         if not batch:
-            raise HTTPException(status_code=404, detail="Batch not found")
+            raise CustomServiceException(status_code=404, message="Batch not found")
 
         if batch.get("status") == "closed":
-            raise HTTPException(status_code=400, detail="Cannot remove students from a closed batch")
+            raise CustomServiceException(status_code=400, message="Cannot remove students from a closed batch")
 
         # Verify student exists
         student = await self.admin_repo.find_one_user({"user_id": student_id, "teacher_id": user_id, "role": "student"})
         if not student:
-            raise HTTPException(status_code=404, detail="Student not found")
+            raise CustomServiceException(status_code=404, message="Student not found")
 
         # Check if student is in the batch
         if batch_id not in student.get("batches", []):
-            raise HTTPException(status_code=400, detail="Student is not in this batch")
+            raise CustomServiceException(status_code=400, message="Student is not in this batch")
 
         # Remove batch from student's batches
         await self.admin_repo.update_user(
@@ -177,7 +177,7 @@ class BatchService:
         """Get batch statistics."""
         batch = await self.analytics_repo.find_one_batch({"batch_id": batch_id, "teacher_id": user_id})
         if not batch:
-            raise HTTPException(status_code=404, detail="Batch not found")
+            raise CustomServiceException(status_code=404, message="Batch not found")
 
         students_count = await self.admin_repo.count_users({"batches": batch_id, "role": "student"})
         exams = await self.exam_repo.find_exams({"batch_id": batch_id}, projection={"exam_id": 1, "total_marks": 1})
@@ -204,7 +204,7 @@ class BatchService:
         """Get students in a batch with their performance."""
         batch = await self.analytics_repo.find_one_batch({"batch_id": batch_id, "teacher_id": user_id})
         if not batch:
-            raise HTTPException(status_code=404, detail="Batch not found")
+            raise CustomServiceException(status_code=404, message="Batch not found")
 
         students = await self.admin_repo.find_users({"batches": batch_id, "role": "student"})
         exams = await self.exam_repo.find_exams({"batch_id": batch_id}, projection={"exam_id": 1})
