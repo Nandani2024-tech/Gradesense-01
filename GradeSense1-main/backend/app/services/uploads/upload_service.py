@@ -91,6 +91,7 @@ class UploadService:
         )
 
         from app.workers.upload_worker import process_model_answer_background
+        logger.info(f"Starting model answer background task for exam_id={exam_id}")
         background_tasks.add_task(process_model_answer_background, exam_id)
 
         return {"message": "Model answer uploaded. Extraction is running in the background.", "pages": page_count, "processing": True}
@@ -146,6 +147,7 @@ class UploadService:
                     "total_marks": existing_exam.get("total_marks")
                 }}
             )
+            logger.info(f"Cache hit for question paper. exam_id={exam_id} file_hash={file_hash}")
             return {"message": "Cache Hit! Blueprint restored.", "pages": existing_exam.get("question_paper_pages", 0), "processing": False}
 
         file_id_str, page_count, gridfs_id = await file_service.process_and_store_question_paper(
@@ -167,6 +169,7 @@ class UploadService:
 
         if file_type == "pdf":
             try:
+                logger.info(f"Uploading PDF version of question paper to GridFS. exam_id={exam_id} file_id={file_id_str}")
                 qp_pdf_gridfs_id = file_service.upload_file_to_gridfs(
                     file_bytes,
                     filename=f"question_paper_pdf_{exam_id}_{file_id_str}.pdf",
@@ -184,7 +187,10 @@ class UploadService:
                         "uploaded_at": datetime.now(timezone.utc).isoformat(),
                     }}
                 )
-            except Exception: pass
+                logger.info(f"Successfully uploaded PDF version of question paper to GridFS. exam_id={exam_id} file_id={file_id_str} gridfs_id={qp_pdf_gridfs_id}")
+            except Exception as e:
+                logger.error(f"Failed to upload PDF version to GridFS. exam_id={exam_id} file_id={file_id_str} error={e}")
+                pass
 
         await self.exam_repo.update_exam(
             exam_id,
@@ -214,6 +220,7 @@ class UploadService:
         )
 
         from app.workers.upload_worker import process_question_paper_background
+        logger.info(f"Starting question paper background task for exam_id={exam_id}")
         background_tasks.add_task(process_question_paper_background, exam_id)
         
         return {"message": "Question paper uploaded. Extraction is running.", "pages": page_count, "processing": True}
@@ -249,6 +256,7 @@ class UploadService:
             subj = await self.analytics_repo.find_one_subject({"subject_id": exam["subject_id"]}, projection={"name": 1})
             subject_name = subj.get("name") if subj else None
 
+        logger.info(f"Starting file processing loop in upload_more_papers. exam_id={exam_id} total_files={len(files)}")
         for file in files:
             filename = file.filename
             try:
@@ -260,7 +268,8 @@ class UploadService:
                 async with conversion_semaphore:
                     try:
                         images = await asyncio.to_thread(file_service.pdf_to_clean_images, pdf_bytes, 300)
-                    except Exception:
+                    except Exception as e:
+                        logger.warning(f"Failed clean PDF conversion, falling back to basic conversion. exam_id={exam_id} filename={filename} error={e}")
                         images = await file_service.pdf_to_images(pdf_bytes)
 
                 if not images:
@@ -333,6 +342,7 @@ class UploadService:
                 logger.error("PAPER_PROCESSING_FAILED exam_id=%s filename=%s error=%s", exam_id, filename, str(e))
                 errors.append({"filename": filename, "error": str(e)})
 
+        logger.info(f"Finished file processing loop in upload_more_papers. exam_id={exam_id} processed={len(submissions)} errors={len(errors)}")
         return {"processed": len(submissions), "submissions": submissions, "errors": errors}
 
 upload_service = UploadService()

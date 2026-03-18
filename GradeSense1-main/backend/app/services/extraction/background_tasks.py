@@ -34,6 +34,12 @@ async def _process_question_paper_async(exam_id: str):
         result = await auto_extract_questions(exam_id, force=True, lock_owner=f"upload_question_paper:{exam_id}")
         success = result.get("success")
         
+        if success:
+            if result.get("count", 0) == 0:
+                logger.warning(f"[QP-ASYNC] Extraction completed partially but with missing questions for exam {exam_id}. count=0")
+            else:
+                logger.info(f"[QP-ASYNC] Extraction completed successfully for exam {exam_id}. count={result.get('count')}")
+
         # Update exam with extraction results
         blueprint_status = result.get("blueprint_status", "ready_unlocked" if success else "failed")
         update_data = {
@@ -59,10 +65,13 @@ async def _process_question_paper_async(exam_id: str):
                         questions=questions
                     )
                     if ma_text or ma_map:
+                        logger.info(f"[QP-ASYNC] Model answer text and map extracted successfully for exam {exam_id}")
                         await db.exam_files.update_one(
                             {"exam_id": exam_id, "file_type": "model_answer"},
                             {"$set": {"model_answer_text": ma_text, "model_answer_map": ma_map}}
                         )
+                    else:
+                        logger.warning(f"[QP-ASYNC] Model answer extraction returned empty text or map for exam {exam_id}")
 
             async def run_mark_validation():
                 if MARK_VALIDATION_ENABLED:
@@ -76,6 +85,7 @@ async def _process_question_paper_async(exam_id: str):
                                 {"exam_id": exam_id},
                                 {"$set": {"mark_validation_status": report.get("status"), "mark_validation_report": report}}
                             )
+                            logger.info(f"[QP-ASYNC] Mark validation completed successfully for exam {exam_id}. status={report.get('status')}")
                     except Exception as ve:
                         logger.warning(f"Mark validation failed: {ve}")
 
@@ -115,6 +125,12 @@ async def _process_model_answer_async(exam_id: str):
         
         result = await auto_extract_questions(exam_id, force=force_extraction, lock_owner=f"upload_model_answer:{exam_id}")
         
+        if result.get("success"):
+            if result.get("count", 0) == 0:
+                logger.warning(f"[MA-ASYNC] Extraction completed partially but with missing questions for exam {exam_id}. count=0")
+            else:
+                logger.info(f"[MA-ASYNC] Extraction completed successfully for exam {exam_id}. count={result.get('count')}")
+
         model_images = await get_exam_model_answer_images(exam_id)
         exam_updated = await db.exams.find_one({"exam_id": exam_id})
         model_answer_text, model_answer_map = await extract_model_answer_content(
@@ -123,10 +139,13 @@ async def _process_model_answer_async(exam_id: str):
         )
         
         if model_answer_text or model_answer_map:
+            logger.info(f"[MA-ASYNC] Model answer text and map extracted successfully for exam {exam_id}")
             await db.exam_files.update_one(
                 {"exam_id": exam_id, "file_type": "model_answer"},
                 {"$set": {"model_answer_text": model_answer_text, "model_answer_map": model_answer_map}}
             )
+        else:
+            logger.warning(f"[MA-ASYNC] Model answer extraction returned empty text or map for exam {exam_id}")
 
         await db.exams.update_one({"exam_id": exam_id}, {"$set": {"model_answer_processing": False, "model_answer_processed_at": datetime.now(timezone.utc).isoformat()}})
         success = True

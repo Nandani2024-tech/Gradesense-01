@@ -28,6 +28,7 @@ def upload_file_to_gridfs(file_bytes: bytes, filename: str, content_type: str, *
             content_type=content_type,
             **metadata
         )
+        logger.info(f"Successfully stored file in GridFS. filename={filename} file_id={gridfs_id}")
         return gridfs_id
     except Exception as e:
         logger.error(f"Failed to upload file to GridFS: {e}")
@@ -51,6 +52,7 @@ def store_images(images: List, filename: str, **metadata) -> str:
             content_type="application/python-pickle",
             **metadata
         )
+        logger.info(f"Successfully stored images in GridFS. filename={filename} file_id={gridfs_id}")
         return gridfs_id
     except Exception as e:
         logger.error(f"Failed to store images in GridFS: {e}")
@@ -84,6 +86,7 @@ def download_drive_file(link: str) -> Tuple[Optional[bytes], str]:
         # For now, following existing logic pattern.
         file_bytes = download_from_google_drive(file_id)
         # Fallback to pdf if type cannot be determined easily from bytes alone here
+        logger.warning(f"Using fallback file_type='pdf' for Google Drive download. link={link}")
         return file_bytes, "pdf" 
     except Exception as e:
         logger.error(f"Failed to download from Drive link: {e}")
@@ -159,12 +162,18 @@ async def _process_file_to_images(file_bytes: bytes, file_type: str) -> List:
             try:
                 images = await convert_file_to_images(bts, tp)
                 all_images.extend(images)
-            except Exception: continue
+                logger.info(f"Successfully extracted and converted inner file from ZIP. filename={filename} images_extracted={len(images)}")
+            except Exception:
+                logger.warning(f"Failed to convert inner file from ZIP. filename={filename}")
+                continue
         if not all_images:
             raise CustomServiceException(status_code=400, message="No valid files found in ZIP")
+        logger.info(f"ZIP-to-images conversion complete. total_images={len(all_images)}")
         return all_images
     else:
-        return await convert_file_to_images(file_bytes, file_type)
+        images = await convert_file_to_images(file_bytes, file_type)
+        logger.info(f"PDF-to-images conversion complete. total_images={len(images)} file_type={file_type}")
+        return images
 
 async def process_and_store_model_answer(exam_id: str, file_bytes: bytes, file_type: str) -> Tuple[str, int, str]:
     """Process model answer file and store in GridFS."""
