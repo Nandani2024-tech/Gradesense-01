@@ -62,7 +62,11 @@ async def queue_grading_job(exam_id: str, files: List[UploadFile], user: Any) ->
     if not files_data:
         raise CustomServiceException(status_code=400, message="No valid PDF files uploaded")
 
-    # 3. Create job via job service
+    # 3. Ensure blueprint is locked before creating job
+    from app.services import blueprint_service
+    await blueprint_service.ensure_blueprint_locked(exam_id, context="grading")
+
+    # 4. Create job via job service
     job_id = await grading_job_service.create_grading_job(
         exam_id=exam_id, 
         teacher_id=user.user_id, 
@@ -110,6 +114,8 @@ async def create_submission_from_file(
         "grading_source": "pipeline_v2",
         "job_id": job_id,
         "graded_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "is_reviewed": False,
         "status": "ai_graded"
     }
     
@@ -329,9 +335,9 @@ async def grade_student_submissions(exam_id: str, user_id: str) -> Dict[str, Any
         "total_papers": len(submissions)
     }
 
-def run_simple_grading_pipeline(qp_bytes: bytes, ans_bytes: bytes, question_meta: Dict[str, Any]) -> List[Dict[str, Any]]:
+async def run_simple_grading_pipeline(qp_bytes: bytes, ans_bytes: bytes, question_meta: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     Exposes the simple grading pipeline as a service method.
     """
     from app.services.pipelines.simple_pipeline.pipeline import run_simple_pipeline
-    return run_simple_pipeline(qp_bytes, ans_bytes, question_meta=question_meta)
+    return await run_simple_pipeline(qp_bytes, ans_bytes, question_meta=question_meta)

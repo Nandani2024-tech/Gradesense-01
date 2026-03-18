@@ -19,9 +19,10 @@ def build_question_blueprint_from_exam_questions(exam_questions: List[dict]) -> 
         q_text = str(q.get("text", "") or q.get("question_text", "") or "")
         q_type = infer_type(q_text)
         q_num = q.get("question_number") or q.get("id")
-        
+        qn = parse_question_number(q_num)
         blueprint_questions.append({
-            "question_number": parse_question_number(q_num),
+            "question_id": qn,
+            "question_number": qn,
             "question_text": q_text,
             "max_marks": float(q.get("max_marks", 0.0) or q.get("marks", 0.0)),
             "type": q_type,

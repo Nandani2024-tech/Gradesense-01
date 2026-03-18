@@ -14,6 +14,14 @@ class StudentRepo:
         """Get student by ID."""
         return await self.collection.find_one({"user_id": student_id, "role": "student"}, {"_id": 0})
 
+    async def get_student_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        """Get student by email."""
+        return await self.collection.find_one({"email": email, "role": "student"}, {"_id": 0})
+
+    async def insert_student(self, student_data: Dict[str, Any]) -> Any:
+        """Insert a new student record."""
+        return await self.collection.insert_one(student_data)
+
     async def count_students(self, query: Dict[str, Any]) -> int:
         """Count students based on query."""
         query["role"] = "student"

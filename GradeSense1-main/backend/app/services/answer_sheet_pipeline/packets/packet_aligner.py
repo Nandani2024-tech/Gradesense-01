@@ -10,8 +10,8 @@ def align_packets_to_blueprint(blueprint: List[dict], packets: Dict[int, dict]) 
     packet_by_order = [packets[k] for k in packet_keys]
     next_unmatched_idx = 0
 
-    for q in sorted(blueprint, key=lambda x: int(x["question_id"])):
-        qid = int(q["question_id"])
+    for q in sorted(blueprint, key=lambda x: int(x.get("question_id", x.get("question_number", 0)))):
+        qid = int(q.get("question_id", q.get("question_number", 0)))
         pkt = packets.get(qid)
         aligned_by = "anchor"
         if pkt is None:

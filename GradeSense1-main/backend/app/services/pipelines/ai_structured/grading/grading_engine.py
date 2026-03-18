@@ -166,8 +166,12 @@ class GradingEngine:
                     missing_concepts=sq_match["missing_concepts"]
                 )
                 
-                # Apply deterministic score and validate
-                sq_eval_result["score"] = min(sq_deterministic_score, sq_max_marks)
+                # Improvement: Prioritize LLM score over deterministic if LLM score is reliable
+                # But we cap it by max_marks for safety.
+                sq_awarded = min(float(sq_eval_result.get("score", 0.0)), sq_max_marks)
+                
+                # Validation pass
+                sq_eval_result["score"] = sq_awarded
                 sq_validated = self.evaluator.validator.validate(sq_eval_result, sq_max_marks)
                 sq_awarded = sq_validated["score"]
 
@@ -208,7 +212,7 @@ class GradingEngine:
             )
             deterministic_score = float(match_result["score"])
 
-            # 3. Generate Feedback using LLM (Original Score ignored)
+            # 3. Generate Feedback using LLM
             eval_result = await self.evaluator.evaluate(
                 question_number=clean_qid,
                 question_text=q_text,
@@ -219,13 +223,16 @@ class GradingEngine:
                 missing_concepts=match_result["missing_concepts"]
             )
             
-            # 4. Override with Deterministic Score & Validate
-            eval_result["score"] = min(deterministic_score, max_marks)
+            # Improvement: Prioritize LLM score over deterministic (more flexible with OCR noise)
+            llm_score = float(eval_result.get("score", 0.0))
+            
+            # 4. Use LLM score and Validate
+            eval_result["score"] = min(llm_score, max_marks)
             validated = self.evaluator.validator.validate(
                 eval_result,
                 max_marks
             )
-
+            
             final_awarded = validated["score"]
             global_feedback = validated.get("feedback", "No feedback provided.")
             global_answer = clean_answer

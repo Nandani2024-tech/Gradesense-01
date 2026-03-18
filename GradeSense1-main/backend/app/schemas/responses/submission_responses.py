@@ -12,8 +12,8 @@ class SubmissionBriefResponse(BaseModel):
     status: str
     percentage: float
     total_score: float
-    is_reviewed: bool
-    created_at: str
+    is_reviewed: bool = False
+    created_at: str = ""
 
 class SubmissionDetailResponse(BaseModel):
     submission_id: str
@@ -27,8 +27,8 @@ class SubmissionDetailResponse(BaseModel):
     total_score: float
     percentage: float
     feedback: Optional[str] = None
-    is_reviewed: bool
-    created_at: str
+    is_reviewed: bool = False
+    created_at: str = ""
     review_history: Optional[List[Dict[str, Any]]] = None
     file_images: Optional[List[str]] = None
 

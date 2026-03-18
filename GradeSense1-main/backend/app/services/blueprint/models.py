@@ -7,6 +7,7 @@ class SubQuestion(BaseModel):
     label: str = Field(..., min_length=1)
     text: str = ""
     marks: float = Field(0.0, ge=0)
+    model_answer: str = ""
 
 class Question(BaseModel):
     number: int = Field(..., gt=0)
@@ -15,6 +16,7 @@ class Question(BaseModel):
     question_text: str = ""
     question_type: str = "descriptive"
     marks: float = Field(0.0, ge=0)
+    model_answer: str = ""
     options: Optional[List[Any]] = None
     subquestions: List[SubQuestion] = Field(default_factory=list)
     or_group_id: Optional[str] = None

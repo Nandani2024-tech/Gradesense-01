@@ -187,15 +187,15 @@ async def ensure_blueprint_locked(exam_id: str, context: str) -> dict:
     if not exam:
         raise CustomServiceException(status_code=404, message="Exam not found")
 
+    if bool(exam.get("blueprint_locked")) or str(exam.get("blueprint_status", "pending")).lower() == "ready_locked":
+        return exam
+
     processing_state = str(exam.get("processing_state") or "idle").lower()
-    if processing_state != "idle":
+    if processing_state != "idle" and processing_state != context:
         raise CustomServiceException(
             status_code=409,
             message=f"Exam is currently in '{processing_state}' state. Retry after current pipeline stage completes.",
         )
-
-    if bool(exam.get("blueprint_locked")) or str(exam.get("blueprint_status", "pending")).lower() == "ready_locked":
-        return exam
 
     readiness = blueprint_domain_service.evaluate_blueprint_lock_readiness(exam, questions=exam.get("questions") or [])
     exam_type = str(exam.get("exam_type", "") or "").lower()

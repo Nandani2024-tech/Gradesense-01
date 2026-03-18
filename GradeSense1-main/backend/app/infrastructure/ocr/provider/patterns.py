@@ -1,9 +1,9 @@
 import re
 
 # Question anchor patterns
-# Matches: Q1, Q.1, 1., 1), Question 1, etc.
+# Matches: Q1, Q.1, 1., 1), Question 1, Ans 1, etc.
 QUESTION_ANCHOR_RE = re.compile(
-    r"^(?:q(?:uestion)?\s*)?(\d{1,3})(?!\d)\s*[).:-]\s*", 
+    r"(?:(?:q(?:uestion)?|ans(?:wer)?|q\.|ques|q)\s*)?(\d{1,3})(?!\d)(?:\s*[).:-]?\s*|\s+|$)", 
     re.IGNORECASE
 )
 

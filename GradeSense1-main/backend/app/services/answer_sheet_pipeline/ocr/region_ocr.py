@@ -7,7 +7,11 @@ from app.services.answer_sheet_pipeline.config import ANCHOR_LEFT_RATIO
 from app.services.answer_sheet_pipeline.regex_patterns import QUESTION_ANCHOR_RE, WORKING_NOTE_RE, _normalize_sub_id
 
 
-async def run_region_ocr(clean_pages: List[str], page_layout: List[List[dict]]) -> List[dict]:
+async def run_region_ocr(
+    clean_pages: List[str], 
+    page_layout: List[List[dict]], 
+    ocr_service: AbstractOCRService
+) -> List[dict]:
     """Stage 4 region OCR map using full-page OCR."""
     ocr = ocr_service
     regions: List[dict] = []
@@ -81,12 +85,11 @@ async def run_region_ocr(clean_pages: List[str], page_layout: List[List[dict]]) 
             qn = int(q_match.group(1)) if q_match else None
             sub_id = _normalize_sub_id(stripped)
             working_note = bool(WORKING_NOTE_RE.search(stripped))
-            in_left_anchor_lane = float(bbox[0]) <= float(page_w * max(ANCHOR_LEFT_RATIO + 0.08, 0.45))
+            # More permissive anchor detection
             is_anchor = bool(
                 qn is not None
                 and not working_note
                 and block.get("type") != "table"
-                and (block.get("type") == "question_anchor_candidate" or in_left_anchor_lane)
             )
 
             regions.append(

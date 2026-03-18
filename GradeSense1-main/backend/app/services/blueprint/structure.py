@@ -29,8 +29,9 @@ def normalize_question_structure_v2(structure: Dict[str, Any]) -> Dict[str, Any]
                 
             subq = SubQuestion(
                 label=label,
-                text=str(sq.get("text") or "").strip(),
-                marks=float(sq.get("marks") or 0.0)
+                text=str(sq.get("text") or sq.get("rubric") or sq.get("model_answer") or "").strip(),
+                marks=float(sq.get("marks") or 0.0),
+                model_answer=str(sq.get("model_answer") or sq.get("text") or sq.get("rubric") or "").strip()
             )
             subquestions_data.append(subq.dict())
             
@@ -40,9 +41,10 @@ def normalize_question_structure_v2(structure: Dict[str, Any]) -> Dict[str, Any]
             number=int(qn),
             section=(str(q.get("section") or "").strip() or None),
             instruction=(str(q.get("instruction") or "").strip() or None),
-            question_text=str(q.get("question_text") or "").strip(),
+            question_text=str(q.get("question_text") or q.get("question") or q.get("rubric") or "").strip(),
             question_type=q.get("question_type"), # validator handles normalization
             marks=float(q.get("marks") or 0.0),
+            model_answer=str(q.get("model_answer") or q.get("expected_answer") or q.get("rubric") or "").strip(),
             options=q.get("options"),
             subquestions=[SubQuestion(**sq) for sq in subquestions_data],
             or_group_id=(str(q.get("or_group_id") or "").strip() or None),
@@ -87,9 +89,10 @@ def question_structure_v2_from_exam(exam: Dict[str, Any]) -> Dict[str, Any]:
             "number": qn,
             "section": None,
             "instruction": None,
-            "question_text": str(q.get("question_text") or q.get("rubric") or "").strip(),
+            "question_text": str(q.get("question_text") or q.get("question") or q.get("rubric") or "").strip(),
             "question_type": str(q.get("question_type") or "descriptive").strip().lower(),
             "marks": float(q.get("max_marks") or q.get("marks") or 0.0),
+            "model_answer": str(q.get("model_answer") or q.get("expected_answer") or q.get("rubric") or "").strip(),
             "options": list(q.get("options") or []) or None,
             "subquestions": sub_questions,
             "or_group_id": (str(q.get("or_group_id") or "").strip() or None),

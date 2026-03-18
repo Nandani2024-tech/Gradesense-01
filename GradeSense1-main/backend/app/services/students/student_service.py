@@ -322,6 +322,35 @@ class StudentService:
             "submissions": enriched_submissions
         }
 
+    async def get_or_create_student(
+        self,
+        student_id: str,
+        name: str,
+        batch_id: str,
+        teacher_id: str
+    ) -> Tuple[str, bool]:
+        """
+        Get existing student by human-readable student_id or create a new one.
+        Returns: (user_id, created_flag)
+        """
+        # Search by student_id field (alphanumeric ID assigned by teacher/school)
+        existing = await self.student_repo.find_students(
+            {"student_id": student_id, "teacher_id": teacher_id},
+            limit=1
+        )
+        if existing:
+            return existing[0]["user_id"], False
+
+        # Create new student if not found
+        new_student = await self.create_student(
+            email=f"{student_id.lower()}_{uuid.uuid4().hex[:4]}@gradesense.auto",
+            name=name,
+            batches=[batch_id],
+            teacher_id=teacher_id,
+            student_id=student_id
+        )
+        return new_student["user_id"], True
+
     async def identify_student(self, images: List[Any], filename: str) -> Tuple[Optional[str], Optional[str]]:
         """Identify student from paper images and filename."""
         from app.student import extract_student_info_from_paper, parse_student_from_filename
@@ -355,7 +384,6 @@ class StudentService:
         Returns: (user_id, student_id, student_name)
         """
         from app.services.answer_sheet_pipeline import pdf_to_clean_images
-        from app.student import get_or_create_student as resolve_student
         
         student_id = None
         student_name = None
@@ -378,7 +406,7 @@ class StudentService:
 
         # Resolve to DB user
         if batch_id and teacher_id:
-            user_id, _ = await resolve_student(student_id, student_name, batch_id, teacher_id)
+            user_id, _ = await self.get_or_create_student(student_id, student_name, batch_id, teacher_id)
         else:
             user_id = student_id # Fallback if no batch context
             

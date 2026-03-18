@@ -33,3 +33,8 @@ class AbstractOCRService(ABC):
     async def extract_batch(self, images: List[str], **kwargs) -> List[Dict[str, Any]]:
         """Batch extraction for multiple images (pages)."""
         pass
+
+    @abstractmethod
+    async def detect_async(self, image_base64: str, **kwargs) -> Dict[str, Any]:
+        """Perform full OCR detection and return the complete response dictionary."""
+        pass

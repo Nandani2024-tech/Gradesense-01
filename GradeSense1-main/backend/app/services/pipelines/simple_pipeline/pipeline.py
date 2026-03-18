@@ -28,18 +28,17 @@ from app.constants.layers import (
     PRECISION_ROUNDING,
 )
 
-def run_simple_pipeline(
+async def run_simple_pipeline(
     question_paper_pdf: bytes,
     answer_sheet_pdf: bytes,
     question_meta: Optional[Dict[Any, Any]] = None,
+    ocr_service: Optional[AbstractOCRService] = None,
 ) -> List[Dict[str, Any]]:
-    """Execute the full simple pipeline and return per-question results.
+    """Execute the full simple pipeline and return per-question results."""
 
-    ``question_meta`` is an optional dictionary keyed by question number; the
-    values are merged into the extracted blueprint.  This allows callers to
-    supply things like ``{'1': {'type': 'mcq', 'correct_option': 'B',
-    'marks': 2}}`` if the paper itself lacks that information.
-    """
+    if not ocr_service:
+        from app.adapters.ocr_adapter import GoogleOCRService
+        ocr_service = GoogleOCRService()
 
     # 1. extract blueprint from question paper
     blueprint = build_question_blueprint_from_pdf(question_paper_pdf)
@@ -49,7 +48,7 @@ def run_simple_pipeline(
     if _HAS_FULL_ANSWER_PIPE:
         clean_imgs = pdf_to_clean_images(answer_sheet_pdf)
         layout = detect_page_layout(clean_imgs)
-        regions = run_region_ocr(clean_imgs, layout)
+        regions = await run_region_ocr(clean_imgs, layout, ocr_service)
         packets = build_packets(regions, blueprint)
     else:
         # heavy dependencies missing (cv2 etc). use simple text-based
