@@ -88,10 +88,8 @@ async def extract_and_persist(
         # ADDED LOGGING END
         question_paper_images = await get_exam_question_paper_images(exam_id)
         if not question_paper_images:
-            # ADDED LOGGING START
-            logger.error("[STEP FAILED] LOAD_QUESTION_PAPER | error=missing_question_paper_images")
-            # ADDED LOGGING END
-            logger.error("PIPELINE_BLOCKED_EXTRACTION exam_id=%s reason=missing_question_paper_images", exam_id)
+            logger.error(f"[STEP FAILED] LOAD_QUESTION_PAPER | exam_id={exam_id} | error=missing_question_paper_images")
+            logger.error(f"PIPELINE_BLOCKED_EXTRACTION exam_id={exam_id} reason=no_images_retrieved_from_storage")
             await exam_repo.update_exam(
                 exam_id,
                 {
@@ -112,9 +110,7 @@ async def extract_and_persist(
                 "message": "Question paper images not found",
                 "source": "question_paper",
             }
-        # ADDED LOGGING START
-        logger.info("[STEP SUCCESS] LOAD_QUESTION_PAPER")
-        # ADDED LOGGING END
+        logger.info(f"[STEP SUCCESS] LOAD_QUESTION_PAPER | exam_id={exam_id} | count={len(question_paper_images)}")
 
         exam_type = str(locked_exam.get("exam_type") or "").lower()
         if exam_type == "college":
@@ -174,7 +170,7 @@ async def extract_and_persist(
                 model_name=model_name,
             )
             # ADDED LOGGING START
-            logger.info("[STEP SUCCESS] STRUCTURE_EXTRACTION")
+            logger.info(f"[STEP SUCCESS] STRUCTURE_EXTRACTION | exam_id={exam_id} | questions_found={len(structure.get('questions', []))}")
             # ADDED LOGGING END
             set_structure_cache(
                 exam_id,

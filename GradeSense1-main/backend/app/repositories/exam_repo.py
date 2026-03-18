@@ -54,7 +54,7 @@ class ExamRepo:
         """Update an exam file record."""
         exam_id = query.get("exam_id")
         logger.info("DB_WRITE_START entity=exam_file action=update exam_id=%s", exam_id)
-        result = await self.files_collection.update_one(query, update_doc)
+        result = await self.files_collection.update_one(query, update_doc, upsert=True)
         logger.info("DB_WRITE_SUCCESS entity=exam_file action=update exam_id=%s", exam_id)
         return result
 

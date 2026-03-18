@@ -23,22 +23,31 @@ async def get_exam_model_answer_images(exam_id: str) -> List[str]:
     )
     
     if file_doc:
+        logger.info(f"FETCH_FILE_DOC exam_id={exam_id} type=model_answer status=found")
         # Try GridFS first (new storage)
         if file_doc.get("gridfs_id"):
             try:
-                return retrieve_images(file_doc["gridfs_id"])
+                imgs = retrieve_images(file_doc["gridfs_id"])
+                if imgs:
+                    logger.info(f"FETCH_IMAGES exam_id={exam_id} type=model_answer source=gridfs count={len(imgs)}")
+                    return imgs
             except Exception as e:
-                logger.error(f"Error retrieving from GridFS: {e}")
+                logger.error(f"Error retrieving from GridFS for {exam_id}: {e}")
         
         # Fallback to direct images storage (old method, still supported)
         if file_doc.get("images"):
+            logger.info(f"FETCH_IMAGES exam_id={exam_id} type=model_answer source=file_doc_images count={len(file_doc['images'])}")
             return file_doc["images"]
+    else:
+        logger.warning(f"FETCH_FILE_DOC exam_id={exam_id} type=model_answer status=not_found")
     
     # Fallback to very old storage in exam document
     exam = await exam_repo.find_one_exam({"exam_id": exam_id}, projection={"_id": 0, "model_answer_images": 1})
     if exam and exam.get("model_answer_images"):
+        logger.info(f"FETCH_IMAGES exam_id={exam_id} type=model_answer source=exam_doc count={len(exam['model_answer_images'])}")
         return exam["model_answer_images"]
     
+    logger.warning(f"FETCH_IMAGES exam_id={exam_id} type=model_answer status=failed reason=no_images_found")
     return []
 
 async def get_exam_question_paper_images(exam_id: str) -> List[str]:
@@ -50,22 +59,31 @@ async def get_exam_question_paper_images(exam_id: str) -> List[str]:
     )
     
     if file_doc:
+        logger.info(f"FETCH_FILE_DOC exam_id={exam_id} type=question_paper status=found")
         # Try GridFS first (new storage)
         if file_doc.get("gridfs_id"):
             try:
-                return retrieve_images(file_doc["gridfs_id"])
+                imgs = retrieve_images(file_doc["gridfs_id"])
+                if imgs:
+                    logger.info(f"FETCH_IMAGES exam_id={exam_id} type=question_paper source=gridfs count={len(imgs)}")
+                    return imgs
             except Exception as e:
-                logger.error(f"Error retrieving from GridFS: {e}")
+                logger.error(f"Error retrieving from GridFS for {exam_id}: {e}")
         
         # Fallback to direct images storage (old method, still supported)
         if file_doc.get("images"):
+            logger.info(f"FETCH_IMAGES exam_id={exam_id} type=question_paper source=file_doc_images count={len(file_doc['images'])}")
             return file_doc["images"]
+    else:
+        logger.warning(f"FETCH_FILE_DOC exam_id={exam_id} type=question_paper status=not_found")
     
     # Fallback to very old storage in exam document
     exam = await exam_repo.find_one_exam({"exam_id": exam_id}, projection={"_id": 0, "question_paper_images": 1})
     if exam and exam.get("question_paper_images"):
+        logger.info(f"FETCH_IMAGES exam_id={exam_id} type=question_paper source=exam_doc count={len(exam['question_paper_images'])}")
         return exam["question_paper_images"]
     
+    logger.warning(f"FETCH_IMAGES exam_id={exam_id} type=question_paper status=failed reason=no_images_found")
     return []
 
 
