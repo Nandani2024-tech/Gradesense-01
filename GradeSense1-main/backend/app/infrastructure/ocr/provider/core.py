@@ -79,7 +79,7 @@ class OCRProvider:
                 asyncio.set_event_loop(new_loop)
                 try:
                     res = new_loop.run_until_complete(
-                        self._detect_async(image_base64, min_conf, min_words, min_lines, force_fallback, allow_fallback)
+                        self.detect_async(image_base64, min_conf, min_words, min_lines, force_fallback, allow_fallback)
                     )
                     res_box.append(res)
                 finally:
@@ -91,10 +91,10 @@ class OCRProvider:
             return res_box[0] if res_box else {"words":[], "lines":[], "provider":"error"}
         else:
             return loop.run_until_complete(
-                self._detect_async(image_base64, min_conf, min_words, min_lines, force_fallback, allow_fallback)
+                self.detect_async(image_base64, min_conf, min_words, min_lines, force_fallback, allow_fallback)
             )
 
-    async def _detect_async(
+    async def detect_async(
         self,
         image_base64: str,
         min_conf: float = None,
@@ -125,11 +125,11 @@ class OCRProvider:
         fallback_res = {"words": [], "lines": [], "tables": [], "provider": self.fallback, "latency_ms": 0}
         fallback_used = False
 
-        def call_sync(name: str) -> Dict[str, Any]:
+        async def call_provider(name: str) -> Dict[str, Any]:
             if name == "vision":
-                return _call_vision(self._vision, image_base64, min_conf=min_conf)
+                return await _call_vision(self._vision, image_base64, min_conf=min_conf)
             if name == "paddle":
-                return _call_paddle(
+                return await _call_paddle(
                     self._paddle, 
                     image_base64, 
                     self.enable_tables, 
@@ -140,7 +140,7 @@ class OCRProvider:
 
         # 1. Primary Call
         try:
-            primary_res = call_sync(self.primary)
+            primary_res = await call_provider(self.primary)
         except Exception as e:
             logger.warning(f"Primary OCR '{self.primary}' failed: {e}")
             primary_res = {"words": [], "lines": [], "tables": [], "provider": self.primary, "latency_ms": 0}
@@ -165,7 +165,7 @@ class OCRProvider:
         if allow_fallback and needs_fb and self.fallback and self.fallback != self.primary:
             fallback_used = True
             try:
-                fallback_res = call_sync(self.fallback)
+                fallback_res = await call_provider(self.fallback)
             except Exception as e:
                 logger.warning(f"Fallback OCR '{self.fallback}' failed: {e}")
             

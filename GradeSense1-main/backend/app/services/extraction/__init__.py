@@ -31,6 +31,11 @@ from .parsing import (
     SUBPART_RE
 )
 
+from .background_tasks import (
+    _process_question_paper_async,
+    _process_model_answer_async
+)
+
 __all__ = [
     "build_question_blueprint_from_exam_questions",
     "build_question_blueprint_from_pdf",
@@ -46,5 +51,7 @@ __all__ = [
     "is_subpart_pattern",
     "has_marks_pattern",
     "infer_type",
-    "expected_components"
+    "expected_components",
+    "_process_question_paper_async",
+    "_process_model_answer_async"
 ]

@@ -7,7 +7,7 @@ from app.services.answer_sheet_pipeline.config import ANCHOR_LEFT_RATIO
 from app.services.answer_sheet_pipeline.regex_patterns import QUESTION_ANCHOR_RE, WORKING_NOTE_RE, _normalize_sub_id
 
 
-def run_region_ocr(clean_pages: List[str], page_layout: List[List[dict]], ocr_service: AbstractOCRService) -> List[dict]:
+async def run_region_ocr(clean_pages: List[str], page_layout: List[List[dict]]) -> List[dict]:
     """Stage 4 region OCR map using full-page OCR."""
     ocr = ocr_service
     regions: List[dict] = []
@@ -22,7 +22,7 @@ def run_region_ocr(clean_pages: List[str], page_layout: List[List[dict]], ocr_se
         # 1. Do whole page OCR with fallback available! 
         # This solves the issue where Paddle OCR fails on regions.
         # We always allow fallback for the whole page to ensure we get *some* text.
-        page_res = ocr.detect(page_b64, allow_fallback=True)
+        page_res = await ocr.detect_async(page_b64, allow_fallback=True)
         page_words = page_res.get("words", [])
         page_lines = page_res.get("lines", [])
         page_provider = page_res.get("provider", "unknown")

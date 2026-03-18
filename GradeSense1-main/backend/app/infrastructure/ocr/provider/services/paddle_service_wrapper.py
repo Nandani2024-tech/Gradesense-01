@@ -2,6 +2,7 @@ import time
 from typing import Dict, Any, List
 from app.core.logging_config import logger
 from ..utils import _norm_item
+import httpx
 
 def _should_extract_tables(lines: List[Dict[str, Any]], table_min_lines: int) -> bool:
     """Heuristic to decide if table extraction should be run on the image."""
@@ -14,14 +15,20 @@ def _should_extract_tables(lines: List[Dict[str, Any]], table_min_lines: int) ->
     )
     return any(k in probe for k in keywords)
 
-def _call_paddle(paddle_service, image_base64: str, enable_tables: bool, table_min_lines: int, paddle_error: str = "") -> Dict[str, Any]:
+async def _call_paddle(paddle_service, image_base64: str, enable_tables: bool, table_min_lines: int, paddle_error: str = "") -> Dict[str, Any]:
     """Call PaddleOCR for text and optionally structure detection."""
     start = time.time()
     if paddle_service is None:
         raise RuntimeError(f"PaddleOCR unavailable: {paddle_error or 'not initialized'}")
     
     logger.info("[OCR] starting paddle text OCR")
-    text_res = paddle_service.detect_text_from_base64(image_base64)
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        response = await client.post(
+            "http://localhost:8100/ocr",
+            json={"image_base64": image_base64}
+        )
+        response.raise_for_status()
+        text_res = response.json()
     words = [_norm_item(w) for w in (text_res.get("words") or []) if str(w.get("text", "")).strip()]
     lines = [_norm_item(l) for l in (text_res.get("lines") or []) if str(l.get("text", "")).strip()]
     logger.info("[OCR] paddle text complete: words=%s lines=%s", len(words), len(lines))
@@ -29,7 +36,7 @@ def _call_paddle(paddle_service, image_base64: str, enable_tables: bool, table_m
     tables: List[Dict[str, Any]] = []
     if enable_tables and _should_extract_tables(lines, table_min_lines):
         logger.info("[OCR] running paddle structure/table extraction")
-        struct_res = paddle_service.detect_structure_from_base64(image_base64)
+        struct_res = await paddle_service.detect_structure_from_base64(image_base64)
         tables = struct_res.get("tables") or []
         logger.info("[OCR] paddle table extraction complete: tables=%s", len(tables))
         

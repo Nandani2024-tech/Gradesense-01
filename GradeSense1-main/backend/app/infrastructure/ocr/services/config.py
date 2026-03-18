@@ -15,6 +15,8 @@ PADDLE_LANG = os.getenv("PADDLE_LANG", "en").strip() or "en"
 PADDLE_USE_ANGLE_CLS = os.getenv("PADDLE_USE_ANGLE_CLS", "true").lower() in ("1", "true", "yes", "on")
 PADDLE_MAX_SIDE = int(os.getenv("PADDLE_MAX_SIDE", "1800"))
 OCR_ENABLE_TABLES = os.getenv("OCR_ENABLE_TABLES", "true").lower() in ("1", "true", "yes", "on")
+# Speed up init by disabling remote connectivity checks
+os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 
 # Model paths
 PADDLE_DET_MODEL_DIR = os.getenv("PADDLE_DET_MODEL_DIR", "").strip()
@@ -23,8 +25,8 @@ PADDLE_CLS_MODEL_DIR = os.getenv("PADDLE_CLS_MODEL_DIR", "").strip()
 PADDLE_TABLE_MODEL_DIR = os.getenv("PADDLE_TABLE_MODEL_DIR", "").strip()
 
 # Timeouts
-PADDLE_OCR_TIMEOUT_SEC = float(os.getenv("PADDLE_OCR_TIMEOUT_SEC", "12"))
-PADDLE_INIT_TIMEOUT_SEC = float(os.getenv("PADDLE_INIT_TIMEOUT_SEC", "12"))
+PADDLE_OCR_TIMEOUT_SEC = float(os.getenv("PADDLE_OCR_TIMEOUT_SEC", "60"))
+PADDLE_INIT_TIMEOUT_SEC = float(os.getenv("PADDLE_INIT_TIMEOUT_SEC", "120"))
 
 # Confidence thresholds
 DEFAULT_CONFIDENCE = 0.9

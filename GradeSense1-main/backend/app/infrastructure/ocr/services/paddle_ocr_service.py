@@ -3,6 +3,7 @@
 import base64
 import io
 import numpy as np
+import threading
 from PIL import Image
 from typing import Dict, List, Any, Optional, Tuple, Callable
 
@@ -26,13 +27,18 @@ class PaddleOCRService(BaseOCR):
         self._structure = None
         self._available = False
         self._init_attempted = False
+        self._init_lock = threading.Lock()
         self._executor = OCRThreadPoolExecutor(max_workers=1, thread_name_prefix="paddle-ocr")
 
     def _init_clients(self) -> None:
         """Lazily initialize PaddleOCR clients."""
         if self._init_attempted:
             return
-        self._init_attempted = True
+            
+        with self._init_lock:
+            if self._init_attempted:
+                return
+            self._init_attempted = True
 
         def _construct_clients():
             from paddleocr import PaddleOCR
@@ -197,7 +203,7 @@ class PaddleOCRService(BaseOCR):
             logger.error(f"PaddleOCR pipeline failed: {e}")
             return {"words": [], "lines": [], "provider": "paddle", "reason": str(e), "page_number": page_number}
 
-    def detect_structure_from_base64(
+    async def detect_structure_from_base64(
         self, 
         image_base64: str,
         page_number: int = 1,

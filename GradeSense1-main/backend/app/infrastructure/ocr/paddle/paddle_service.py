@@ -21,8 +21,8 @@ class PaddleOCRService:
         # but the new paddle_ocr_service.py implementation is async.
         return await self._service.detect_text_from_base64(image_base64)
 
-    def detect_structure_from_base64(self, image_base64: str) -> Dict[str, Any]:
-        return self._service.detect_structure_from_base64(image_base64)
+    async def detect_structure_from_base64(self, image_base64: str) -> Dict[str, Any]:
+        return await self._service.detect_structure_from_base64(image_base64)
 
 # Singleton for backward compatibility
 _legacy_service_instance = PaddleOCRService()

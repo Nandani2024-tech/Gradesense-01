@@ -108,39 +108,48 @@ async def extract_model_answer_content(model_answer_images: List[str], questions
         
         from .utils import ai_call_with_timeout_structured
         
+        tasks = []
         for chunk_start in range(0, len(model_answer_images), CHUNK_SIZE):
             chunk_end = min(chunk_start + CHUNK_SIZE, len(model_answer_images))
             chunk_images = model_answer_images[chunk_start:chunk_end]
             
-            chat = LlmChat(
-                api_key=api_key,
-                session_id=f"extract_content_{uuid.uuid4().hex[:8]}",
-                system_message=system_prompt
-            ).with_model("gemini", GEMINI_MODEL_NAME).with_params(temperature=0)
-            
-            image_contents = [ImageContent(image_base64=img) for img in chunk_images]
-            prompt = get_prompt(
-                "extraction", "model_answer_extraction.user", 
-                start_page=chunk_start + 1, 
-                end_page=chunk_end,
-                questions_context=questions_context
-            )
-            user_message = UserMessage(text=prompt, file_contents=image_contents)
-            
-            for attempt in range(3):
-                ai_response = await ai_call_with_timeout_structured(
-                    chat, 
-                    user_message, 
-                    response_schema=ModelAnswerExtractionSchema,
-                    timeout_seconds=120,
-                    operation_name=f"Model answer extraction attempt {attempt+1}"
+            async def _process_chunk(start, end, imgs):
+                chat = LlmChat(
+                    api_key=api_key,
+                    session_id=f"extract_content_{uuid.uuid4().hex[:8]}",
+                    system_message=system_prompt
+                ).with_model("gemini", GEMINI_MODEL_NAME).with_params(temperature=0)
+                
+                image_contents = [ImageContent(image_base64=img) for img in imgs]
+                prompt = get_prompt(
+                    "extraction", "model_answer_extraction.user", 
+                    start_page=start + 1, 
+                    end_page=end,
+                    questions_context=questions_context
                 )
-                if ai_response:
-                    payload = ai_response.model_dump()
-                    _merge_model_answer_entries(answer_map, payload.get("answers") or [])
-                    all_extracted_content.append(f"=== PAGES {chunk_start + 1}-{chunk_end} ===\nExtracted natively.")
-                    break
-                await asyncio.sleep(5 * (attempt + 1))
+                user_message = UserMessage(text=prompt, file_contents=image_contents)
+                
+                for attempt in range(2):
+                    ai_response = await ai_call_with_timeout_structured(
+                        chat, 
+                        user_message, 
+                        response_schema=ModelAnswerExtractionSchema,
+                        timeout_seconds=120,
+                        operation_name=f"Model answer extraction {start+1}-{end} attempt {attempt+1}"
+                    )
+                    if ai_response:
+                        return ai_response.model_dump()
+                    await asyncio.sleep(2 * (attempt + 1))
+                return None
+
+            tasks.append(_process_chunk(chunk_start, chunk_end, chunk_images))
+        
+        chunk_results = await asyncio.gather(*tasks)
+        
+        for payload in chunk_results:
+            if payload:
+                _merge_model_answer_entries(answer_map, payload.get("answers") or [])
+                all_extracted_content.append(f"Extracted natively.")
         
         rendered_text = _render_model_answer_map(answer_map)
         full_content = rendered_text or "\n\n".join(all_extracted_content)
@@ -256,7 +265,7 @@ async def extract_question_structure_from_paper(
 
         for page_idx, page_b64 in enumerate(paper_images, start=1):
             try:
-                ocr_res = ocr.detect(image_base64=page_b64, min_conf=0.25, min_words=3, min_lines=2, allow_fallback=True)
+                ocr_res = await ocr.detect_async(image_base64=page_b64, min_conf=0.25, min_words=3, min_lines=2, allow_fallback=True)
             except Exception as e:
                 failed_chunks.append({"type": "ocr_page_exception", "paper_type": paper_type, "page": page_idx, "error": str(e)})
                 continue
