@@ -164,7 +164,7 @@ def _extract_text_from_ocr(res: Dict[str, Any]) -> Dict[str, Any]:
     return {"text": text.strip(), "confidence": confidence, "words": words, "lines": lines}
 
 
-def extract_region_text(
+async def extract_region_text(
     clean_pages: List[str],
     page_blocks: List[List[Dict[str, Any]]],
     min_confidence: float = 0.52,
@@ -184,7 +184,7 @@ def extract_region_text(
         page_width = float(_b64_to_cv2(page_b64).shape[1]) if page_b64 else 1000.0
         for block in blocks:
             crop_b64 = _crop_b64(page_b64, block.get("bbox", [0, 0, 1, 1]))
-            res_primary = ocr.detect(
+            res_primary = await ocr.detect_async(
                 crop_b64,
                 min_conf=0.35,
                 min_words=1,
@@ -198,7 +198,7 @@ def extract_region_text(
             fallback_used = bool(res_primary.get("fallback_used", False))
 
             if conf < min_confidence or not text:
-                res_fallback = ocr.detect(
+                res_fallback = await ocr.detect_async(
                     crop_b64,
                     min_conf=0.2,
                     min_words=1,

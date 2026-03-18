@@ -113,7 +113,7 @@ class UploadService:
         from app.workers.upload_worker import process_model_answer_background
         background_tasks.add_task(process_model_answer_background, exam_id)
 
-        return {"message": "Model answer uploaded. Extraction is running in the background.", "pages": len(images)}
+        return {"message": "Model answer uploaded. Extraction is running in the background.", "pages": len(images), "processing": True}
 
     async def upload_question_paper(
         self,

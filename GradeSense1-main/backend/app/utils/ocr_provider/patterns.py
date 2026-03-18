@@ -35,3 +35,17 @@ MARK_SPLIT_RE = re.compile(
 MARK_ONLY_RE = re.compile(
     r"^\s*[\(\[\{]?\s*(\d+(?:\.\d+)?)\s*[\)\]\}]?\s*$"
 )
+
+# Answer patterns (for student answer sheets)
+# Matches: Ans 1, Q1, etc.
+ANSWER_QUESTION_RE = re.compile(
+    r"^\s*(?:Ans(?:wer)?|Q)\.?\s*(\d+)(.*)", 
+    re.IGNORECASE
+)
+
+# MCQ patterns
+# Matches: 1. (a), 2) B, etc.
+ANSWER_MCQ_RE = re.compile(
+    r"\b(\d{1,3})\s*[).:-]?\s*[(\[]?([A-H])[\)\]]?\b", 
+    re.IGNORECASE
+)

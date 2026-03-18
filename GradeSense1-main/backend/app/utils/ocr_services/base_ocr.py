@@ -37,7 +37,7 @@ class BaseOCR(ABC):
         return {}
 
     @abstractmethod
-    def detect_structure_from_base64(
+    async def detect_structure_from_base64(
         self,
         image_base64: str,
         page_number: int = 1,

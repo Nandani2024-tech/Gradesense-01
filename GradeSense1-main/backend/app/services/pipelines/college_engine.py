@@ -32,7 +32,7 @@ class CollegePipelineV2:
     def _phase_timer(self, phase_name: str, timings: Dict[str, float], start: float) -> None:
         timings[phase_name] = round(time.perf_counter() - start, 4)
 
-    def run(
+    async def run(
         self,
         exam_id: str,
         exam_questions: List[Dict[str, Any]],
@@ -138,7 +138,7 @@ class CollegePipelineV2:
 
         # Phase 4: region OCR
         phase_start = time.perf_counter()
-        region_text = extract_region_text(clean_pages, page_layout)
+        region_text = await extract_region_text(clean_pages, page_layout)
         self._phase_timer("phase_4_region_ocr", timings, phase_start)
 
         # Phase 5: packet builder
@@ -285,7 +285,7 @@ def pipeline_result_to_question_map(pipeline_result: Dict[str, Any]) -> Dict[int
     return out
 
 
-def run_college_pipeline_v2(
+async def run_college_pipeline_v2(
     exam_id: str,
     exam_questions: List[Dict[str, Any]],
     answer_images: List[str],
@@ -293,7 +293,7 @@ def run_college_pipeline_v2(
     failed_chunks: Optional[List[Dict[str, Any]]] = None,
 ) -> Tuple[Dict[str, Any], Dict[int, Dict[str, Any]]]:
     engine = CollegePipelineV2()
-    pipeline_result = engine.run(
+    pipeline_result = await engine.run(
         exam_id=exam_id,
         exam_questions=exam_questions,
         answer_images=answer_images,

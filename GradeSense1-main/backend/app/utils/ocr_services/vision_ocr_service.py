@@ -170,7 +170,7 @@ class VisionOCRService(BaseOCR):
 
         return {"words": words, "lines": lines, "provider": "vision"}
 
-    def detect_structure_from_base64(
+    async def detect_structure_from_base64(
         self,
         image_base64: str,
         page_number: int = 1,

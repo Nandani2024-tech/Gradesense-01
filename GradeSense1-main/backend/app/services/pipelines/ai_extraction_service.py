@@ -54,6 +54,10 @@ _ALLOWED_TYPES = {
 }
 
 
+# Limit concurrent heavy OCR tasks to prevent OOM/UI hangs.
+_OCR_SEMAPHORE = asyncio.Semaphore(2)
+
+
 def _to_float(value: Any, default: float = 0.0) -> float:
     return safe_float(value, default)
 
@@ -117,11 +121,12 @@ def _extract_balanced_json_candidates(text: str, *, max_candidates: int = 16) ->
             if (opener == "{" and ch == "}") or (opener == "[" and ch == "]"):
                 stack.pop()
                 if not stack and start_idx is not None:
-                    snippet = text[start_idx:idx + 1].strip()
-                    if snippet:
-                        candidates.append(snippet)
-                        if len(candidates) >= max_candidates:
-                            break
+                    if start_idx is not None:
+                        snippet = str(text[start_idx : idx + 1]).strip()
+                        if snippet:
+                            candidates.append(snippet)
+                            if len(candidates) >= max_candidates:
+                                break
                     start_idx = None
             else:
                 stack.clear()
@@ -314,7 +319,7 @@ def _normalize_visual_payload(payload: Dict[str, Any], page_offset: int, page_co
                 "number": qn,
                 "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
                 "page": _norm_page(row.get("page_index")),
-                "confidence": round(_to_float(row.get("confidence"), 0.0), 4),
+                "confidence": round(float(_to_float(row.get("confidence"), 0.0)), 4),
             }
         )
 
@@ -331,7 +336,7 @@ def _normalize_visual_payload(payload: Dict[str, Any], page_offset: int, page_co
                 "label": label,
                 "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
                 "page": _norm_page(row.get("page_index")),
-                "confidence": round(_to_float(row.get("confidence"), 0.0), 4),
+                "confidence": round(float(_to_float(row.get("confidence"), 0.0)), 4),
             }
         )
 
@@ -345,12 +350,12 @@ def _normalize_visual_payload(payload: Dict[str, Any], page_offset: int, page_co
             {
                 "q": qn,
                 "sub": row.get("sub"),
-                "marks": round(_to_float(row.get("marks"), 0.0), 4),
+                "marks": round(float(_to_float(row.get("marks"), 0.0)), 4),
                 "text": row.get("text") or row.get("raw"),
                 "split": row.get("split"),
                 "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
                 "page": _norm_page(row.get("page_index")),
-                "confidence": round(_to_float(row.get("confidence"), 0.0), 4),
+                "confidence": round(float(_to_float(row.get("confidence"), 0.0)), 4),
             }
         )
 
@@ -365,16 +370,16 @@ def _normalize_visual_payload(payload: Dict[str, Any], page_offset: int, page_co
         out["section_math"].append(
             {
                 "count": count,
-                "per": round(per, 4),
-                "total": round(total, 4),
+                "per": round(float(per), 4),
+                "total": round(float(total), 4),
                 "range": {
                     "start": _to_int(row.get("start_question"), 0),
                     "end": _to_int(row.get("start_question"), 0) + count - 1,
                 },
-                "expr": str(row.get("expression") or f"{count} x {round(per, 4)} = {round(total, 4)}"),
+                "expr": str(row.get("expression") or f"{count} x {round(float(per), 4)} = {round(float(total), 4)}"),
                 "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
                 "page": _norm_page(row.get("page_index")),
-                "confidence": round(_to_float(row.get("confidence"), 0.0), 4),
+                "confidence": round(float(_to_float(row.get("confidence"), 0.0)), 4),
             }
         )
 
@@ -391,7 +396,7 @@ def _normalize_visual_payload(payload: Dict[str, Any], page_offset: int, page_co
                 "q2": q2,
                 "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
                 "page": _norm_page(row.get("page_index")),
-                "confidence": round(_to_float(row.get("confidence"), 0.0), 4),
+                "confidence": round(float(_to_float(row.get("confidence"), 0.0)), 4),
             }
         )
 
@@ -407,7 +412,7 @@ def _normalize_visual_payload(payload: Dict[str, Any], page_offset: int, page_co
                 "text": text,
                 "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
                 "page": _norm_page(row.get("page_index")),
-                "confidence": round(_to_float(row.get("confidence"), 0.0), 4),
+                "confidence": round(float(_to_float(row.get("confidence"), 0.0)), 4),
             }
         )
 
@@ -450,8 +455,8 @@ def _extract_partial_payload(raw_text: str) -> Optional[Dict[str, Any]]:
                 key = (
                     str(b.get("expression") or "").strip(),
                     _to_int(b.get("question_count"), 0),
-                    round(_to_float(b.get("per_question_marks"), 0.0), 4),
-                    round(_to_float(b.get("total_marks"), 0.0), 4),
+                    round(float(_to_float(b.get("per_question_marks"), 0.0)), 4),
+                    round(float(_to_float(b.get("total_marks"), 0.0)), 4),
                 )
                 if key in section_math_seen:
                     continue
@@ -473,8 +478,8 @@ def _extract_partial_payload(raw_text: str) -> Optional[Dict[str, Any]]:
             key = (
                 str(parsed.get("expression") or "").strip(),
                 _to_int(parsed.get("question_count"), 0),
-                round(_to_float(parsed.get("per_question_marks"), 0.0), 4),
-                round(_to_float(parsed.get("total_marks"), 0.0), 4),
+                round(float(_to_float(parsed.get("per_question_marks"), 0.0)), 4),
+                round(float(_to_float(parsed.get("total_marks"), 0.0)), 4),
             )
             if key not in section_math_seen:
                 section_math_seen.add(key)
@@ -779,7 +784,8 @@ async def _build_raw_ocr_text(images: List[str]) -> str:
     
     async def _process_page(idx: int, img: str) -> Optional[List[str]]:
         try:
-            res = ocr.detect(img)
+            async with _OCR_SEMAPHORE:
+                res = await ocr.detect_async(img)
             page_lines = [str(row.get("text") or "").strip() for row in (res.get("lines") or [])]
             page_lines = [ln for ln in page_lines if ln]
             if page_lines:
@@ -799,16 +805,19 @@ async def _build_raw_ocr_text(images: List[str]) -> str:
     return "\n".join(all_lines)
 
 
-def _extract_ocr_question_anchors(images: List[str]) -> List[Dict[str, Any]]:
+async def _extract_ocr_question_anchors(images: List[str]) -> List[Dict[str, Any]]:
     ocr = get_ocr_provider()
-    anchors: List[Dict[str, Any]] = []
-    pattern = re.compile(r"^\s*(\d{1,3})\s*[\).]")
-    for idx, img in enumerate(images):
+    
+    async def _process_page(idx: int, img: str) -> List[Dict[str, Any]]:
+        page_anchors = []
+        pattern = re.compile(r"^\s*(\d{1,3})\s*[\).]")
         try:
-            res = ocr.detect(img)
+            async with _OCR_SEMAPHORE:
+                res = await ocr.detect_async(img)
         except Exception as exc:
             logger.warning("OCR anchor pass failed on page %s: %s", idx + 1, exc)
-            continue
+            return []
+        
         for row in (res.get("lines") or []):
             text = str(row.get("text") or "").strip()
             if not text:
@@ -824,7 +833,7 @@ def _extract_ocr_question_anchors(images: List[str]) -> List[Dict[str, Any]]:
             bbox = list(row.get("bbox") or row.get("bounding_box") or [0, 0, 0, 0])
             if len(bbox) != 4:
                 bbox = [0, 0, 0, 0]
-            anchors.append(
+            page_anchors.append(
                 {
                     "number": qn,
                     "bbox": bbox,
@@ -833,7 +842,15 @@ def _extract_ocr_question_anchors(images: List[str]) -> List[Dict[str, Any]]:
                     "source": "ocr",
                 }
             )
-    return anchors
+        return page_anchors
+
+    tasks = [asyncio.create_task(_process_page(idx, img)) for idx, img in enumerate(images)]
+    results = await asyncio.gather(*tasks)
+    
+    all_anchors = []
+    for res in results:
+        all_anchors.extend(res)
+    return all_anchors
 
 
 def _extract_structured_question_anchors(structure: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -980,7 +997,7 @@ def _extract_header_total_hint(raw_ocr_text: str) -> Tuple[Optional[float], bool
     return None, False, 0.0, None
 
 
-def _extract_header_total_from_images(
+async def _extract_header_total_from_images(
     images: List[str],
 ) -> Tuple[Optional[float], bool, float, Optional[str]]:
     """Detect header total marks from the top region of the first page."""
@@ -996,7 +1013,8 @@ def _extract_header_total_from_images(
             return None, False, 0.0, None
 
         ocr = get_ocr_provider()
-        res = ocr.detect(img_b64, min_conf=0.3, min_words=1, min_lines=1, allow_fallback=True)
+        async with _OCR_SEMAPHORE:
+            res = await ocr.detect_async(img_b64, min_conf=0.3, min_words=1, min_lines=1, allow_fallback=True)
         lines = res.get("lines") or []
 
         header_lines: List[Tuple[float, float, str]] = []
@@ -1523,7 +1541,7 @@ async def extract_question_structure(
         raise ValueError("question_paper_images_required")
 
     # Layer 1: multimodal visual evidence (Gemini Vision), fallback to OCR visual layer.
-    batch_size = max(1, int(os.getenv("AI_STRUCTURED_PAGE_BATCH_SIZE", "4")))
+    batch_size = max(1, int(os.getenv("AI_STRUCTURED_PAGE_BATCH_SIZE", "8")))
     chunks: List[Tuple[int, List[str]]] = []
     for i in range(0, len(question_paper_images), batch_size):
         chunks.append((i, question_paper_images[i:i + batch_size]))
@@ -1636,6 +1654,7 @@ async def extract_question_structure(
             f"Expected question count = {expected_count}. Do not output question numbers outside 1..{expected_count}."
         )
     prompt_total_marks = None
+    visual_header = None
     if expected_total_marks is not None and _to_float(expected_total_marks, 0.0) > 0:
         prompt_total_marks = round(float(_to_float(expected_total_marks, 0.0)), 4)
     else:
@@ -1727,7 +1746,7 @@ async def extract_question_structure(
 
     # Merge question anchors from visual + OCR + structured sources to avoid anchor drift.
     try:
-        ocr_anchors = _extract_ocr_question_anchors(question_paper_images)
+        ocr_anchors = await _extract_ocr_question_anchors(question_paper_images)
     except Exception as exc:
         logger.warning("OCR_ANCHOR_EXTRACTION_FAILED error=%s", exc)
         ocr_anchors = []
@@ -1746,14 +1765,13 @@ async def extract_question_structure(
     visual_entities = dict(visual_entities or {})
     visual_entities["questions"] = merged_anchors
 
-    visual_header = (visual_entities or {}).get("header_total") if isinstance(visual_entities, dict) else None
     if isinstance(visual_header, dict) and safe_float(visual_header.get("marks"), 0.0) > 0:
         header_total_marks = round(safe_float(visual_header.get("marks"), 0.0), 4)
         header_total_reliable = bool(visual_header.get("reliable"))
         header_total_conf = safe_float(visual_header.get("confidence"), 0.0)
         header_total_source = str(visual_header.get("source") or "visual_header")
     else:
-        header_total_marks, header_total_reliable, header_total_conf, header_total_source = _extract_header_total_from_images(
+        header_total_marks, header_total_reliable, header_total_conf, header_total_source = await _extract_header_total_from_images(
             question_paper_images
         )
         if not header_total_marks:

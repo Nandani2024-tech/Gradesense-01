@@ -22,7 +22,7 @@ from app.constants.layers import (
 )
 
 
-def run_answer_packet_pipeline(
+async def run_answer_packet_pipeline(
     answer_images: List[str],
     questions: List[dict],
     question_paper_pdf_bytes: Optional[bytes] = None,
@@ -63,7 +63,7 @@ def run_answer_packet_pipeline(
 
     clean_pages = normalize_answer_pages(answer_images)
     page_layout = detect_page_layout(clean_pages)
-    region_text = run_region_ocr(clean_pages, page_layout)
+    region_text = await run_region_ocr(clean_pages, page_layout)
     packets = build_packets(region_text, blueprint)
     aligned = align_packets_to_blueprint(blueprint, packets)
 

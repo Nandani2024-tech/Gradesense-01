@@ -10,8 +10,7 @@ async def extract_answers_from_pdf(pdf_bytes: bytes, questions: list):
     images = await asyncio.to_thread(pdf_to_clean_images, pdf_bytes)
     
     # Run alignment and extraction pipeline
-    packets = await asyncio.to_thread(
-        run_answer_packet_pipeline,
+    packets = await run_answer_packet_pipeline(
         answer_images=images,
         questions=questions
     )

@@ -57,7 +57,7 @@ def _is_objective_question(question: Dict[str, Any]) -> bool:
     return qtype in {"mcq", "fill_blank"}
 
 
-def _extract_objective_from_ocr(
+async def _extract_objective_from_ocr(
     question_structure: Dict[str, Any],
     answer_images: List[str],
 ) -> Dict[int, Dict[str, Any]]:
@@ -76,7 +76,7 @@ def _extract_objective_from_ocr(
     for page_idx, img in enumerate(answer_images):
         try:
             # Use lenient thresholds for objective answers: we rely on strict pattern matching.
-            res = ocr.detect(img, min_conf=OBJECTIVE_OCR_MIN_CONF, min_words=1, min_lines=1, allow_fallback=False)
+            res = await ocr.detect_async(img, min_conf=OBJECTIVE_OCR_MIN_CONF, min_words=1, min_lines=1, allow_fallback=False)
             lines = [str(row.get("text") or "").strip() for row in (res.get("lines") or [])]
         except Exception as exc:
             logger.warning("Objective OCR fallback failed page=%s: %s", page_idx + 1, exc)
@@ -288,7 +288,7 @@ async def _fallback_align_answers(
 
     for page_idx, img in enumerate(answer_images):
         try:
-            res = ocr.detect(img)
+            res = await ocr.detect_async(img)
             lines = [str(row.get("text") or "").strip() for row in (res.get("lines") or [])]
         except Exception as exc:
             logger.warning("Alignment OCR fallback failed page=%s: %s", page_idx + 1, exc)
@@ -396,7 +396,7 @@ async def align_answers(
         all_answers = _normalize_alignment_answers(fb_payload, expected_numbers)
 
     # Objective fallback: if LLM alignment misses a clear MCQ answer, use OCR extraction.
-    objective_fallback = _extract_objective_from_ocr(question_structure, answer_images)
+    objective_fallback = await _extract_objective_from_ocr(question_structure, answer_images)
     if objective_fallback:
         by_qn: Dict[int, Dict[str, Any]] = {}
         for ans in all_answers:

@@ -99,7 +99,7 @@ class GeminiOCRService(BaseOCR):
                 "page_number": page_number
             }
 
-    def detect_structure_from_base64(
+    async def detect_structure_from_base64(
         self,
         image_base64: str,
         page_number: int = 1,

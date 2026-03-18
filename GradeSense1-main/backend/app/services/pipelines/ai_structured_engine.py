@@ -22,7 +22,7 @@ from app.utils.cache import get_structure_cache, set_structure_cache
 from app.services.pipelines.ai_extraction_service import extract_question_structure
 from app.services.pipelines.ai_structured.grading_interface import GRADING_CONTRACT_VERSION, grade_answers_with_contracts
 from app.services.llm.prompts.ai_structured_prompts import PROMPT_VERSION
-from app.services.pipelines.ai_structured.validation import (
+from app.layers.ai_structured.validation import (
     compute_attempt_rules,
     compute_effective_total,
     compute_or_groups_map,
