@@ -2,13 +2,32 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+import asyncio
+import re
+import json
+import ast
+import uuid
+import os
+import base64
+import io
+from PIL import Image
+from collections import defaultdict
+from typing import Any, Dict, List, Optional, Tuple, Set
 
 from app.core.logging_config import logger
-from app.infrastructure.serialization.safe_numeric import safe_float, safe_int
+from app.infrastructure.serialization.safe_numeric import safe_float, safe_int, parse_section_math_expression
 from app.infrastructure.concurrency.retry import RetryExhaustedError, run_with_retry
 from app.layers.ai_structured.validation import normalize_structure_payload
 from app.adapters.visual_extractor import extract_visual_entities
+from app.infrastructure.ocr.provider.core import get_ocr_provider
+from app.services.llm import LlmChat, UserMessage, ImageContent, get_llm_api_key
+from app.services.llm.prompts.ai_structured_prompts import (
+    get_extraction_system_prompt,
+    get_visual_extraction_system_prompt,
+    build_visual_extraction_prompt,
+    build_extraction_prompt
+)
+from app.services.pipelines.steps import parse_step, evaluate_step
 
 
 _ALLOWED_TYPES = {
@@ -1501,6 +1520,10 @@ async def _call_visual_extraction_llm(images: List[str], prompt: str, model_name
         raise
 
 
+class AIExtractionOrchestrator:
+    def __init__(self, llm_service: Any = None):
+        self.llm_service = llm_service
+
     async def extract_question_structure(
         self,
         *,
@@ -1512,136 +1535,128 @@ async def _call_visual_extraction_llm(images: List[str], prompt: str, model_name
         model_name: str = "qwen2.5:latest",
     ) -> Tuple[Dict[str, Any], Dict[str, Any], str, int]:
         """Extract question structure with layered visual+semantic pipeline."""
-        logger.info("[PIPELINE START] AIExtractionOrchestrator | exam_id=N/A | submission_id=N/A")
+        logger.info("[PIPELINE START] AIExtractionOrchestrator")
 
         if not question_paper_images:
             raise ValueError("question_paper_images_required")
 
-    # Layer 1: multimodal visual evidence (Gemini Vision), fallback to OCR visual layer.
-    batch_size = max(1, int(os.getenv("AI_STRUCTURED_PAGE_BATCH_SIZE", "8")))
-    chunks: List[Tuple[int, List[str]]] = []
-    for i in range(0, len(question_paper_images), batch_size):
-        chunks.append((i, question_paper_images[i:i + batch_size]))
+        # Layer 1: multimodal visual evidence (Gemini Vision), fallback to OCR visual layer.
+        batch_size = max(1, int(os.getenv("AI_STRUCTURED_PAGE_BATCH_SIZE", "8")))
+        chunks: List[Tuple[int, List[str]]] = []
+        for i in range(0, len(question_paper_images), batch_size):
+            chunks.append((i, question_paper_images[i:i + batch_size]))
 
-    async def _extract_visual_chunk(start_idx: int, chunk_images: List[str], idx: int, total: int) -> Dict[str, Any]:
-        prompt = build_visual_extraction_prompt(
-            batch_index=idx,
-            total_batches=total,
-            page_offset=start_idx,
-        )
-        # Use a vision-capable model for the visual layer.
-        vision_model = "llama3.2-vision:latest" if "llama" in str(model_name).lower() or "qwen" in str(model_name).lower() else model_name
+        async def _extract_visual_chunk(start_idx: int, chunk_images: List[str], idx: int, total: int) -> Dict[str, Any]:
+            prompt = build_visual_extraction_prompt(
+                batch_index=idx,
+                total_batches=total,
+                page_offset=start_idx,
+            )
+            # Use a vision-capable model for the visual layer.
+            vision_model = "llama3.2-vision:latest" if "llama" in str(model_name).lower() or "qwen" in str(model_name).lower() else model_name
+            try:
+                payload = await _call_visual_extraction_llm(chunk_images, prompt, model_name=vision_model)
+                return _normalize_visual_payload(payload, page_offset=start_idx, page_count=len(chunk_images))
+            except Exception as exc:
+                logger.warning("VISUAL_CHUNK_FAILED batch=%s/%s error=%s", idx, total, exc)
+                return {
+                    "questions": [],
+                    "subparts": [],
+                    "margin_marks": [],
+                    "section_math": [],
+                    "or_connectors": [],
+                    "headers": [],
+                    "header_total": None,
+                }
+
+        async def _extract_all_visual_chunks() -> Dict[str, Any]:
+            total = len(chunks)
+            
+            async def _runner(item: Tuple[int, List[str]], idx: int) -> Dict[str, Any]:
+                start_idx, imgs = item
+                return await _extract_visual_chunk(start_idx, imgs, idx, total)
+
+            tasks = [asyncio.create_task(_runner(item, idx + 1)) for idx, item in enumerate(chunks)]
+            batch_payloads = await asyncio.gather(*tasks)
+
+            merged: Dict[str, Any] = {
+                "questions": [],
+                "subparts": [],
+                "margin_marks": [],
+                "section_math": [],
+                "or_connectors": [],
+                "headers": [],
+                "header_total": None,
+            }
+            for chunk_payload in batch_payloads:
+                merged["questions"].extend(chunk_payload.get("questions") or [])
+                merged["subparts"].extend(chunk_payload.get("subparts") or [])
+                merged["margin_marks"].extend(chunk_payload.get("margin_marks") or [])
+                merged["section_math"].extend(chunk_payload.get("section_math") or [])
+                merged["or_connectors"].extend(chunk_payload.get("or_connectors") or [])
+                merged["headers"].extend(chunk_payload.get("headers") or [])
+                if not merged.get("header_total") and chunk_payload.get("header_total"):
+                    merged["header_total"] = chunk_payload.get("header_total")
+            return merged
+
+        visual_entities: Dict[str, Any]
         try:
-            payload = await _call_visual_extraction_llm(chunk_images, prompt, model_name=vision_model)
-            return _normalize_visual_payload(payload, page_offset=start_idx, page_count=len(chunk_images))
+            visual_entities = await _extract_all_visual_chunks()
+            if not any(visual_entities.get(k) for k in ("questions", "section_math", "margin_marks", "or_connectors")):
+                raise RuntimeError("empty_visual_payload")
         except Exception as exc:
-            logger.warning("VISUAL_CHUNK_FAILED batch=%s/%s error=%s", idx, total, exc)
-            return {
-                "questions": [],
-                "subparts": [],
-                "margin_marks": [],
-                "section_math": [],
-                "or_connectors": [],
-                "headers": [],
-                "header_total": None,
-            }
+            logger.warning("VISUAL_ENTITIES_FAILED error=%s", exc)
+            try:
+                visual_entities = extract_visual_entities(question_paper_images, force_ocr_fallback=True)
+            except Exception as exc2:
+                logger.warning("VISUAL_OCR_FALLBACK_FAILED error=%s", exc2)
+                visual_entities = {
+                    "questions": [],
+                    "subparts": [],
+                    "margin_marks": [],
+                    "section_math": [],
+                    "or_connectors": [],
+                    "headers": [],
+                    "header_total": None,
+                }
 
-    async def _extract_all_visual_chunks() -> Dict[str, Any]:
-        total = len(chunks)
+        def _avg_conf(items: List[Dict[str, Any]]) -> float:
+            vals = [float(row.get("confidence") or 0.0) for row in items if isinstance(row, dict)]
+            if not vals:
+                return 0.0
+            return round(float(sum(vals) / float(len(vals))), 4)
+
+        logger.info(
+            "VISUAL_EVIDENCE_CONF questions=%s subparts=%s margin_marks=%s section_math=%s or_connectors=%s headers=%s",
+            len(visual_entities.get("questions", [])),
+            len(visual_entities.get("subparts", [])),
+            len(visual_entities.get("margin_marks", [])),
+            len(visual_entities.get("section_math", [])),
+            len(visual_entities.get("or_connectors", [])),
+            len(visual_entities.get("headers", []))
+        )
+
+        if raw_ocr_text is None:
+            raw_ocr_text = await _build_raw_ocr_text(question_paper_images)
+
+        prompt_extra_rules: List[str] = []
+        expected_count = _to_int(expected_question_count, 0)
+        if expected_count > 0:
+            prompt_extra_rules.append(
+                f"Expected question count = {expected_count}. Do not output question numbers outside 1..{expected_count}."
+            )
         
-        async def _runner(item: Tuple[int, List[str]], idx: int) -> Dict[str, Any]:
-            start_idx, imgs = item
-            return await _extract_visual_chunk(start_idx, imgs, idx, total)
-
-        tasks = [asyncio.create_task(_runner(item, idx + 1)) for idx, item in enumerate(chunks)]
-        batch_payloads = await asyncio.gather(*tasks)
-
-        merged: Dict[str, Any] = {
-            "questions": [],
-            "subparts": [],
-            "margin_marks": [],
-            "section_math": [],
-            "or_connectors": [],
-            "headers": [],
-            "header_total": None,
-        }
-        for chunk_payload in batch_payloads:
-            merged["questions"].extend(chunk_payload.get("questions") or [])
-            merged["subparts"].extend(chunk_payload.get("subparts") or [])
-            merged["margin_marks"].extend(chunk_payload.get("margin_marks") or [])
-            merged["section_math"].extend(chunk_payload.get("section_math") or [])
-            merged["or_connectors"].extend(chunk_payload.get("or_connectors") or [])
-            merged["headers"].extend(chunk_payload.get("headers") or [])
-            if not merged.get("header_total") and chunk_payload.get("header_total"):
-                merged["header_total"] = chunk_payload.get("header_total")
-        return merged
-
-    visual_entities: Dict[str, Any]
-    try:
-        visual_entities = await _extract_all_visual_chunks()
-        if not any(visual_entities.get(k) for k in ("questions", "section_math", "margin_marks", "or_connectors")):
-            raise RuntimeError("empty_visual_payload")
-    except Exception as exc:
-        logger.warning("VISUAL_ENTITIES_FAILED error=%s", exc)
-        try:
-            visual_entities = extract_visual_entities(question_paper_images, force_ocr_fallback=True)
-        except Exception as exc2:
-            logger.warning("VISUAL_OCR_FALLBACK_FAILED error=%s", exc2)
-            visual_entities = {
-                "questions": [],
-                "subparts": [],
-                "margin_marks": [],
-                "section_math": [],
-                "or_connectors": [],
-                "headers": [],
-                "header_total": None,
-            }
-
-    def _avg_conf(items: List[Dict[str, Any]]) -> float:
-        vals = [float(row.get("confidence") or 0.0) for row in items if isinstance(row, dict)]
-        if not vals:
-            return 0.0
-        return round(float(sum(vals) / float(len(vals))), 4)
-
-    logger.info(
-        "VISUAL_EVIDENCE_CONF questions=%s subparts=%s margin_marks=%s section_math=%s or_connectors=%s headers=%s avg_q=%.3f avg_sp=%.3f avg_mm=%.3f avg_sm=%.3f avg_or=%.3f avg_hd=%.3f",
-        len((visual_entities or {}).get("questions") or []),
-        len((visual_entities or {}).get("subparts") or []),
-        len((visual_entities or {}).get("margin_marks") or []),
-        len((visual_entities or {}).get("section_math") or []),
-        len((visual_entities or {}).get("or_connectors") or []),
-        len((visual_entities or {}).get("headers") or []),
-        _avg_conf((visual_entities or {}).get("questions") or []),
-        _avg_conf((visual_entities or {}).get("subparts") or []),
-        _avg_conf((visual_entities or {}).get("margin_marks") or []),
-        _avg_conf((visual_entities or {}).get("section_math") or []),
-        _avg_conf((visual_entities or {}).get("or_connectors") or []),
-        _avg_conf((visual_entities or {}).get("headers") or []),
-    )
-
-    if raw_ocr_text is None:
-        raw_ocr_text = await _build_raw_ocr_text(question_paper_images)
-
-    # Layer 2: Gemini semantic extraction only (marks ignored).
-
-    prompt_extra_rules: List[str] = []
-    expected_count = _to_int(expected_question_count, 0)
-    if expected_count > 0:
-        prompt_extra_rules.append(
-            f"Expected question count = {expected_count}. Do not output question numbers outside 1..{expected_count}."
-        )
-    prompt_total_marks = None
-    visual_header = None
-    if expected_total_marks is not None and _to_float(expected_total_marks, 0.0) > 0:
-        prompt_total_marks = round(float(_to_float(expected_total_marks, 0.0)), 4)
-    else:
-        visual_header = (visual_entities or {}).get("header_total")
-        if isinstance(visual_header, dict) and visual_header.get("reliable") and _to_float(visual_header.get("marks"), 0.0) > 0:
+        prompt_total_marks = None
+        visual_header = visual_entities.get("header_total")
+        if expected_total_marks is not None and _to_float(expected_total_marks, 0.0) > 0:
+            prompt_total_marks = round(float(_to_float(expected_total_marks, 0.0)), 4)
+        elif isinstance(visual_header, dict) and visual_header.get("reliable") and _to_float(visual_header.get("marks"), 0.0) > 0:
             prompt_total_marks = round(float(_to_float(visual_header.get("marks"), 0.0)), 4)
-    if prompt_total_marks is not None:
-        prompt_extra_rules.append(
-            f"Expected total marks = {prompt_total_marks}. Use only as consistency reference; do not assign marks."
-        )
+            
+        if prompt_total_marks is not None:
+            prompt_extra_rules.append(
+                f"Expected total marks = {prompt_total_marks}. Use only as consistency reference; do not assign marks."
+            )
 
         retry_count = 0
         stage2_structure: Dict[str, Any]
@@ -1656,12 +1671,11 @@ async def _call_visual_extraction_llm(images: List[str], prompt: str, model_name
             stage2_structure = retry_result.value
             retry_count = retry_result.attempts - 1
         except RetryExhaustedError as exc:
-            logger.error("[STEP FAILED] SEMANTIC_EXTRACTION | error=%s", exc)
             logger.error("STRUCTURE_EXTRACTION_FAILED reason=%s", exc)
             stage2_structure = {"questions": [], "section_math_blocks": [], "total_questions": 0, "total_marks": 0.0}
             retry_count = max_retries
 
-        if not (stage2_structure.get("questions") or []):
+        if not stage2_structure.get("questions"):
             stage2_structure = parse_step.semantic_structure_from_visual_entities(visual_entities)
 
         visual_entities = parse_step.merge_semantic_with_visual_entities(stage2_structure, visual_entities)
@@ -1670,43 +1684,42 @@ async def _call_visual_extraction_llm(images: List[str], prompt: str, model_name
             visual_entities,
             expected_question_count,
         )
-        logger.info("[STEP SUCCESS] SEMANTIC_EXTRACTION")
-        logger.info("[STEP SUCCESS] VISUAL_PARSING")
 
-    # Merge question anchors from visual + OCR + structured sources to avoid anchor drift.
-    try:
-        ocr_anchors = await _extract_ocr_question_anchors(question_paper_images)
-    except Exception as exc:
-        logger.warning("OCR_ANCHOR_EXTRACTION_FAILED error=%s", exc)
-        ocr_anchors = []
-    try:
-        structured_anchors = _extract_structured_question_anchors(stage2_structure)
-    except Exception as exc:
-        logger.warning("STRUCTURED_ANCHOR_EXTRACTION_FAILED error=%s", exc)
-        structured_anchors = []
-    merged_anchors = _merge_question_anchors(
-        list((visual_entities or {}).get("questions") or []),
-        ocr_anchors,
-        structured_anchors,
-    )
-    if expected_count > 0:
-        merged_anchors = [row for row in merged_anchors if 1 <= _to_int(row.get("number"), 0) <= expected_count]
-    visual_entities = dict(visual_entities or {})
-    visual_entities["questions"] = merged_anchors
-
-    if isinstance(visual_header, dict) and safe_float(visual_header.get("marks"), 0.0) > 0:
-        header_total_marks = round(safe_float(visual_header.get("marks"), 0.0), 4)
-        header_total_reliable = bool(visual_header.get("reliable"))
-        header_total_conf = safe_float(visual_header.get("confidence"), 0.0)
-        header_total_source = str(visual_header.get("source") or "visual_header")
-    else:
-        header_total_marks, header_total_reliable, header_total_conf, header_total_source = await _extract_header_total_from_images(
-            question_paper_images
+        try:
+            ocr_anchors = await _extract_ocr_question_anchors(question_paper_images)
+        except Exception as exc:
+            logger.warning("OCR_ANCHOR_EXTRACTION_FAILED error=%s", exc)
+            ocr_anchors = []
+            
+        try:
+            structured_anchors = _extract_structured_question_anchors(stage2_structure)
+        except Exception as exc:
+            logger.warning("STRUCTURED_ANCHOR_EXTRACTION_FAILED error=%s", exc)
+            structured_anchors = []
+            
+        merged_anchors = _merge_question_anchors(
+            list(visual_entities.get("questions", [])),
+            ocr_anchors,
+            structured_anchors,
         )
-        if not header_total_marks:
-            header_total_marks, header_total_reliable, header_total_conf, header_total_source = _extract_header_total_hint(
-                raw_ocr_text
+        if expected_count > 0:
+            merged_anchors = [row for row in merged_anchors if 1 <= _to_int(row.get("number"), 0) <= expected_count]
+        
+        visual_entities["questions"] = merged_anchors
+
+        if isinstance(visual_header, dict) and safe_float(visual_header.get("marks"), 0.0) > 0:
+            header_total_marks = round(safe_float(visual_header.get("marks"), 0.0), 4)
+            header_total_reliable = bool(visual_header.get("reliable"))
+            header_total_conf = safe_float(visual_header.get("confidence"), 0.0)
+            header_total_source = str(visual_header.get("source") or "visual_header")
+        else:
+            header_total_marks, header_total_reliable, header_total_conf, header_total_source = await _extract_header_total_from_images(
+                question_paper_images
             )
+            if not header_total_marks:
+                header_total_marks, header_total_reliable, header_total_conf, header_total_source = _extract_header_total_hint(
+                    raw_ocr_text
+                )
 
         # 5. Evaluation Pipeline
         structure, validation_report, retry_count = await evaluate_step.run_evaluation_pipeline(
@@ -1722,11 +1735,29 @@ async def _call_visual_extraction_llm(images: List[str], prompt: str, model_name
             retry_count=retry_count,
             llm_service=self.llm_service,
         )
-        logger.info("[STEP SUCCESS] PIPELINE_EVALUATION")
 
         final_ocr_text: str = str(raw_ocr_text) if raw_ocr_text is not None else ""
-        logger.info("[PIPELINE END] AIExtractionOrchestrator")
         return structure, validation_report, final_ocr_text, int(retry_count)
 
 
-__all__ = ["AIExtractionOrchestrator"]
+async def extract_question_structure(
+    *,
+    question_paper_images: List[str],
+    raw_ocr_text: Optional[str] = None,
+    expected_total_marks: Optional[float] = None,
+    expected_question_count: Optional[int] = None,
+    max_retries: int = 3,
+    model_name: str = "qwen2.5:latest",
+) -> Tuple[Dict[str, Any], Dict[str, Any], str, int]:
+    orchestrator = AIExtractionOrchestrator()
+    return await orchestrator.extract_question_structure(
+        question_paper_images=question_paper_images,
+        raw_ocr_text=raw_ocr_text,
+        expected_total_marks=expected_total_marks,
+        expected_question_count=expected_question_count,
+        max_retries=max_retries,
+        model_name=model_name,
+    )
+
+
+__all__ = ["AIExtractionOrchestrator", "extract_question_structure"]

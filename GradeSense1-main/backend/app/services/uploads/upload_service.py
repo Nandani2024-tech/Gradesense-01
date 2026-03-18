@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Tuple
-from fastapi import UploadFile
+from fastapi import UploadFile, HTTPException
 from typing import Optional
 from app.core.exceptions import CustomServiceException
 import fastapi
@@ -93,7 +93,7 @@ class UploadService:
         from app.workers.upload_worker import process_model_answer_background
         background_tasks.add_task(process_model_answer_background, exam_id)
 
-        return {"message": "Model answer uploaded. Extraction is running in the background.", "pages": len(images), "processing": True}
+        return {"message": "Model answer uploaded. Extraction is running in the background.", "pages": page_count, "processing": True}
 
     async def upload_question_paper(
         self,
