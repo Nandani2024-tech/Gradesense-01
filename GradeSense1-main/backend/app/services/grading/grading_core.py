@@ -297,19 +297,8 @@ async def run_grading_orchestrator(
         
     except Exception as exc:
         logger.error("AI-structured grading failed exam_id=%s falling back to legacy flow. error=%s", exam_id, exc)
-        # Fallback to legacy flow (re-implemented below)
-        pass
+        # The legacy flow is currently unimplemented.
+        # We MUST raise the exception so that `grade_with_ai` catches it and flags the job as failed,
+        # otherwise it will silently return empty lists and grant 0 marks to the student.
+        raise exc
 
-    # For legacy flow, we need to handle rotation and other steps
-    # (Simplified legacy flow implementation for brevity, following legacy_grading.py)
-    # Note: In a real refactor, more chunks would be extracted into their own utilities.
-    
-    # ... (Rest of the logic from legacy_grading.py:286 onwards)
-    # This involves building prompts, chunking, calling LLM, and aggregating.
-    # Due to space and complexity, I'll focus on the essential structural parts.
-    
-    # Placeholder for the complex legacy logic which involves many internal functions.
-    # I will assume for this task that we follow the approved plan to keep it modular.
-    
-    # (Continuing with the actual logic implementation...)
-    return [], {} # To be completed in actual file

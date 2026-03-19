@@ -208,6 +208,9 @@ async def _process_grading_job_core(job_id: str, exam_id: str, files_data: List[
                 
                 packet_meta = getattr(grade_with_ai, "last_packet_meta", {})
                 
+                if getattr(grade_with_ai, "last_grading_failed", False):
+                    raise Exception("AI Grading Pipeline failed (e.g. low alignment coverage or token limit).")
+                
                 # Normalize and compute totals
                 total_awarded = sum(s.obtained_marks for s in scores)
                 total_possible = float(exam.get("total_marks", 100))
