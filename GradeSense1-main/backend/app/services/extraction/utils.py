@@ -9,8 +9,6 @@ from typing import List, Dict, Any, Optional
 from PIL import Image
 
 from app.core.logging_config import logger
-from app.services.llm.config import get_llm_api_key
-from app.services.llm import LlmChat
 
 def _images_to_pdf_bytes(images: List[str]) -> bytes:
     if not images:
@@ -25,50 +23,7 @@ def _images_to_pdf_bytes(images: List[str]) -> bytes:
     first.save(buf, format="PDF", save_all=True, append_images=rest)
     return buf.getvalue()
 
-async def ai_call_with_timeout_structured(chat_model, message, response_schema, timeout_seconds=90, operation_name="AI call structured"):
-    """Wrapper for structured AI calls with timeout and logging."""
-    try:
-        async def make_api_call():
-            return await chat_model.send_message_structured(message, response_schema)
 
-        result = await asyncio.wait_for(make_api_call(), timeout=timeout_seconds)
-        return result
-    except asyncio.TimeoutError:
-        logger.error(f"⏱️ TIMEOUT after {timeout_seconds}s: {operation_name}")
-        raise TimeoutError(f"{operation_name} exceeded {timeout_seconds}s timeout")
-    except Exception as e:
-        logger.error(f"Error in {operation_name}: {str(e)}")
-        return None
-
-
-async def ai_call_with_timeout(chat_model, message, timeout_seconds=90, operation_name="AI call"):
-    """
-    Wrapper for AI calls with timeout protection.
-    Prevents indefinite hanging on API timeouts.
-    """
-    try:
-        async def make_api_call():
-            send_message = chat_model.send_message
-            if inspect.iscoroutinefunction(send_message):
-                return await send_message(message)
-            loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, lambda: send_message(message))
-
-        result = await asyncio.wait_for(make_api_call(), timeout=timeout_seconds)
-        return result
-    except asyncio.TimeoutError:
-        logger.error(f"⏱️ TIMEOUT after {timeout_seconds}s: {operation_name}")
-        raise TimeoutError(f"{operation_name} exceeded {timeout_seconds}s timeout")
-
-def create_gemini_chat(system_message: str = ""):
-    """Create a Gemini chat session with optional system message."""
-    return LlmChat(
-        api_key=get_llm_api_key() or "",
-        session_id=f"legacy_chat_{uuid.uuid4().hex[:8]}",
-        system_message=system_message,
-    ).with_model("gemini", "gemini-2.5-flash").with_params(
-        temperature=0
-    )
 
 def _parse_llm_json(response_text: str) -> Optional[Dict[str, Any]]:
     if not response_text:

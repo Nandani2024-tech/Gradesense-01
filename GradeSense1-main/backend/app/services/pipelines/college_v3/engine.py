@@ -13,6 +13,8 @@ from app.services.pipelines.college_v3.answer_mapping import map_answers
 from app.services.pipelines.college_v3.global_span_builder import build_global_spans
 from app.services.pipelines.college_v3.question_blueprint import build_blueprint_from_spans
 from app.adapters.ocr_adapter import ocr_pages
+from app.adapters.llm_adapter import GeminiLLMService
+from app.services.llm.config import get_llm_api_key
 
 
 def _phase_timer(phase_name: str, timings: Dict[str, float], start: float) -> None:
@@ -137,7 +139,8 @@ async def extract_college_v3_blueprint(question_paper_images: List[str]) -> Dict
     _phase_timer("phase_2_span_build", timings, phase_start)
 
     phase_start = time.perf_counter()
-    blueprint_payload = await build_blueprint_from_spans(spans)
+    llm_service = GeminiLLMService(api_key=get_llm_api_key() or "")
+    blueprint_payload = await build_blueprint_from_spans(spans, llm_service)
     _phase_timer("phase_3_blueprint_llm", timings, phase_start)
 
     return {

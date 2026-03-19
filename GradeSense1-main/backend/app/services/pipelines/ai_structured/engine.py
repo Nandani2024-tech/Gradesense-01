@@ -1,9 +1,14 @@
 import os
 import hashlib
 from typing import Any, Dict, List, Optional, Tuple
+from app.adapters.interfaces import AbstractLLMService
 
 from app.core.exceptions import CustomServiceException
-from app.models.submission import QuestionScore
+from app.models.submission import QuestionScore, SubQuestionScore
+import uuid
+from app.adapters.llm_adapter import GeminiLLMService
+from app.infrastructure.ocr.provider import get_ocr_provider
+from app.services.pipelines.ai_structured.grading.alignment_service import align_answers
 
 from app.services.pipelines.ai_structured.utils.logging import pipeline_logger, with_logging
 from app.services.pipelines.ai_structured.utils.common import _to_float
@@ -17,7 +22,7 @@ from app.services.pipelines.ai_structured.extraction.utils import _apply_audit_t
 from app.services.pipelines.ai_structured.blueprint.snapshot import create_blueprint_snapshot, PIPELINE_VERSION
 from app.services.pipelines.ai_structured.blueprint.structure_to_legacy import question_structure_to_legacy_questions
 from app.services.pipelines.ai_structured.alignment.alignment_service import perform_alignment_and_update
-from app.services.pipelines.ai_structured.grading.grading_engine import perform_grading
+from app.services.pipelines.ai_structured.grading.grading_engine import GradingEngine
 
 from app.services.llm.prompts.ai_structured_prompts import PROMPT_VERSION
 from app.services.storage.gridfs_helpers import get_exam_question_paper_images
@@ -34,6 +39,7 @@ async def extract_and_persist(
     force: bool = False,
     lock_owner: Optional[str] = None,
     model_name: str = DEFAULT_MODEL_NAME,
+    llm_service: "AbstractLLMService",
 ) -> Dict[str, Any]:
     owner = lock_owner or f"extract_{exam_id}"
     locked_exam: Dict[str, Any] = {}
@@ -63,7 +69,7 @@ async def extract_and_persist(
             retry_count = int(cached.get("retry_count") or 0)
         else:
             structure, validation_report, raw_ocr_text, retry_count = await perform_extraction(
-                question_paper_images, expected_total_marks, expected_question_count, model_name
+                question_paper_images, expected_total_marks, expected_question_count, model_name, llm_service
             )
             set_cached_structure(
                 exam_id, int(locked_exam.get("blueprint_version", 0) or 0), extraction_hash_seed,
@@ -288,18 +294,71 @@ async def grade_images_with_locked_blueprint(
     )
     structure = _apply_audit_tree_marks(structure, audit_tree)
 
-    return await perform_grading(
-        exam=exam,
-        images=images,
-        model_answer_text=model_answer_text,
-        structure=structure,
-        model_answer_map=model_answer_map or {},
-        model_answer_images=model_answer_images or [],
-        question_paper_images=question_paper_images or [],
-        grading_mode=grading_mode,
-        exam_id=exam_id or exam.get("exam_id"),
-        model_name=model_name,
-        job_id=job_id,
-        PIPELINE_VERSION=PIPELINE_VERSION,
-        PROMPT_VERSION=PROMPT_VERSION,
+    # Final structure with audit tree marks applied
+    blueprint_signature = str(exam.get("active_structure_hash") or structure_hash(structure))
+    
+    # NEW orchestration: Manual alignment + GradingEngine
+    # We use a session ID for alignment as no submission_id is available in this standalone call
+    session_id = f"session_{uuid.uuid4()}"
+    
+    # Initialize services
+    llm_service = GeminiLLMService()
+    ocr_service = get_ocr_provider()
+    
+    # 1. Run Alignment
+    alignment_result = await align_answers(
+        submission_id=session_id,
+        question_structure=structure,
+        answer_images=images,
+        blueprint_signature=blueprint_signature,
+        llm_service=llm_service,
+        ocr_service=ocr_service,
+        use_cache=False
     )
+    
+    # 2. Convert alignment results to vision_answers map for the engine
+    vision_answers = {}
+    for ans in (alignment_result.get("answers") or []):
+        qn = str(ans.get("question_number"))
+        # Store the most complete packet for this question number
+        vision_answers[qn] = ans
+        
+    # 3. Run the new class-based GradingEngine
+    grader = GradingEngine(llm_service=llm_service)
+    grading_report = await grader.run_production_grading(
+        blueprint=structure,
+        vision_answers=vision_answers
+    )
+    
+    # 4. Map GradingEngine results back to legacy return format
+    question_scores: List[QuestionScore] = []
+    
+    # GradingEngine results are in results_list/grading_report['grades']
+    for g in grading_report.get("grades", []):
+        q_num = str(g.get("question_id") or g.get("question_number"))
+        
+        # Build sub_scores if present
+        sub_scores_models: List[SubQuestionScore] = []
+        for sg in g.get("sub_scores", []):
+            sub_scores_models.append(SubQuestionScore(
+                sub_id=sg["sub_id"],
+                obtained_marks=sg["obtained_marks"],
+                max_marks=sg["max_marks"],
+                ai_feedback=sg.get("ai_feedback")
+            ))
+            
+        question_scores.append(QuestionScore(
+            question_number=q_num,
+            obtained_marks=g["marks_awarded"],
+            max_marks=g["max_marks"],
+            ai_feedback=g.get("ai_feedback") or g.get("feedback"),
+            sub_scores=sub_scores_models
+        ))
+        
+    packet_meta = {
+        "total_awarded": grading_report.get("total_awarded"),
+        "total_possible": grading_report.get("total_possible"),
+        "logs": grading_report.get("logs")
+    }
+    
+    return question_scores, packet_meta

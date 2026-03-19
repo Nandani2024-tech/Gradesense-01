@@ -29,6 +29,19 @@ class GeminiLLMService(AbstractLLMService):
         chat = self._get_chat()
         if config:
             chat.with_params(temperature=config.temperature, max_output_tokens=config.max_tokens)
+        else:
+            if "temperature" in kwargs:
+                chat.with_params(temperature=kwargs["temperature"])
+            if "max_output_tokens" in kwargs:
+                chat.with_params(max_output_tokens=kwargs["max_output_tokens"])
+            if "response_mime_type" in kwargs:
+                chat.with_params(response_mime_type=kwargs["response_mime_type"])
+            
+        if "model_name" in kwargs:
+            chat.with_model("gemini", kwargs["model_name"])
+            
+        if "system_message" in kwargs:
+            chat.system_message = kwargs["system_message"]
         
         msg = UserMessage(text=prompt, file_contents=[ImageContent(img) for img in (images or [])])
         return await chat.send_message(msg)
@@ -37,6 +50,14 @@ class GeminiLLMService(AbstractLLMService):
         chat = self._get_chat()
         if "temperature" in kwargs:
             chat.with_params(temperature=kwargs["temperature"])
+        if "max_output_tokens" in kwargs:
+            chat.with_params(max_output_tokens=kwargs["max_output_tokens"])
+            
+        if "model_name" in kwargs:
+            chat.with_model("gemini", kwargs["model_name"])
+            
+        if "system_message" in kwargs:
+            chat.system_message = kwargs["system_message"]
         
         msg = UserMessage(text=prompt, file_contents=[ImageContent(img) for img in (images or [])])
         return await chat.send_message_structured(msg, response_schema=response_schema)

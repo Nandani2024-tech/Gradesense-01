@@ -3,31 +3,37 @@
 from __future__ import annotations
 
 import asyncio
-import re
-import json
 import ast
-import uuid
-import os
 import base64
 import io
-from PIL import Image
+import json
+import os
+import re
+import uuid
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple, Set
+from typing import Any, Dict, List, Optional, Tuple
+
+from PIL import Image
 
 from app.core.logging_config import logger
+from app.services.llm.config import get_llm_api_key
+from app.adapters.llm_adapter import GeminiLLMService
+from app.infrastructure.ocr.provider.core import get_ocr_provider
+
+from app.layers.ai_structured.mark_reasoner import resolve_marks
+from app.services.llm.prompts.ai_structured_prompts import (
+    build_extraction_prompt,
+    build_reconstruction_prompt,
+    get_extraction_system_prompt,
+    build_visual_extraction_prompt,
+    get_visual_extraction_system_prompt,
+)
 from app.infrastructure.serialization.safe_numeric import safe_float, safe_int, parse_section_math_expression
 from app.infrastructure.concurrency.retry import RetryExhaustedError, run_with_retry
+from app.layers.ai_structured.structure_repair import apply_structure_repairs
+from app.layers.ai_structured.structure_validator import validate_structure as validate_structure_stage3
 from app.layers.ai_structured.validation import normalize_structure_payload
 from app.adapters.visual_extractor import extract_visual_entities
-from app.infrastructure.ocr.provider.core import get_ocr_provider
-from app.services.llm import LlmChat, UserMessage, ImageContent, get_llm_api_key
-from app.services.llm.prompts.ai_structured_prompts import (
-    get_extraction_system_prompt,
-    get_visual_extraction_system_prompt,
-    build_visual_extraction_prompt,
-    build_extraction_prompt
-)
-from app.services.pipelines.steps import parse_step, evaluate_step
 
 
 _ALLOWED_TYPES = {
@@ -46,10 +52,6 @@ _ALLOWED_TYPES = {
     "passage_subparts",
     "or_group",
 }
-
-
-# Limit concurrent heavy OCR tasks to prevent OOM/UI hangs.
-_OCR_SEMAPHORE = asyncio.Semaphore(2)
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -115,12 +117,11 @@ def _extract_balanced_json_candidates(text: str, *, max_candidates: int = 16) ->
             if (opener == "{" and ch == "}") or (opener == "[" and ch == "]"):
                 stack.pop()
                 if not stack and start_idx is not None:
-                    if start_idx is not None:
-                        snippet = str(text[start_idx : idx + 1]).strip()
-                        if snippet:
-                            candidates.append(snippet)
-                            if len(candidates) >= max_candidates:
-                                break
+                    snippet = text[start_idx:idx + 1].strip()
+                    if snippet:
+                        candidates.append(snippet)
+                        if len(candidates) >= max_candidates:
+                            break
                     start_idx = None
             else:
                 stack.clear()
@@ -313,7 +314,7 @@ def _normalize_visual_payload(payload: Dict[str, Any], page_offset: int, page_co
                 "number": qn,
                 "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
                 "page": _norm_page(row.get("page_index")),
-                "confidence": round(float(_to_float(row.get("confidence"), 0.0)), 4),
+                "confidence": round(_to_float(row.get("confidence"), 0.0), 4),
             }
         )
 
@@ -330,7 +331,7 @@ def _normalize_visual_payload(payload: Dict[str, Any], page_offset: int, page_co
                 "label": label,
                 "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
                 "page": _norm_page(row.get("page_index")),
-                "confidence": round(float(_to_float(row.get("confidence"), 0.0)), 4),
+                "confidence": round(_to_float(row.get("confidence"), 0.0), 4),
             }
         )
 
@@ -344,12 +345,12 @@ def _normalize_visual_payload(payload: Dict[str, Any], page_offset: int, page_co
             {
                 "q": qn,
                 "sub": row.get("sub"),
-                "marks": round(float(_to_float(row.get("marks"), 0.0)), 4),
+                "marks": round(_to_float(row.get("marks"), 0.0), 4),
                 "text": row.get("text") or row.get("raw"),
                 "split": row.get("split"),
                 "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
                 "page": _norm_page(row.get("page_index")),
-                "confidence": round(float(_to_float(row.get("confidence"), 0.0)), 4),
+                "confidence": round(_to_float(row.get("confidence"), 0.0), 4),
             }
         )
 
@@ -364,16 +365,16 @@ def _normalize_visual_payload(payload: Dict[str, Any], page_offset: int, page_co
         out["section_math"].append(
             {
                 "count": count,
-                "per": round(float(per), 4),
-                "total": round(float(total), 4),
+                "per": round(per, 4),
+                "total": round(total, 4),
                 "range": {
                     "start": _to_int(row.get("start_question"), 0),
                     "end": _to_int(row.get("start_question"), 0) + count - 1,
                 },
-                "expr": str(row.get("expression") or f"{count} x {round(float(per), 4)} = {round(float(total), 4)}"),
+                "expr": str(row.get("expression") or f"{count} x {round(per, 4)} = {round(total, 4)}"),
                 "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
                 "page": _norm_page(row.get("page_index")),
-                "confidence": round(float(_to_float(row.get("confidence"), 0.0)), 4),
+                "confidence": round(_to_float(row.get("confidence"), 0.0), 4),
             }
         )
 
@@ -390,7 +391,7 @@ def _normalize_visual_payload(payload: Dict[str, Any], page_offset: int, page_co
                 "q2": q2,
                 "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
                 "page": _norm_page(row.get("page_index")),
-                "confidence": round(float(_to_float(row.get("confidence"), 0.0)), 4),
+                "confidence": round(_to_float(row.get("confidence"), 0.0), 4),
             }
         )
 
@@ -406,7 +407,7 @@ def _normalize_visual_payload(payload: Dict[str, Any], page_offset: int, page_co
                 "text": text,
                 "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
                 "page": _norm_page(row.get("page_index")),
-                "confidence": round(float(_to_float(row.get("confidence"), 0.0)), 4),
+                "confidence": round(_to_float(row.get("confidence"), 0.0), 4),
             }
         )
 
@@ -449,8 +450,8 @@ def _extract_partial_payload(raw_text: str) -> Optional[Dict[str, Any]]:
                 key = (
                     str(b.get("expression") or "").strip(),
                     _to_int(b.get("question_count"), 0),
-                    round(float(_to_float(b.get("per_question_marks"), 0.0)), 4),
-                    round(float(_to_float(b.get("total_marks"), 0.0)), 4),
+                    round(_to_float(b.get("per_question_marks"), 0.0), 4),
+                    round(_to_float(b.get("total_marks"), 0.0), 4),
                 )
                 if key in section_math_seen:
                     continue
@@ -472,8 +473,8 @@ def _extract_partial_payload(raw_text: str) -> Optional[Dict[str, Any]]:
             key = (
                 str(parsed.get("expression") or "").strip(),
                 _to_int(parsed.get("question_count"), 0),
-                round(float(_to_float(parsed.get("per_question_marks"), 0.0)), 4),
-                round(float(_to_float(parsed.get("total_marks"), 0.0)), 4),
+                round(_to_float(parsed.get("per_question_marks"), 0.0), 4),
+                round(_to_float(parsed.get("total_marks"), 0.0), 4),
             )
             if key not in section_math_seen:
                 section_math_seen.add(key)
@@ -778,8 +779,7 @@ async def _build_raw_ocr_text(images: List[str]) -> str:
     
     async def _process_page(idx: int, img: str) -> Optional[List[str]]:
         try:
-            async with _OCR_SEMAPHORE:
-                res = await ocr.detect_async(img)
+            res = ocr.detect(img)
             page_lines = [str(row.get("text") or "").strip() for row in (res.get("lines") or [])]
             page_lines = [ln for ln in page_lines if ln]
             if page_lines:
@@ -799,19 +799,16 @@ async def _build_raw_ocr_text(images: List[str]) -> str:
     return "\n".join(all_lines)
 
 
-async def _extract_ocr_question_anchors(images: List[str]) -> List[Dict[str, Any]]:
+def _extract_ocr_question_anchors(images: List[str]) -> List[Dict[str, Any]]:
     ocr = get_ocr_provider()
-    
-    async def _process_page(idx: int, img: str) -> List[Dict[str, Any]]:
-        page_anchors = []
-        pattern = re.compile(r"^\s*(\d{1,3})\s*[\).]")
+    anchors: List[Dict[str, Any]] = []
+    pattern = re.compile(r"^\s*(\d{1,3})\s*[\).]")
+    for idx, img in enumerate(images):
         try:
-            async with _OCR_SEMAPHORE:
-                res = await ocr.detect_async(img)
+            res = ocr.detect(img)
         except Exception as exc:
             logger.warning("OCR anchor pass failed on page %s: %s", idx + 1, exc)
-            return []
-        
+            continue
         for row in (res.get("lines") or []):
             text = str(row.get("text") or "").strip()
             if not text:
@@ -827,7 +824,7 @@ async def _extract_ocr_question_anchors(images: List[str]) -> List[Dict[str, Any
             bbox = list(row.get("bbox") or row.get("bounding_box") or [0, 0, 0, 0])
             if len(bbox) != 4:
                 bbox = [0, 0, 0, 0]
-            page_anchors.append(
+            anchors.append(
                 {
                     "number": qn,
                     "bbox": bbox,
@@ -836,15 +833,7 @@ async def _extract_ocr_question_anchors(images: List[str]) -> List[Dict[str, Any
                     "source": "ocr",
                 }
             )
-        return page_anchors
-
-    tasks = [asyncio.create_task(_process_page(idx, img)) for idx, img in enumerate(images)]
-    results = await asyncio.gather(*tasks)
-    
-    all_anchors = []
-    for res in results:
-        all_anchors.extend(res)
-    return all_anchors
+    return anchors
 
 
 def _extract_structured_question_anchors(structure: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -991,7 +980,7 @@ def _extract_header_total_hint(raw_ocr_text: str) -> Tuple[Optional[float], bool
     return None, False, 0.0, None
 
 
-async def _extract_header_total_from_images(
+def _extract_header_total_from_images(
     images: List[str],
 ) -> Tuple[Optional[float], bool, float, Optional[str]]:
     """Detect header total marks from the top region of the first page."""
@@ -1007,8 +996,7 @@ async def _extract_header_total_from_images(
             return None, False, 0.0, None
 
         ocr = get_ocr_provider()
-        async with _OCR_SEMAPHORE:
-            res = await ocr.detect_async(img_b64, min_conf=0.3, min_words=1, min_lines=1, allow_fallback=True)
+        res = ocr.detect(img_b64, min_conf=0.3, min_words=1, min_lines=1, allow_fallback=True)
         lines = res.get("lines") or []
 
         header_lines: List[Tuple[float, float, str]] = []
@@ -1430,38 +1418,32 @@ def _clip_to_expected_question_count(
     return normalized, ve
 
 
-async def _call_extraction_llm(images: List[str], prompt: str, model_name: str) -> Dict[str, Any]:
-    provider = os.getenv("LLM_PROVIDER", "gemini").lower()
-    api_key = get_llm_api_key()
-    if not api_key and provider == "gemini":
-        raise RuntimeError("missing_gemini_api_key")
-        
-    actual_model = model_name
-    if provider == "ollama" and not model_name:
-        actual_model = os.getenv("OLLAMA_MODEL_NAME", "llama3.2-vision")
-    elif provider == "ollama" and model_name == "gemini-2.5-flash":
-        # Retroactive fix for legacy defaults.
-        actual_model = os.getenv("OLLAMA_MODEL_NAME", "llama3.2-vision")
-
+async def _call_extraction_llm(images: List[str], prompt: str, model_name: str, llm_service: "AbstractLLMService") -> Dict[str, Any]:
     max_output_tokens = _to_int(os.getenv("AI_STRUCTURED_MAX_OUTPUT_TOKENS", "32768"), 32768)
     if max_output_tokens <= 0:
         max_output_tokens = 32768
 
-    chat = LlmChat(
-        api_key=api_key or "no-key",
-        session_id=f"ai_struct_extract_{uuid.uuid4().hex[:10]}",
-        system_message=get_extraction_system_prompt(),
-    ).with_model(provider, actual_model).with_params(
-        temperature=0,
-        response_mime_type="application/json",
-        max_output_tokens=max_output_tokens,
+    logger.info(
+        "LLM_CALL provider=%s model=%s images=%s prompt_len=%s",
+        getattr(llm_service, "provider", "gemini"),
+        model_name,
+        len(images or []),
+        len(prompt or "")
     )
 
-    message = UserMessage(
-        text=prompt,
-        file_contents=[ImageContent(image_base64=img) for img in images],
+    raw = await llm_service.predict(
+        prompt=prompt,
+        images=images,
+        model_name=model_name,
+        temperature=0,
+        max_output_tokens=max_output_tokens
     )
-    raw = await chat.send_message(message)
+
+    logger.info(
+        "LLM_RESPONSE received len=%s",
+        len(raw or "")
+    )
+
     try:
         return _parse_json_object(raw)
     except ValueError as exc:
@@ -1473,12 +1455,16 @@ async def _call_extraction_llm(images: List[str], prompt: str, model_name: str) 
         raise
 
 
-async def _call_visual_extraction_llm(images: List[str], prompt: str, model_name: str) -> Dict[str, Any]:
+async def _call_visual_extraction_llm(
+    images: List[str], 
+    prompt: str, 
+    model_name: str, 
+    llm_service: "AbstractLLMService"
+) -> Dict[str, Any]:
+    logger.info("LLM instance received: %s", llm_service)
+
     provider = os.getenv("LLM_PROVIDER", "gemini").lower()
-    api_key = get_llm_api_key()
-    if not api_key and provider == "gemini":
-        raise RuntimeError("missing_gemini_api_key")
-        
+    
     actual_model = model_name
     if provider == "ollama" and not model_name:
         actual_model = os.getenv("OLLAMA_MODEL_NAME", "llama3.2-vision")
@@ -1489,21 +1475,17 @@ async def _call_visual_extraction_llm(images: List[str], prompt: str, model_name
     if max_output_tokens <= 0:
         max_output_tokens = 32768
 
-    chat = LlmChat(
-        api_key=api_key or "no-key",
-        session_id=f"ai_struct_visual_{uuid.uuid4().hex[:10]}",
+    logger.info("LLM_CALL provider=%s model=%s prompt_len=%s", provider, actual_model, len(prompt))
+
+    raw = await llm_service.predict(
+        prompt=prompt,
+        images=images,
+        model_name=actual_model,
         system_message=get_visual_extraction_system_prompt(),
-    ).with_model(provider, actual_model).with_params(
         temperature=0,
         response_mime_type="application/json",
         max_output_tokens=max_output_tokens,
     )
-
-    message = UserMessage(
-        text=prompt,
-        file_contents=[ImageContent(image_base64=img) for img in images],
-    )
-    raw = await chat.send_message(message)
     try:
         return _parse_visual_json_object(raw)
     except ValueError as exc:
@@ -1520,226 +1502,6 @@ async def _call_visual_extraction_llm(images: List[str], prompt: str, model_name
         raise
 
 
-class AIExtractionOrchestrator:
-    def __init__(self, llm_service: Any = None):
-        self.llm_service = llm_service
-
-    async def extract_question_structure(
-        self,
-        *,
-        question_paper_images: List[str],
-        raw_ocr_text: Optional[str] = None,
-        expected_total_marks: Optional[float] = None,
-        expected_question_count: Optional[int] = None,
-        max_retries: int = 3,
-        model_name: str = "qwen2.5:latest",
-    ) -> Tuple[Dict[str, Any], Dict[str, Any], str, int]:
-        """Extract question structure with layered visual+semantic pipeline."""
-        logger.info("[PIPELINE START] AIExtractionOrchestrator")
-
-        if not question_paper_images:
-            raise ValueError("question_paper_images_required")
-
-        # Layer 1: multimodal visual evidence (Gemini Vision), fallback to OCR visual layer.
-        batch_size = max(1, int(os.getenv("AI_STRUCTURED_PAGE_BATCH_SIZE", "8")))
-        chunks: List[Tuple[int, List[str]]] = []
-        for i in range(0, len(question_paper_images), batch_size):
-            chunks.append((i, question_paper_images[i:i + batch_size]))
-
-        async def _extract_visual_chunk(start_idx: int, chunk_images: List[str], idx: int, total: int) -> Dict[str, Any]:
-            prompt = build_visual_extraction_prompt(
-                batch_index=idx,
-                total_batches=total,
-                page_offset=start_idx,
-            )
-            # Use a vision-capable model for the visual layer.
-            vision_model = "llama3.2-vision:latest" if "llama" in str(model_name).lower() or "qwen" in str(model_name).lower() else model_name
-            try:
-                payload = await _call_visual_extraction_llm(chunk_images, prompt, model_name=vision_model)
-                return _normalize_visual_payload(payload, page_offset=start_idx, page_count=len(chunk_images))
-            except Exception as exc:
-                logger.warning("VISUAL_CHUNK_FAILED batch=%s/%s error=%s", idx, total, exc)
-                return {
-                    "questions": [],
-                    "subparts": [],
-                    "margin_marks": [],
-                    "section_math": [],
-                    "or_connectors": [],
-                    "headers": [],
-                    "header_total": None,
-                }
-
-        async def _extract_all_visual_chunks() -> Dict[str, Any]:
-            total = len(chunks)
-            
-            async def _runner(item: Tuple[int, List[str]], idx: int) -> Dict[str, Any]:
-                start_idx, imgs = item
-                return await _extract_visual_chunk(start_idx, imgs, idx, total)
-
-            tasks = [asyncio.create_task(_runner(item, idx + 1)) for idx, item in enumerate(chunks)]
-            batch_payloads = await asyncio.gather(*tasks)
-
-            merged: Dict[str, Any] = {
-                "questions": [],
-                "subparts": [],
-                "margin_marks": [],
-                "section_math": [],
-                "or_connectors": [],
-                "headers": [],
-                "header_total": None,
-            }
-            for chunk_payload in batch_payloads:
-                merged["questions"].extend(chunk_payload.get("questions") or [])
-                merged["subparts"].extend(chunk_payload.get("subparts") or [])
-                merged["margin_marks"].extend(chunk_payload.get("margin_marks") or [])
-                merged["section_math"].extend(chunk_payload.get("section_math") or [])
-                merged["or_connectors"].extend(chunk_payload.get("or_connectors") or [])
-                merged["headers"].extend(chunk_payload.get("headers") or [])
-                if not merged.get("header_total") and chunk_payload.get("header_total"):
-                    merged["header_total"] = chunk_payload.get("header_total")
-            return merged
-
-        visual_entities: Dict[str, Any]
-        try:
-            visual_entities = await _extract_all_visual_chunks()
-            if not any(visual_entities.get(k) for k in ("questions", "section_math", "margin_marks", "or_connectors")):
-                raise RuntimeError("empty_visual_payload")
-        except Exception as exc:
-            logger.warning("VISUAL_ENTITIES_FAILED error=%s", exc)
-            try:
-                visual_entities = extract_visual_entities(question_paper_images, force_ocr_fallback=True)
-            except Exception as exc2:
-                logger.warning("VISUAL_OCR_FALLBACK_FAILED error=%s", exc2)
-                visual_entities = {
-                    "questions": [],
-                    "subparts": [],
-                    "margin_marks": [],
-                    "section_math": [],
-                    "or_connectors": [],
-                    "headers": [],
-                    "header_total": None,
-                }
-
-        def _avg_conf(items: List[Dict[str, Any]]) -> float:
-            vals = [float(row.get("confidence") or 0.0) for row in items if isinstance(row, dict)]
-            if not vals:
-                return 0.0
-            return round(float(sum(vals) / float(len(vals))), 4)
-
-        logger.info(
-            "VISUAL_EVIDENCE_CONF questions=%s subparts=%s margin_marks=%s section_math=%s or_connectors=%s headers=%s",
-            len(visual_entities.get("questions", [])),
-            len(visual_entities.get("subparts", [])),
-            len(visual_entities.get("margin_marks", [])),
-            len(visual_entities.get("section_math", [])),
-            len(visual_entities.get("or_connectors", [])),
-            len(visual_entities.get("headers", []))
-        )
-
-        if raw_ocr_text is None:
-            raw_ocr_text = await _build_raw_ocr_text(question_paper_images)
-
-        prompt_extra_rules: List[str] = []
-        expected_count = _to_int(expected_question_count, 0)
-        if expected_count > 0:
-            prompt_extra_rules.append(
-                f"Expected question count = {expected_count}. Do not output question numbers outside 1..{expected_count}."
-            )
-        
-        prompt_total_marks = None
-        visual_header = visual_entities.get("header_total")
-        if expected_total_marks is not None and _to_float(expected_total_marks, 0.0) > 0:
-            prompt_total_marks = round(float(_to_float(expected_total_marks, 0.0)), 4)
-        elif isinstance(visual_header, dict) and visual_header.get("reliable") and _to_float(visual_header.get("marks"), 0.0) > 0:
-            prompt_total_marks = round(float(_to_float(visual_header.get("marks"), 0.0)), 4)
-            
-        if prompt_total_marks is not None:
-            prompt_extra_rules.append(
-                f"Expected total marks = {prompt_total_marks}. Use only as consistency reference; do not assign marks."
-            )
-
-        retry_count = 0
-        stage2_structure: Dict[str, Any]
-        try:
-            retry_result = await run_with_retry(
-                name="STRUCTURE_EXTRACTION",
-                max_attempts=max_retries,
-                operation=lambda _attempt: parse_step.extract_semantic_structure_pipeline(
-                    question_paper_images, raw_ocr_text, prompt_extra_rules, self.llm_service
-                ),
-            )
-            stage2_structure = retry_result.value
-            retry_count = retry_result.attempts - 1
-        except RetryExhaustedError as exc:
-            logger.error("STRUCTURE_EXTRACTION_FAILED reason=%s", exc)
-            stage2_structure = {"questions": [], "section_math_blocks": [], "total_questions": 0, "total_marks": 0.0}
-            retry_count = max_retries
-
-        if not stage2_structure.get("questions"):
-            stage2_structure = parse_step.semantic_structure_from_visual_entities(visual_entities)
-
-        visual_entities = parse_step.merge_semantic_with_visual_entities(stage2_structure, visual_entities)
-        stage2_structure, visual_entities = parse_step.clip_to_expected_question_count(
-            stage2_structure,
-            visual_entities,
-            expected_question_count,
-        )
-
-        try:
-            ocr_anchors = await _extract_ocr_question_anchors(question_paper_images)
-        except Exception as exc:
-            logger.warning("OCR_ANCHOR_EXTRACTION_FAILED error=%s", exc)
-            ocr_anchors = []
-            
-        try:
-            structured_anchors = _extract_structured_question_anchors(stage2_structure)
-        except Exception as exc:
-            logger.warning("STRUCTURED_ANCHOR_EXTRACTION_FAILED error=%s", exc)
-            structured_anchors = []
-            
-        merged_anchors = _merge_question_anchors(
-            list(visual_entities.get("questions", [])),
-            ocr_anchors,
-            structured_anchors,
-        )
-        if expected_count > 0:
-            merged_anchors = [row for row in merged_anchors if 1 <= _to_int(row.get("number"), 0) <= expected_count]
-        
-        visual_entities["questions"] = merged_anchors
-
-        if isinstance(visual_header, dict) and safe_float(visual_header.get("marks"), 0.0) > 0:
-            header_total_marks = round(safe_float(visual_header.get("marks"), 0.0), 4)
-            header_total_reliable = bool(visual_header.get("reliable"))
-            header_total_conf = safe_float(visual_header.get("confidence"), 0.0)
-            header_total_source = str(visual_header.get("source") or "visual_header")
-        else:
-            header_total_marks, header_total_reliable, header_total_conf, header_total_source = await _extract_header_total_from_images(
-                question_paper_images
-            )
-            if not header_total_marks:
-                header_total_marks, header_total_reliable, header_total_conf, header_total_source = _extract_header_total_hint(
-                    raw_ocr_text
-                )
-
-        # 5. Evaluation Pipeline
-        structure, validation_report, retry_count = await evaluate_step.run_evaluation_pipeline(
-            structure=stage2_structure,
-            visual_entities=visual_entities,
-            header_total_marks=header_total_marks,
-            header_total_reliable=header_total_reliable,
-            header_total_conf=header_total_conf,
-            header_total_source=header_total_source,
-            expected_question_count=expected_question_count,
-            raw_ocr_text=raw_ocr_text,
-            question_paper_images=question_paper_images,
-            retry_count=retry_count,
-            llm_service=self.llm_service,
-        )
-
-        final_ocr_text: str = str(raw_ocr_text) if raw_ocr_text is not None else ""
-        return structure, validation_report, final_ocr_text, int(retry_count)
-
-
 async def extract_question_structure(
     *,
     question_paper_images: List[str],
@@ -1748,16 +1510,395 @@ async def extract_question_structure(
     expected_question_count: Optional[int] = None,
     max_retries: int = 3,
     model_name: str = "qwen2.5:latest",
+    llm_service: "AbstractLLMService",
 ) -> Tuple[Dict[str, Any], Dict[str, Any], str, int]:
-    orchestrator = AIExtractionOrchestrator()
-    return await orchestrator.extract_question_structure(
-        question_paper_images=question_paper_images,
-        raw_ocr_text=raw_ocr_text,
-        expected_total_marks=expected_total_marks,
-        expected_question_count=expected_question_count,
-        max_retries=max_retries,
-        model_name=model_name,
+    """Extract question structure with layered visual+semantic pipeline."""
+
+    if not question_paper_images:
+        raise ValueError("question_paper_images_required")
+
+    # Layer 1: multimodal visual evidence (Gemini Vision), fallback to OCR visual layer.
+    batch_size = max(1, int(os.getenv("AI_STRUCTURED_PAGE_BATCH_SIZE", "8")))
+    chunks: List[Tuple[int, List[str]]] = []
+    for i in range(0, len(question_paper_images), batch_size):
+        chunks.append((i, question_paper_images[i:i + batch_size]))
+
+    async def _extract_visual_chunk(start_idx: int, chunk_images: List[str], idx: int, total: int) -> Dict[str, Any]:
+        prompt = build_visual_extraction_prompt(
+            batch_index=idx,
+            total_batches=total,
+            page_offset=start_idx,
+        )
+        # Use a vision-capable model for the visual layer.
+        vision_model = "llama3.2-vision:latest" if "llama" in str(model_name).lower() or "qwen" in str(model_name).lower() else model_name
+        try:
+            payload = await _call_visual_extraction_llm(
+                chunk_images, 
+                prompt, 
+                model_name=vision_model, 
+                llm_service=llm_service
+            )
+            return _normalize_visual_payload(payload, page_offset=start_idx, page_count=len(chunk_images))
+        except Exception as exc:
+            logger.warning("VISUAL_CHUNK_FAILED batch=%s/%s error=%s", idx, total, exc)
+            return {
+                "questions": [],
+                "subparts": [],
+                "margin_marks": [],
+                "section_math": [],
+                "or_connectors": [],
+                "headers": [],
+                "header_total": None,
+            }
+
+    async def _extract_all_visual_chunks() -> Dict[str, Any]:
+        total = len(chunks)
+        
+        async def _runner(item: Tuple[int, List[str]], idx: int) -> Dict[str, Any]:
+            start_idx, imgs = item
+            return await _extract_visual_chunk(start_idx, imgs, idx, total)
+
+        tasks = [asyncio.create_task(_runner(item, idx + 1)) for idx, item in enumerate(chunks)]
+        batch_payloads = await asyncio.gather(*tasks)
+
+        merged: Dict[str, Any] = {
+            "questions": [],
+            "subparts": [],
+            "margin_marks": [],
+            "section_math": [],
+            "or_connectors": [],
+            "headers": [],
+            "header_total": None,
+        }
+        for chunk_payload in batch_payloads:
+            merged["questions"].extend(chunk_payload.get("questions") or [])
+            merged["subparts"].extend(chunk_payload.get("subparts") or [])
+            merged["margin_marks"].extend(chunk_payload.get("margin_marks") or [])
+            merged["section_math"].extend(chunk_payload.get("section_math") or [])
+            merged["or_connectors"].extend(chunk_payload.get("or_connectors") or [])
+            merged["headers"].extend(chunk_payload.get("headers") or [])
+            if not merged.get("header_total") and chunk_payload.get("header_total"):
+                merged["header_total"] = chunk_payload.get("header_total")
+        return merged
+
+    visual_entities: Dict[str, Any]
+    try:
+        visual_entities = await _extract_all_visual_chunks()
+        if not any(visual_entities.get(k) for k in ("questions", "section_math", "margin_marks", "or_connectors")):
+            raise RuntimeError("empty_visual_payload")
+    except Exception as exc:
+        logger.warning("VISUAL_ENTITIES_FAILED error=%s", exc)
+        try:
+            visual_entities = extract_visual_entities(question_paper_images, force_ocr_fallback=True)
+        except Exception as exc2:
+            logger.warning("VISUAL_OCR_FALLBACK_FAILED error=%s", exc2)
+            visual_entities = {
+                "questions": [],
+                "subparts": [],
+                "margin_marks": [],
+                "section_math": [],
+                "or_connectors": [],
+                "headers": [],
+                "header_total": None,
+            }
+
+    def _avg_conf(items: List[Dict[str, Any]]) -> float:
+        vals = [float(row.get("confidence") or 0.0) for row in items if isinstance(row, dict)]
+        if not vals:
+            return 0.0
+        return round(float(sum(vals) / float(len(vals))), 4)
+
+    logger.info(
+        "VISUAL_EVIDENCE_CONF questions=%s subparts=%s margin_marks=%s section_math=%s or_connectors=%s headers=%s avg_q=%.3f avg_sp=%.3f avg_mm=%.3f avg_sm=%.3f avg_or=%.3f avg_hd=%.3f",
+        len((visual_entities or {}).get("questions") or []),
+        len((visual_entities or {}).get("subparts") or []),
+        len((visual_entities or {}).get("margin_marks") or []),
+        len((visual_entities or {}).get("section_math") or []),
+        len((visual_entities or {}).get("or_connectors") or []),
+        len((visual_entities or {}).get("headers") or []),
+        _avg_conf((visual_entities or {}).get("questions") or []),
+        _avg_conf((visual_entities or {}).get("subparts") or []),
+        _avg_conf((visual_entities or {}).get("margin_marks") or []),
+        _avg_conf((visual_entities or {}).get("section_math") or []),
+        _avg_conf((visual_entities or {}).get("or_connectors") or []),
+        _avg_conf((visual_entities or {}).get("headers") or []),
     )
 
+    if raw_ocr_text is None:
+        raw_ocr_text = await _build_raw_ocr_text(question_paper_images)
 
-__all__ = ["AIExtractionOrchestrator", "extract_question_structure"]
+    # Layer 2: Gemini semantic extraction only (marks ignored).
+
+    prompt_extra_rules: List[str] = []
+    expected_count = _to_int(expected_question_count, 0)
+    if expected_count > 0:
+        prompt_extra_rules.append(
+            f"Expected question count = {expected_count}. Do not output question numbers outside 1..{expected_count}."
+        )
+    prompt_total_marks = None
+    if expected_total_marks is not None and _to_float(expected_total_marks, 0.0) > 0:
+        prompt_total_marks = round(float(_to_float(expected_total_marks, 0.0)), 4)
+    else:
+        visual_header = (visual_entities or {}).get("header_total")
+        if isinstance(visual_header, dict) and visual_header.get("reliable") and _to_float(visual_header.get("marks"), 0.0) > 0:
+            prompt_total_marks = round(float(_to_float(visual_header.get("marks"), 0.0)), 4)
+    if prompt_total_marks is not None:
+        prompt_extra_rules.append(
+            f"Expected total marks = {prompt_total_marks}. Use only as consistency reference; do not assign marks."
+        )
+
+    async def _extract_chunk(start_idx: int, chunk_images: List[str], idx: int, total: int) -> Dict[str, Any]:
+        prompt = build_extraction_prompt(
+            raw_ocr_text=raw_ocr_text,
+            batch_index=idx,
+            total_batches=total,
+            extra_rules=prompt_extra_rules,
+        )
+        try:
+            payload = await _call_extraction_llm(
+                chunk_images, 
+                prompt, 
+                model_name=model_name, 
+                llm_service=llm_service
+            )
+            return _normalize_batch_payload(payload, page_offset=start_idx)
+        except Exception as exc:
+            logger.warning("SEMANTIC_CHUNK_FAILED batch=%s/%s error=%s", idx, total, exc)
+            return {
+                "questions": [],
+                "section_math_blocks": [],
+                "total_questions": 0,
+                "total_marks": 0.0,
+                "effective_total_marks": 0.0,
+                "numbering_contiguous": False,
+            }
+
+    async def _extract_all_chunks() -> Dict[str, Any]:
+        total = len(chunks)
+
+        async def _runner(item: Tuple[int, List[str]], idx: int) -> Dict[str, Any]:
+            start_idx, imgs = item
+            return await _extract_chunk(start_idx, imgs, idx, total)
+
+        tasks = [asyncio.create_task(_runner(item, idx + 1)) for idx, item in enumerate(chunks)]
+        batch_payloads = await asyncio.gather(*tasks)
+
+        merged: Dict[int, Dict[str, Any]] = {}
+        for payload in batch_payloads:
+            for q in (payload.get("questions") or []):
+                qn = _to_int(q.get("number"), 0)
+                if qn <= 0:
+                    continue
+                if qn not in merged:
+                    merged[qn] = dict(q)
+                else:
+                    merged[qn] = _merge_questions(merged[qn], q)
+
+        consolidated = {
+            "questions": [merged[k] for k in sorted(merged.keys())],
+            "section_math_blocks": [],
+            "total_questions": len(merged),
+            "total_marks": 0.0,
+            "effective_total_marks": 0.0,
+            "numbering_contiguous": True,
+        }
+        return normalize_structure_payload(consolidated)
+
+    retry_count = 0
+    stage2_structure: Dict[str, Any]
+    try:
+        retry_result = await run_with_retry(
+            name="STRUCTURE_EXTRACTION",
+            max_attempts=max_retries,
+            operation=lambda _attempt: _extract_all_chunks(),
+        )
+        stage2_structure = retry_result.value
+        retry_count = retry_result.attempts - 1
+    except RetryExhaustedError as exc:
+        logger.error("STRUCTURE_EXTRACTION_FAILED reason=%s", exc)
+        stage2_structure = {"questions": [], "section_math_blocks": [], "total_questions": 0, "total_marks": 0.0}
+        retry_count = max_retries
+
+    # If semantic extraction yields nothing, fallback to visual anchors.
+    if not (stage2_structure.get("questions") or []):
+        stage2_structure = _semantic_structure_from_visual_entities(visual_entities)
+
+    stage2_structure = _merge_semantic_with_visual_entities(stage2_structure, visual_entities)
+    stage2_structure, visual_entities = _clip_to_expected_question_count(
+        stage2_structure,
+        visual_entities,
+        expected_question_count,
+    )
+
+    # Merge question anchors from visual + OCR + structured sources to avoid anchor drift.
+    try:
+        ocr_anchors = _extract_ocr_question_anchors(question_paper_images)
+    except Exception as exc:
+        logger.warning("OCR_ANCHOR_EXTRACTION_FAILED error=%s", exc)
+        ocr_anchors = []
+    try:
+        structured_anchors = _extract_structured_question_anchors(stage2_structure)
+    except Exception as exc:
+        logger.warning("STRUCTURED_ANCHOR_EXTRACTION_FAILED error=%s", exc)
+        structured_anchors = []
+    merged_anchors = _merge_question_anchors(
+        list((visual_entities or {}).get("questions") or []),
+        ocr_anchors,
+        structured_anchors,
+    )
+    if expected_count > 0:
+        merged_anchors = [row for row in merged_anchors if 1 <= _to_int(row.get("number"), 0) <= expected_count]
+    visual_entities = dict(visual_entities or {})
+    visual_entities["questions"] = merged_anchors
+
+    visual_header = (visual_entities or {}).get("header_total") if isinstance(visual_entities, dict) else None
+    if isinstance(visual_header, dict) and safe_float(visual_header.get("marks"), 0.0) > 0:
+        header_total_marks = round(safe_float(visual_header.get("marks"), 0.0), 4)
+        header_total_reliable = bool(visual_header.get("reliable"))
+        header_total_conf = safe_float(visual_header.get("confidence"), 0.0)
+        header_total_source = str(visual_header.get("source") or "visual_header")
+    else:
+        header_total_marks, header_total_reliable, header_total_conf, header_total_source = _extract_header_total_from_images(
+            question_paper_images
+        )
+        if not header_total_marks:
+            header_total_marks, header_total_reliable, header_total_conf, header_total_source = _extract_header_total_hint(
+                raw_ocr_text
+            )
+
+    # Layer 3 + 4: deterministic marks + audit tree.
+    reasoned = resolve_marks(
+        stage2_structure,
+        visual_entities=visual_entities,
+        header_total_marks=header_total_marks,
+        header_total_reliable=header_total_reliable,
+    )
+    structure = reasoned.get("resolved_structure") or stage2_structure
+    question_audit_tree = list(reasoned.get("question_audit_tree") or [])
+
+    # Layer 5: consistency validator with repair tasks.
+    validation_report = validate_structure_stage3(
+        structure,
+        header_total_marks=header_total_marks,
+        header_total_reliable=header_total_reliable,
+        expected_question_count=expected_question_count,
+        visual_entities=visual_entities,
+        question_audit_tree=question_audit_tree,
+    )
+    validation_report["header_total_marks"] = header_total_marks
+    validation_report["header_total_reliable"] = header_total_reliable
+    validation_report["header_total_confidence"] = header_total_conf
+    validation_report["header_total_source"] = header_total_source
+    validation_report["mark_override_coverage"] = reasoned.get("mark_override_coverage", 0.0)
+    validation_report["effective_marks_map"] = reasoned.get("effective_marks_map") or []
+    validation_report["mark_sources"] = {
+        "header": 1 if header_total_marks is not None else 0,
+        "section_math": len((structure.get("section_math_blocks") or [])),
+        "effective_marks_map": len(reasoned.get("effective_marks_map") or []),
+    }
+    validation_report["visual_entities"] = visual_entities
+    validation_report["question_audit_tree"] = question_audit_tree
+    validation_report["unresolved_flags"] = []
+
+    ai_reason_mismatches = list(reasoned.get("ai_visual_mismatches") or [])
+    if ai_reason_mismatches:
+        validation_report.setdefault("warnings", []).append(f"ai_visual_marks_mismatch:{len(ai_reason_mismatches)}")
+        validation_report["ai_visual_mismatches"] = ai_reason_mismatches
+
+    # Optional one-time semantic correction retry on validation failure.
+    # Skip reconstruction if only subpart-sum mismatch exists (deterministic repair handles it).
+    if not validation_report.get("is_valid"):
+        errors_now = list(validation_report.get("errors") or [])
+        only_subpart_mismatch = bool(errors_now) and all(
+            str(err).startswith("subpart_sum_mismatch") for err in errors_now
+        )
+        if not only_subpart_mismatch:
+            logger.warning("RECONSTRUCT_STRUCTURE errors=%s", errors_now)
+            try:
+                reconstruction_prompt = build_reconstruction_prompt(
+                    previous_structure=structure,
+                    validation_errors=errors_now or ["unknown_validation_failure"],
+                    raw_ocr_text=raw_ocr_text,
+                )
+                reconstructed_raw = await _call_extraction_llm(
+                    question_paper_images,
+                    reconstruction_prompt,
+                    model_name=model_name,
+                    llm_service=llm_service,
+                )
+                reconstructed_semantic = _normalize_batch_payload(reconstructed_raw, page_offset=0)
+                reconstructed_semantic = _merge_semantic_with_visual_entities(reconstructed_semantic, visual_entities)
+                reconstructed_reasoned = resolve_marks(
+                    reconstructed_semantic,
+                    visual_entities=visual_entities,
+                    header_total_marks=header_total_marks,
+                    header_total_reliable=header_total_reliable,
+                )
+                reconstructed_structure = reconstructed_reasoned.get("resolved_structure") or reconstructed_semantic
+                reconstructed_audit = list(reconstructed_reasoned.get("question_audit_tree") or [])
+                reconstructed_validation = validate_structure_stage3(
+                    reconstructed_structure,
+                    header_total_marks=header_total_marks,
+                    header_total_reliable=header_total_reliable,
+                    expected_question_count=expected_question_count,
+                    visual_entities=visual_entities,
+                    question_audit_tree=reconstructed_audit,
+                )
+                if len(reconstructed_validation.get("errors") or []) < len(errors_now):
+                    structure = reconstructed_structure
+                    question_audit_tree = reconstructed_audit
+                    validation_report = reconstructed_validation
+                    retry_count += 1
+            except Exception as exc:
+                logger.warning("RECONSTRUCTION_SKIPPED error=%s", exc)
+
+    # Layer 6: one-pass auto repair + revalidate once.
+    if not validation_report.get("is_valid"):
+        repair_result = apply_structure_repairs(
+            structure=structure,
+            validation_report=validation_report,
+            visual_entities=visual_entities,
+        )
+        repaired_structure = repair_result.get("repaired_structure") or structure
+        repaired_audit = list(repair_result.get("question_audit_tree") or question_audit_tree)
+        repairs_applied = list(repair_result.get("repairs_applied") or [])
+        repaired_validation = validate_structure_stage3(
+            repaired_structure,
+            header_total_marks=header_total_marks,
+            header_total_reliable=header_total_reliable,
+            expected_question_count=expected_question_count,
+            visual_entities=visual_entities,
+            question_audit_tree=repaired_audit,
+        )
+        repaired_validation["repairs_applied"] = repairs_applied
+        repaired_validation["question_audit_tree"] = repaired_audit
+        repaired_validation["visual_entities"] = visual_entities
+        repaired_validation["unresolved_flags"] = list(repaired_validation.get("errors") or [])
+        structure = repaired_structure
+        question_audit_tree = repaired_audit
+        validation_report = repaired_validation
+
+    # Final payload normalization + freeze-friendly metadata.
+    structure = validation_report.get("normalized") or normalize_structure_payload(structure)
+    structure["total_questions"] = len(structure.get("questions") or [])
+    structure["total_marks"] = float(validation_report.get("effective_total_marks") or 0.0)
+    structure["effective_total_marks"] = float(validation_report.get("effective_total_marks") or 0.0)
+    structure["numbering_contiguous"] = bool(validation_report.get("numbering_contiguous", False))
+    structure["question_audit_tree"] = question_audit_tree
+    structure["visual_entities"] = visual_entities
+    structure["unresolved_flags"] = list(validation_report.get("errors") or [])
+    structure["section_math_rules"] = list(structure.get("section_math_rules") or [])
+
+    confidence_vals = [_to_float(q.get("ai_confidence"), 0.0) for q in (structure.get("questions") or [])]
+    structure["structure_confidence"] = round(float((sum(confidence_vals) / float(len(confidence_vals))) if confidence_vals else 0.0), 4)
+
+    validation_report["question_audit_tree"] = question_audit_tree
+    validation_report["visual_entities"] = visual_entities
+    validation_report["unresolved_flags"] = list(validation_report.get("errors") or [])
+    validation_report["section_math_rules"] = list(structure.get("section_math_rules") or [])
+
+    return structure, validation_report, raw_ocr_text, retry_count
+
+
+__all__ = ["extract_question_structure"]
+__all__ = ["extract_question_structure"]

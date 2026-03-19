@@ -10,7 +10,7 @@ from app.repositories import AnalyticsRepo, ExamRepo, SubmissionRepo, AdminRepo
 from app.core.logging_config import logger
 from app.services.llm.config import get_llm_api_key
 from app.services.analytics.topic_extractor import extract_topic_from_rubric
-from app.services.llm import LlmChat, UserMessage
+
 from app.services.notifications.notifications_service import create_notification
 from app.models.analytics import NaturalLanguageQuery
 

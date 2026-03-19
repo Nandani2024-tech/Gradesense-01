@@ -15,6 +15,11 @@ from app.services.extraction.mark_validation import (
 )
 from app.services.extraction.parsing import parse_question_number
 from app.services.extraction.utils import _to_float_or_none, _normalize_sub_id
+from app.services.llm.config import get_llm_api_key
+from app.adapters.llm_adapter import GeminiLLMService
+
+def _get_llm_service():
+    return GeminiLLMService(api_key=get_llm_api_key() or "")
 
 # Feature flags
 MARK_VALIDATION_ENABLED = True
@@ -31,7 +36,9 @@ async def _process_question_paper_async(exam_id: str):
             teacher_id = exam_doc.get("teacher_id")
             exam_name = exam_doc.get("exam_name", "exam")
 
-        result = await auto_extract_questions(exam_id, force=True, lock_owner=f"upload_question_paper:{exam_id}")
+        llm_service = _get_llm_service()
+
+        result = await auto_extract_questions(exam_id, llm_service=llm_service, force=True, lock_owner=f"upload_question_paper:{exam_id}")
         success = result.get("success")
         
         if success:
@@ -62,7 +69,8 @@ async def _process_question_paper_async(exam_id: str):
                 if model_images:
                     ma_text, ma_map = await extract_model_answer_content(
                         model_answer_images=model_images,
-                        questions=questions
+                        questions=questions,
+                        llm_service=llm_service
                     )
                     if ma_text or ma_map:
                         logger.info(f"[QP-ASYNC] Model answer text and map extracted successfully for exam {exam_id}")
@@ -77,7 +85,7 @@ async def _process_question_paper_async(exam_id: str):
                 if MARK_VALIDATION_ENABLED:
                     try:
                         qp_images = await get_exam_question_paper_images(exam_id)
-                        validator_payload = await validate_marks_with_llm(qp_images)
+                        validator_payload = await validate_marks_with_llm(qp_images, llm_service=llm_service)
                         if validator_payload:
                             extracted_qs = await db.questions.find({"exam_id": exam_id}).to_list(1000)
                             report = compare_validator_to_extracted(extracted_qs, validator_payload)
@@ -120,10 +128,11 @@ async def _process_model_answer_async(exam_id: str):
             teacher_id = exam_doc.get("teacher_id")
             exam_name = exam_doc.get("exam_name", "exam")
 
+        llm_service = _get_llm_service()
         qp_imgs = await get_exam_question_paper_images(exam_id)
         force_extraction = not bool(qp_imgs)
         
-        result = await auto_extract_questions(exam_id, force=force_extraction, lock_owner=f"upload_model_answer:{exam_id}")
+        result = await auto_extract_questions(exam_id, llm_service=llm_service, force=force_extraction, lock_owner=f"upload_model_answer:{exam_id}")
         
         if result.get("success"):
             if result.get("count", 0) == 0:
@@ -135,7 +144,8 @@ async def _process_model_answer_async(exam_id: str):
         exam_updated = await db.exams.find_one({"exam_id": exam_id})
         model_answer_text, model_answer_map = await extract_model_answer_content(
             model_answer_images=model_images,
-            questions=exam_updated.get("questions", [])
+            questions=exam_updated.get("questions", []),
+            llm_service=llm_service
         )
         
         if model_answer_text or model_answer_map:

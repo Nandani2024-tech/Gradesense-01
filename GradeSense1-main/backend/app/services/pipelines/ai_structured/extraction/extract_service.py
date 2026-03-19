@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Tuple
+from app.adapters.interfaces import AbstractLLMService
 from app.services.pipelines.ai_extraction_service import extract_question_structure
 from app.services.pipelines.ai_structured.utils.logging import with_logging, pipeline_logger
 from app.repositories import ExamRepo, SubmissionRepo
@@ -13,6 +14,7 @@ async def perform_extraction(
     expected_total_marks: float,
     expected_question_count: int,
     model_name: str,
+    llm_service: AbstractLLMService,
 ) -> Tuple[Dict[str, Any], Dict[str, Any], str, int]:
     return await extract_question_structure(
         question_paper_images=question_paper_images,
@@ -20,6 +22,7 @@ async def perform_extraction(
         expected_question_count=expected_question_count,
         max_retries=3,
         model_name=model_name,
+        llm_service=llm_service,
     )
 
 @with_logging

@@ -29,7 +29,7 @@ from app.services.storage.gridfs_helpers import (
     get_exam_question_paper_images,
     get_exam_question_paper_pdf_bytes,
 )
-from app.services.llm import LlmChat, UserMessage, ImageContent
+
 from app.infrastructure.annotations.types import AnnotationType
 from app.infrastructure.ocr.provider import get_ocr_provider
 

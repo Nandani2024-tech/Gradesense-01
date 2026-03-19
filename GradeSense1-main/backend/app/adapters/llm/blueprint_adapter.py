@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from app.core.logging_config import logger
 from app.services.llm.config import get_llm_api_key
-from app.services.llm import ImageContent, LlmChat, UserMessage
+from app.adapters.llm_adapter import GeminiLLMService
 
 
 STRICT_VISUAL_BLUEPRINT_PROMPT_VERSION = "v1"
@@ -309,21 +309,18 @@ async def run_strict_visual_blueprint(
         # Strict visual blueprint MUST use a vision-capable model.
         actual_model = "llama3.2-vision:latest"
 
-    chat = (
-        LlmChat(
-            api_key=api_key or "no-key",
-            session_id=f"strict_visual_{uuid.uuid4().hex[:10]}",
-            system_message=STRICT_VISUAL_BLUEPRINT_SYSTEM_PROMPT,
-        )
-        .with_model(provider, actual_model)
-        .with_params(temperature=0.1, response_mime_type="application/json", max_output_tokens=8192)
+    llm_service = GeminiLLMService(api_key=api_key or "no-key")
+    logger.info("LLM_CALL provider=%s model=%s prompt_len=0", provider, actual_model)
+    
+    raw = await llm_service.predict(
+        prompt="",
+        images=images,
+        model_name=actual_model,
+        system_message=STRICT_VISUAL_BLUEPRINT_SYSTEM_PROMPT,
+        temperature=0.1,
+        response_mime_type="application/json",
+        max_output_tokens=8192
     )
-
-    message = UserMessage(
-        text="",
-        file_contents=[ImageContent(image_base64=img) for img in images],
-    )
-    raw = await chat.send_message(message)
     payload = _parse_json_object(raw or "")
     if not payload:
         logger.warning("STRICT_VISUAL_BLUEPRINT_PARSE_FAILED")

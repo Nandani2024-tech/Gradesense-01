@@ -21,6 +21,8 @@ from app.services.pipelines.aws_raw_layer import save_raw_textract_layer, load_r
 from app.services.pipelines.aws_blueprint_builder import build_span_evidence, build_blueprint_from_spans
 from app.services.pipelines.aws_answer_extractor import extract_answer_pages
 from app.services.pipelines.aws_answer_mapper import map_answers
+from app.adapters.llm_adapter import GeminiLLMService
+from app.services.llm.config import get_llm_api_key
 
 LAYOUT_SEGMENTATION_VERSION = 2
 
@@ -205,7 +207,8 @@ async def extract_aws_blueprint(*, exam_id: str, question_paper_pdf_bytes: bytes
     _phase_timer("phase_1_textract", timings, phase_start)
 
     phase_start = time.perf_counter()
-    blueprint_payload = await build_blueprint_from_spans(spans)
+    llm_service = GeminiLLMService(api_key=get_llm_api_key() or "")
+    blueprint_payload = await build_blueprint_from_spans(spans, llm_service)
     logger.info("BLUEPRINT_DERIVED_FROM_RAW exam_id=%s", exam_id)
     _phase_timer("phase_2_blueprint_llm", timings, phase_start)
 

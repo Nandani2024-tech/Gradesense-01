@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 
 from app.core.logging_config import logger
 from app.services.llm.config import get_llm_api_key
-from app.services.llm import LlmChat, UserMessage
+from app.adapters.llm_adapter import GeminiLLMService
 
 
 def _parse_json(raw: str) -> Optional[Dict[str, Any]]:
@@ -40,11 +40,16 @@ Answer: {answer_text}
 Return JSON:
 {{"score": 0, "feedback": "", "confidence": 0.0, "page_notes": []}}"""
 
-    chat = LlmChat(api_key=api_key, session_id="aws_grade", system_message="Return JSON only.")\
-        .with_model("gemini", "gemini-2.5-flash")\
-        .with_params(temperature=0, response_mime_type="application/json")
-
-    response = await chat.send_message(UserMessage(text=prompt))
+    llm_service = GeminiLLMService(api_key=api_key)
+    
+    logger.info("LLM_CALL provider=gemini model=gemini-2.5-flash prompt_len=%s", len(prompt))
+    
+    response = await llm_service.predict(
+        prompt=prompt,
+        model_name="gemini-2.5-flash",
+        temperature=0,
+        response_mime_type="application/json"
+    )
     payload = _parse_json(response or "")
     if not payload:
         logger.warning("[AWS][Grade] Failed to parse grading JSON")

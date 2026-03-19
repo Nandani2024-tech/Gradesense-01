@@ -2,6 +2,11 @@ from typing import List, Dict, Any, Optional
 from app.repositories import SubmissionRepo, ExamRepo, AnalyticsRepo, StudentRepo
 from app.services.llm.grading_llm_service import grading_llm_service
 from app.core.logging_config import logger
+from app.services.llm.config import get_llm_api_key
+from app.adapters.llm_adapter import GeminiLLMService
+
+def _get_llm_service():
+    return GeminiLLMService(api_key=get_llm_api_key() or "")
 
 class MetricsService:
     def __init__(self):
@@ -205,12 +210,13 @@ class MetricsService:
         error_groups = {}
         if failed_answers:
             try:
-                feedback_samples = [f"Student {a['student_name']}: {a['feedback']}" for a in failed_answers[:10]]
+                llm_service = _get_llm_service()
                 error_analysis = await grading_llm_service.categorize_student_errors(
                     question_number=question_number,
                     question_rubric=question.get('rubric', ''),
                     max_marks=question.get('max_marks', 0),
-                    feedback_samples=feedback_samples
+                    feedback_samples=feedback_samples,
+                    llm_service=llm_service
                 )
                 
                 if error_analysis:
@@ -278,9 +284,11 @@ class MetricsService:
         for sub in submissions:
             data_summary += f"Exam {sub['exam_id']}: {sub['percentage']}%. "
 
+        llm_service = _get_llm_service()
         ai_response = await grading_llm_service.ask_ai_analytics(
             data_summary=data_summary,
-            query=query
+            query=query,
+            llm_service=llm_service
         )
         return ai_response
 

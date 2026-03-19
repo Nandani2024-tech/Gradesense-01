@@ -3,9 +3,8 @@ import re
 from typing import List, Dict, Any, Optional
 from app.core.logging_config import logger
 from app.services.llm.config import get_llm_api_key
-from app.services.llm import LlmChat, UserMessage, ImageContent
+from app.adapters.interfaces import AbstractLLMService
 from app.services.extraction.utils import (
-    ai_call_with_timeout,
     _parse_llm_json,
 )
 from .parsing import parse_question_number
@@ -212,7 +211,7 @@ def compare_validator_to_extracted(
 
 from app.schemas.ai_outputs import MarkValidationSchema
 
-async def validate_marks_with_llm(question_paper_images: List[str]) -> Optional[Dict[str, Any]]:
+async def validate_marks_with_llm(question_paper_images: List[str], llm_service: "AbstractLLMService") -> Optional[Dict[str, Any]]:
     api_key = get_llm_api_key()
     if not api_key:
         logger.warning("No API key for mark validation")
@@ -220,28 +219,33 @@ async def validate_marks_with_llm(question_paper_images: List[str]) -> Optional[
     if not question_paper_images:
         return None
 
-    # Use the system prompt defined at the top of the file
-    chat = LlmChat(
-        api_key=api_key,
-        session_id=f"validate_marks_{uuid.uuid4().hex[:8]}",
-        system_message=MARK_VALIDATION_SYSTEM_PROMPT,
-    ).with_model("gemini", "gemini-2.5-flash").with_params(temperature=0)
-
-    image_contents = [ImageContent(image_base64=img) for img in question_paper_images]
-    prompt = "Extract the marking scheme from this question paper. Return ONLY JSON."
-    user_message = UserMessage(text=prompt, file_contents=image_contents)
-
-    from .utils import ai_call_with_timeout_structured
+    import asyncio
+    prompt_text = "Extract the marking scheme from this question paper. Return ONLY JSON."
+    full_prompt = f"{MARK_VALIDATION_SYSTEM_PROMPT}\n\n{prompt_text}"
     
-    ai_response = await ai_call_with_timeout_structured(
-        chat,
-        user_message,
-        response_schema=MarkValidationSchema,
-        timeout_seconds=90,
-        operation_name="Mark validation extraction",
+    logger.info(
+        "LLM_CALL provider=%s model=%s images=%s prompt_len=%s",
+        getattr(llm_service, "provider", "gemini"),
+        "gemini-2.5-flash",
+        len(question_paper_images),
+        len(full_prompt)
     )
     
-    if not ai_response:
+    try:
+        ai_response = await asyncio.wait_for(
+            llm_service.predict_structured(
+                prompt=full_prompt,
+                images=question_paper_images,
+                response_schema=MarkValidationSchema,
+                model_name="gemini-2.5-flash",
+                temperature=0
+            ),
+            timeout=90
+        )
+        logger.info("LLM_RESPONSE received len=%s", len(str(ai_response)))
+        if not ai_response:
+            return None
+        return ai_response.model_dump() if hasattr(ai_response, 'model_dump') else ai_response
+    except Exception as e:
+        logger.warning(f"Error on Mark validation extraction: {e}")
         return None
-        
-    return ai_response.model_dump()

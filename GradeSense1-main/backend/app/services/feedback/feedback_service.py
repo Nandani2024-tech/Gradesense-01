@@ -7,8 +7,12 @@ from datetime import datetime, timezone
 from app.repositories import FeedbackRepo, SubmissionRepo, ExamRepo
 from app.core.logging_config import logger
 from app.services.llm.config import get_llm_api_key
-from app.services.llm import LlmChat, UserMessage, ImageContent
+
 from app.services.extraction import get_exam_model_answer_text
+from app.adapters.llm_adapter import GeminiLLMService
+
+def _get_llm_service():
+    return GeminiLLMService(api_key=get_llm_api_key() or "")
 
 class FeedbackService:
     def __init__(self):
@@ -156,6 +160,7 @@ class FeedbackService:
                     continue
 
                 from app.services.llm.feedback_llm_service import feedback_llm_service
+                llm_service = _get_llm_service()
                 
                 new_score = await feedback_llm_service.regrade_question(
                     submission_id=submission['submission_id'],
@@ -163,7 +168,8 @@ class FeedbackService:
                     teacher_correction=teacher_correction,
                     question=question,
                     model_answer_text=model_answer_text,
-                    student_images=student_images
+                    student_images=student_images,
+                    llm_service=llm_service
                 )
 
                 if new_score and "obtained_marks" in new_score:

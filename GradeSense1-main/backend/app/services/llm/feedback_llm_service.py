@@ -3,7 +3,7 @@ import re
 from typing import Optional, Dict, Any, List
 
 from app.services.llm.config import get_llm_api_key
-from app.services.llm import LlmChat, UserMessage, ImageContent
+from app.adapters.interfaces import AbstractLLMService
 from app.core.logging_config import logger
 
 class FeedbackLLMService:
@@ -16,7 +16,8 @@ class FeedbackLLMService:
         teacher_correction: str,
         question: Dict[str, Any],
         model_answer_text: Optional[str],
-        student_images: List[str]
+        student_images: List[str],
+        llm_service: "AbstractLLMService"
     ) -> Optional[Dict[str, Any]]:
         """
         Uses an LLM to regrade a specific question based on teacher feedback.
@@ -51,18 +52,17 @@ Return JSON:
   "sub_scores": []
 }}
 """
-        api_key = get_llm_api_key()
-        chat = LlmChat(
-            api_key=api_key,
-            session_id=f"regrade_{submission_id}_{question_number}",
-            system_message="You are an expert grader."
-        ).with_model("gemini", "gemini-2.5-flash").with_params(temperature=0)
-
-        image_objs = [ImageContent(image_base64=img) for img in student_images[:10]]
-        user_msg = UserMessage(text=enhanced_prompt, file_contents=image_objs)
+        full_prompt = f"You are an expert grader.\n\n{enhanced_prompt}"
+        logger.info("LLM_CALL provider=%s model=gemini-2.5-flash images=%s prompt_len=%s", getattr(llm_service, "provider", "gemini"), len(student_images[:10]), len(full_prompt))
         
         try:
-            response = await chat.send_message(user_msg)
+            response = await llm_service.predict(
+                prompt=full_prompt,
+                images=student_images[:10],
+                model_name="gemini-2.5-flash",
+                temperature=0
+            )
+            logger.info("LLM_RESPONSE received len=%s", len(response or ""))
             
             resp_text = response.strip()
             if resp_text.startswith("```"):

@@ -42,43 +42,19 @@ class GeminiOCRService(BaseOCR):
         start = time.time()
         try:
             from app.services.llm.config import get_llm_api_key
-            from app.services.llm import LlmChat, UserMessage, ImageContent
+            from app.adapters.llm_adapter import GeminiLLMService
             
-            api_key = get_llm_api_key()
-            chat = LlmChat(
-                api_key=api_key,
+            llm_service = GeminiLLMService(api_key=api_key)
+            prompt = hint or DEFAULT_OCR_HINT
+            logger.info("LLM_CALL provider=gemini model=%s prompt_len=%s", self._model_name, len(prompt))
+            
+            res = await llm_service.predict_structured(
+                prompt=prompt,
+                response_schema=response_schema,
+                images=[image_base64],
+                model_name=self._model_name,
                 system_message=DEFAULT_OCR_SYSTEM_MESSAGE
-            ).with_model("gemini", self._model_name)
-
-            # Structured response schema
-            response_schema = {
-                "type": "OBJECT",
-                "properties": {
-                    "lines": {
-                        "type": "ARRAY",
-                        "items": {
-                            "type": "OBJECT",
-                            "properties": {
-                                "text": {"type": "STRING"},
-                                "x1": {"type": "NUMBER"},
-                                "y1": {"type": "NUMBER"},
-                                "x2": {"type": "NUMBER"},
-                                "y2": {"type": "NUMBER"},
-                                "confidence": {"type": "NUMBER"}
-                            },
-                            "required": ["text", "x1", "y1", "x2", "y2"]
-                        }
-                    }
-                },
-                "required": ["lines"]
-            }
-
-            message = UserMessage(
-                text=hint or DEFAULT_OCR_HINT,
-                file_contents=[ImageContent(image_base64=image_base64)]
             )
-
-            res = await chat.send_message_structured(message, response_schema=response_schema)
             latency_ms = int((time.time() - start) * 1000)
             
             return normalize_ocr_result(

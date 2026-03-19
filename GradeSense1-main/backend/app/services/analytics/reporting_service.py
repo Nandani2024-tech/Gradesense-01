@@ -8,7 +8,7 @@ from app.core.exceptions import CustomServiceException
 from app.repositories import AdminRepo, ExamRepo, SubmissionRepo, AnalyticsRepo
 from app.core.logging_config import logger
 from app.services.llm.config import get_llm_api_key
-from app.services.llm import LlmChat, UserMessage
+
 
 class ReportingService:
     """Service for deep reporting queries and practice material generation."""

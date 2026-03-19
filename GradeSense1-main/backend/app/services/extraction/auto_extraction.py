@@ -8,10 +8,9 @@ from typing import List, Dict, Any, Optional
 from app.core.logging_config import logger
 from app.core.database import db
 from app.services.llm.config import get_llm_api_key
-from app.services.llm import LlmChat, UserMessage, ImageContent
+from app.adapters.interfaces import AbstractLLMService
 # from app.services.answer_sheet_pipeline import build_question_blueprint_from_exam_questions
 from app.services.extraction.utils import (
-    ai_call_with_timeout,
     _images_to_pdf_bytes,
     _parse_model_answer_json,
     _normalize_subpart_label,
@@ -83,7 +82,7 @@ from app.schemas.ai_outputs import ModelAnswerExtractionSchema
 from app.prompts.prompt_manager import get_prompt
 from app.services.llm.config import GEMINI_MODEL_NAME
 
-async def extract_model_answer_content(model_answer_images: List[str], questions: List[dict]) -> tuple[str, Dict[str, Dict[str, str]]]:
+async def extract_model_answer_content(model_answer_images: List[str], questions: List[dict], llm_service: "AbstractLLMService") -> tuple[str, Dict[str, Dict[str, str]]]:
     api_key = get_llm_api_key()
     if not api_key or not model_answer_images:
         return "", {}
@@ -106,7 +105,6 @@ async def extract_model_answer_content(model_answer_images: List[str], questions
         
         system_prompt = get_prompt("extraction", "model_answer_extraction.system")
         
-        from .utils import ai_call_with_timeout_structured
         
         tasks = []
         for chunk_start in range(0, len(model_answer_images), CHUNK_SIZE):
@@ -114,31 +112,38 @@ async def extract_model_answer_content(model_answer_images: List[str], questions
             chunk_images = model_answer_images[chunk_start:chunk_end]
             
             async def _process_chunk(start, end, imgs):
-                chat = LlmChat(
-                    api_key=api_key,
-                    session_id=f"extract_content_{uuid.uuid4().hex[:8]}",
-                    system_message=system_prompt
-                ).with_model("gemini", GEMINI_MODEL_NAME).with_params(temperature=0)
-                
-                image_contents = [ImageContent(image_base64=img) for img in imgs]
-                prompt = get_prompt(
+                prompt_text = get_prompt(
                     "extraction", "model_answer_extraction.user", 
                     start_page=start + 1, 
                     end_page=end,
                     questions_context=questions_context
                 )
-                user_message = UserMessage(text=prompt, file_contents=image_contents)
+                full_prompt = f"{system_prompt}\n\n{prompt_text}"
                 
                 for attempt in range(2):
-                    ai_response = await ai_call_with_timeout_structured(
-                        chat, 
-                        user_message, 
-                        response_schema=ModelAnswerExtractionSchema,
-                        timeout_seconds=120,
-                        operation_name=f"Model answer extraction {start+1}-{end} attempt {attempt+1}"
+                    logger.info(
+                        "LLM_CALL provider=%s model=%s images=%s prompt_len=%s",
+                        getattr(llm_service, "provider", "gemini"),
+                        GEMINI_MODEL_NAME,
+                        len(imgs),
+                        len(full_prompt)
                     )
-                    if ai_response:
-                        return ai_response.model_dump()
+                    try:
+                        ai_response = await asyncio.wait_for(
+                            llm_service.predict_structured(
+                                prompt=full_prompt,
+                                images=imgs,
+                                response_schema=ModelAnswerExtractionSchema,
+                                model_name=GEMINI_MODEL_NAME,
+                                temperature=0
+                            ),
+                            timeout=120
+                        )
+                        logger.info("LLM_RESPONSE received len=%s", len(str(ai_response)))
+                        if ai_response:
+                            return ai_response.model_dump() if hasattr(ai_response, 'model_dump') else ai_response
+                    except Exception as e:
+                        logger.warning(f"Error on Model answer extraction {start+1}-{end} attempt {attempt+1}: {e}")
                     await asyncio.sleep(2 * (attempt + 1))
                 return None
 
@@ -161,25 +166,35 @@ async def extract_model_answer_content(model_answer_images: List[str], questions
 
 async def extract_questions_from_question_paper(
     question_paper_images: List[str],
+    llm_service: "AbstractLLMService",
     max_retries: int = 3,
     retry_delay: int = 5
 ) -> List[dict]:
     api_key = get_llm_api_key()
     if not api_key: return []
     try:
-        chat = LlmChat(
-            api_key=api_key,
-            session_id=f"extract_{uuid.uuid4().hex[:8]}",
-            system_message="Extract questions from images as JSON."
-        ).with_model("gemini", "gemini-2.5-flash").with_params(temperature=0)
-        
-        image_contents = [ImageContent(image_base64=img) for img in question_paper_images]
-        user_message = UserMessage(text="Extract all questions as JSON.", file_contents=image_contents)
+        prompt = "Extract all questions as JSON."
+        full_prompt = f"Extract questions from images as JSON.\n\n{prompt}"
         
         for attempt in range(max_retries):
             try:
-                ai_response = await ai_call_with_timeout(chat, user_message, timeout_seconds=90)
-                raw_text = ai_response.text if hasattr(ai_response, 'text') else str(ai_response)
+                logger.info(
+                    "LLM_CALL provider=%s model=%s images=%s prompt_len=%s",
+                    getattr(llm_service, "provider", "gemini"),
+                    "gemini-2.5-flash",
+                    len(question_paper_images),
+                    len(full_prompt)
+                )
+                raw_text = await asyncio.wait_for(
+                    llm_service.predict(
+                        prompt=full_prompt,
+                        images=question_paper_images,
+                        model_name="gemini-2.5-flash",
+                        temperature=0
+                    ),
+                    timeout=90
+                )
+                logger.info("LLM_RESPONSE received len=%s", len(raw_text or ""))
                 # (Same logic as in legacy_extraction.py for parsing)
                 # Strategy 1: Direct parse
                 try:
@@ -200,20 +215,17 @@ async def extract_questions_from_question_paper(
 # (I will include the full extract_question_structure_from_paper here)
 async def extract_question_structure_from_paper(
     paper_images: List[str],
+    llm_service: "AbstractLLMService",
     paper_type: str = "question_paper"
 ) -> List[dict]:
     # (Copying the full implementation from legacy_extraction.py)
     # ...
     # This function is too large to just stub. I'll paste the full thing.
-    from app.services.extraction.utils import ai_call_with_timeout, create_gemini_chat
     from app.infrastructure.ocr.provider import get_ocr_provider
     from statistics import median
     import os
 
     api_key = get_llm_api_key()
-    if not api_key:
-        logger.error("LLM API Key not configured")
-        return []
     
     def normalize_extracted_questions(questions: List[dict]) -> List[dict]:
         normalized = []
@@ -362,9 +374,19 @@ async def extract_question_structure_from_paper(
             # Simple retry loop for each question
             for attempt in range(4):
                 try:
-                    chat = create_gemini_chat("You extract one exam question as strict JSON.")
-                    resp = await ai_call_with_timeout(chat, UserMessage(text=f"Extract Q{qn} JSON from: {span['combined_text']}"), timeout_seconds=60)
-                    text = (resp.text if hasattr(resp, 'text') else str(resp)).strip()
+                    qprompt = f"Extract Q{qn} JSON from: {span['combined_text']}"
+                    full_p = f"You extract one exam question as strict JSON.\n\n{qprompt}"
+                    logger.info("LLM_CALL provider=%s model=gemini images=0 prompt_len=%s", getattr(llm_service, "provider", "gemini"), len(full_p))
+                    text = await asyncio.wait_for(
+                        llm_service.predict(
+                            prompt=full_p,
+                            images=[],
+                            model_name="gemini-2.5-flash",
+                            temperature=0
+                        ),
+                        timeout=60
+                    )
+                    logger.info("LLM_RESPONSE received len=%s", len(text or ""))
                     payload = parse_question_object_payload(text)
                     if payload:
                         extracted_questions.append(normalize_llm_question(span, payload))
@@ -390,10 +412,10 @@ def _validate_extraction_completeness(extracted_questions: List[dict], expected:
         if missing: return {"ok": False, "missing": missing, "reason": f"Missing {missing}"}
     return {"ok": True, "parsed": nums}
 
-async def auto_extract_questions(exam_id: str, force: bool = False, use_model_answer_fallback: bool = True, lock_owner: Optional[str] = None) -> Dict[str, Any]:
+async def auto_extract_questions(exam_id: str, llm_service: "AbstractLLMService", force: bool = False, use_model_answer_fallback: bool = True, lock_owner: Optional[str] = None) -> Dict[str, Any]:
     from app.services.pipelines.ai_structured_engine import extract_and_persist
     try:
-        return await extract_and_persist(exam_id=exam_id, force=force, lock_owner=lock_owner)
+        return await extract_and_persist(exam_id=exam_id, force=force, lock_owner=lock_owner, llm_service=llm_service)
     except Exception as e:
         logger.error(f"Auto-extraction error for {exam_id}: {e}")
         return {"success": False, "message": str(e)}

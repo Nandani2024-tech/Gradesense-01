@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.logging_config import logger
 from app.services.llm.config import get_llm_api_key
-from app.services.llm import LlmChat, UserMessage
+from app.adapters.interfaces import AbstractLLMService
 from app.services.blueprint import compute_blueprint_health
 
 from app.infrastructure.aws_question_identity import generate_question_uuid
@@ -406,7 +406,7 @@ def _build_numbering_diagnostics(questions: List[Dict[str, Any]]) -> Dict[str, A
     }
 
 
-async def build_blueprint_from_spans(spans: List[Dict[str, Any]]) -> Dict[str, Any]:
+async def build_blueprint_from_spans(spans: List[Dict[str, Any]], llm_service: "AbstractLLMService") -> Dict[str, Any]:
     api_key = get_llm_api_key()
     if not api_key:
         logger.warning("[AWS] GEMINI_API_KEY missing; blueprint structuring will be degraded.")
@@ -461,17 +461,15 @@ Return ONLY JSON:
 
         payload: Optional[Dict[str, Any]] = None
         response_text = ""
+        full_prompt = f"Return a single JSON object. No prose.\n\n{prompt}"
         for attempt in range(4):
             try:
-                chat = LlmChat(
-                    api_key=api_key or "",
-                    session_id=f"aws_bp_{uuid.uuid4().hex[:8]}",
-                    system_message="Return a single JSON object. No prose.",
-                ).with_model("gemini", "gemini-2.5-flash").with_params(
-                    temperature=0,
-                    response_mime_type="application/json",
+                response = await llm_service.predict(
+                    prompt=full_prompt,
+                    images=[],
+                    model_name="gemini-2.5-flash",
+                    temperature=0
                 )
-                response = await chat.send_message(UserMessage(text=prompt))
                 response_text = response or ""
                 payload = _parse_payload(response_text)
                 if payload:

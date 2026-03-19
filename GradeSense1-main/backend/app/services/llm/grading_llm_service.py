@@ -4,7 +4,7 @@ import uuid
 from typing import List, Dict, Any, Optional
 
 from app.services.llm.config import get_llm_api_key
-from app.services.llm import LlmChat, UserMessage
+from app.adapters.interfaces import AbstractLLMService
 from app.core.logging_config import logger
 
 class GradingLLMService:
@@ -15,7 +15,8 @@ class GradingLLMService:
         question_number: int,
         question_rubric: str,
         max_marks: float,
-        feedback_samples: List[str]
+        feedback_samples: List[str],
+        llm_service: "AbstractLLMService"
     ) -> Optional[Dict[str, Any]]:
         """
         Categorizes student errors for a specific question based on AI feedback samples.
@@ -54,17 +55,17 @@ Respond in JSON format:
     ]
 }}
 """
-        chat = LlmChat(
-            api_key=get_llm_api_key(),
-            session_id=f"error_group_{uuid.uuid4().hex[:8]}",
-            system_message="You are an educational data analyst. Categorize student errors precisely."
-        ).with_model("gemini", "gemini-2.5-flash").with_params(temperature=0)
-
-        user_message = UserMessage(text=prompt)
+        logger.info("LLM_CALL provider=%s model=gemini-2.5-flash images=0 prompt_len=%s", getattr(llm_service, "provider", "gemini"), len(prompt))
         
         try:
-            response = await chat.send_message(user_message)
-            response_text = response.strip()
+            response_text = await llm_service.predict(
+                prompt=prompt,
+                images=[],
+                model_name="gemini-2.5-flash",
+                temperature=0
+            )
+            logger.info("LLM_RESPONSE received len=%s", len(response_text or ""))
+            response_text = (response_text or "").strip()
             json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
 
             if json_match:
@@ -74,7 +75,7 @@ Respond in JSON format:
             logger.error(f"Error in LLM categorizing student errors for Q{question_number}: {e}")
             raise e
 
-    async def ask_ai_analytics(self, data_summary: str, query: str) -> str:
+    async def ask_ai_analytics(self, data_summary: str, query: str, llm_service: "AbstractLLMService") -> str:
         """
         Answers a teacher's analytics query based on the provided data summary.
         
@@ -93,16 +94,18 @@ Question: {query}
 
 Provide a clear, concise answer. If you need specific data that isn't available, say so."""
 
-        chat = LlmChat(
-            api_key=get_llm_api_key(),
-            session_id=f"ask_ai_{uuid.uuid4().hex[:8]}",
-            system_message="You are a helpful educational analytics assistant."
-        ).with_model("gemini", "gemini-2.5-flash").with_params(temperature=0)
-
-        user_message = UserMessage(text=prompt)
+        full_prompt = f"You are a helpful educational analytics assistant.\n\n{prompt}"
+        logger.info("LLM_CALL provider=%s model=gemini-2.5-flash images=0 prompt_len=%s", getattr(llm_service, "provider", "gemini"), len(full_prompt))
         
         try:
-            return await chat.send_message(user_message)
+            response = await llm_service.predict(
+                prompt=full_prompt,
+                images=[],
+                model_name="gemini-2.5-flash",
+                temperature=0
+            )
+            logger.info("LLM_RESPONSE received len=%s", len(response or ""))
+            return response or ""
         except Exception as e:
             logger.error(f"Error in LLM answering AI analytics query: {e}")
             raise e

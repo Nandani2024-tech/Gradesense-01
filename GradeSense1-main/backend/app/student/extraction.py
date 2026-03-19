@@ -5,7 +5,7 @@ from typing import List
 
 from app.core.logging_config import logger
 from app.services.llm.config import get_llm_api_key, GEMINI_MODEL_NAME
-from app.services.llm import LlmChat, UserMessage, ImageContent
+from app.adapters.llm_adapter import GeminiLLMService
 
 
 async def extract_student_info_from_paper(file_images: List[str], filename: str) -> tuple:
@@ -36,26 +36,25 @@ Important:
 - If you cannot find either field, use null
 - Do NOT include any explanation, ONLY return the JSON"""
 
-        chat = LlmChat(
-            api_key=api_key,
-            session_id=f"student_detect_{uuid.uuid4().hex[:8]}",
-            system_message=system_prompt
-        ).with_model("gemini", GEMINI_MODEL_NAME).with_params(temperature=0)
+        llm_service = GeminiLLMService(api_key=api_key)
         
         # Use first page only (usually has student info)
         prompt_text = "Extract the student ID/roll number and name from this answer sheet."
+        full_prompt = f"{system_prompt}\n\n{prompt_text}"
         
-        user_message = UserMessage(
-            text=prompt_text,
-            file_contents=[ImageContent(image_base64=file_images[0])]
-        )
+        logger.info("LLM_CALL provider=gemini model=%s images=1 prompt_len=%s", GEMINI_MODEL_NAME, len(full_prompt))
 
         # Make API call with timeout
         response_text = await asyncio.wait_for(
-            chat.send_message(user_message),
+            llm_service.predict(
+                prompt=full_prompt,
+                images=[file_images[0]],
+                model_name=GEMINI_MODEL_NAME,
+                temperature=0
+            ),
             timeout=120.0
         )
-        response_text = response_text.strip()
+        response_text = (response_text or "").strip()
         
         # Parse JSON response
         if "```json" in response_text:
