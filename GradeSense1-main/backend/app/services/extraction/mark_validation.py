@@ -10,8 +10,18 @@ from app.services.extraction.utils import (
 from .parsing import parse_question_number
 from .utils import (
     _to_float_or_none,
-    _normalize_sub_id
+    _normalize_sub_id,
+    _to_float as _util_to_float
 )
+
+def _to_int(value: Any, default: int = 0) -> int:
+    if value is None: return default
+    try:
+        if isinstance(value, (int, float)):
+            return int(value)
+        return int(float(str(value)))
+    except (ValueError, TypeError):
+        return default
 
 MARK_VALIDATION_SYSTEM_PROMPT = """You are an exam-analysis assistant. The user will upload a PDF of a question paper (any subject). Your goal is to extract the marks allocation for each question and each sub-question.
 
@@ -211,41 +221,75 @@ def compare_validator_to_extracted(
 
 from app.schemas.ai_outputs import MarkValidationSchema
 
-async def validate_marks_with_llm(question_paper_images: List[str], llm_service: "AbstractLLMService") -> Optional[Dict[str, Any]]:
-    api_key = get_llm_api_key()
-    if not api_key:
-        logger.warning("No API key for mark validation")
-        return None
-    if not question_paper_images:
+async def validate_marks_llm_free(
+    structure: Dict[str, Any],
+    visual_entities: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
+    """
+    LLM-free version of mark validation that constructs a validator payload 
+    purely from the multimodal visual evidence and structured extraction result.
+    """
+    if not visual_entities and not structure:
         return None
 
-    import asyncio
-    prompt_text = "Extract the marking scheme from this question paper. Return ONLY JSON."
-    full_prompt = f"{MARK_VALIDATION_SYSTEM_PROMPT}\n\n{prompt_text}"
+    logger.info("VALIDATE_MARKS_LLM_FREE starting")
     
-    logger.info(
-        "LLM_CALL provider=%s model=%s images=%s prompt_len=%s",
-        getattr(llm_service, "provider", "gemini"),
-        "gemini-2.5-flash",
-        len(question_paper_images),
-        len(full_prompt)
-    )
+    questions_list: List[Dict[str, Any]] = []
+    implicit_rules: List[str] = []
+    unknown_marks: List[str] = []
     
-    try:
-        ai_response = await asyncio.wait_for(
-            llm_service.predict_structured(
-                prompt=full_prompt,
-                images=question_paper_images,
-                response_schema=MarkValidationSchema,
-                model_name="gemini-2.5-flash",
-                temperature=0
-            ),
-            timeout=90
-        )
-        logger.info("LLM_RESPONSE received len=%s", len(str(ai_response)))
-        if not ai_response:
-            return None
-        return ai_response.model_dump() if hasattr(ai_response, 'model_dump') else ai_response
-    except Exception as e:
-        logger.warning(f"Error on Mark validation extraction: {e}")
-        return None
+    # 1. Map visual questions
+    visual_qs = visual_entities.get("questions") or []
+    for vq in visual_qs:
+        if not isinstance(vq, dict): continue
+        qn_val = vq.get("number")
+        if qn_val is None: continue
+        qn = _to_int(qn_val)
+        
+        q_entry = {
+            "question_number": f"Q{qn}",
+            "marks": _to_float_or_none(vq.get("marks")),
+            "subparts": [],
+            "inferred_from_rule": False
+        }
+        
+        # Attach visual subparts for this question
+        visual_subs = visual_entities.get("subparts") or []
+        for vs in visual_subs:
+            if not isinstance(vs, dict): continue
+            if _to_int(vs.get("q"), -1) == qn:
+                q_entry["subparts"].append({
+                    "part": str(vs.get("label") or vs.get("sub_id") or ""),
+                    "marks": _to_float_or_none(vs.get("marks"))
+                })
+        
+        questions_list.append(q_entry)
+        if q_entry["marks"] is None and not q_entry["subparts"]:
+            unknown_marks.append(f"Q{qn}: marks not identified locally")
+
+    # 2. Extract implicit rules from section math
+    visual_math = visual_entities.get("section_math") or []
+    for sm in visual_math:
+        if not isinstance(sm, dict): continue
+        rule_expr = sm.get("expression") or sm.get("expr")
+        if rule_expr:
+            implicit_rules.append(str(rule_expr))
+
+    # 3. Basic inference for total question count and total marks
+    total_found = len(questions_list)
+    total_inferred = 0.0
+    for q in questions_list:
+        val = _validator_total_from_entry(q)
+        if val is not None:
+            total_inferred += float(val)
+
+    payload = {
+        "questions": questions_list,
+        "implicit_rules_detected": implicit_rules,
+        "unknown_marks": unknown_marks,
+        "total_questions_found": int(total_found),
+        "total_marks_inferred": round(float(total_inferred), 2)
+    }
+    
+    logger.info("VALIDATE_MARKS_LLM_FREE completed questions=%s total=%.2f", total_found, total_inferred)
+    return payload

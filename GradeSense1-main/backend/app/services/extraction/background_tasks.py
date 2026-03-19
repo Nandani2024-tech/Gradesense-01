@@ -10,7 +10,7 @@ from app.services.extraction.auto_extraction import (
     extract_model_answer_content
 )
 from app.services.extraction.mark_validation import (
-    validate_marks_with_llm,
+    validate_marks_llm_free,
     compare_validator_to_extracted
 )
 from app.services.extraction.parsing import parse_question_number
@@ -84,8 +84,14 @@ async def _process_question_paper_async(exam_id: str):
             async def run_mark_validation():
                 if MARK_VALIDATION_ENABLED:
                     try:
-                        qp_images = await get_exam_question_paper_images(exam_id)
-                        validator_payload = await validate_marks_with_llm(qp_images, llm_service=llm_service)
+                        validation_data = result.get("blueprint_health") or {}
+                        visual_entities = validation_data.get("visual_entities") or {}
+                        structure = result.get("question_structure_v2") or {}
+
+                        validator_payload = await validate_marks_llm_free(
+                            structure=structure,
+                            visual_entities=visual_entities
+                        )
                         if validator_payload:
                             extracted_qs = await db.questions.find({"exam_id": exam_id}).to_list(1000)
                             report = compare_validator_to_extracted(extracted_qs, validator_payload)
