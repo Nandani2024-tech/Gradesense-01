@@ -75,7 +75,7 @@ MCQ_EXACT_PATTERN = r'^\(?([A-H])\)?$'
 CONCEPT_DELIMITERS = r'[\.,]\s*'
 BULLET_PATTERNS = r'(?m)^\s*[\*\-\•\d\.]+\s+'
 CLEAN_BULLET_PATTERN = r'^[\*\-\•\d\.]+\s*'
-JSON_EXTRACTOR_PATTERN = r'(\{.*\})'
+JSON_EXTRACTOR_PATTERN = r'(\{.*?\})'
 
 # Stopwords for concept matching
 DEFAULT_STOPWORDS = ["the", "and", "of", "to", "in", "a", "an", "for", "on", "with"]

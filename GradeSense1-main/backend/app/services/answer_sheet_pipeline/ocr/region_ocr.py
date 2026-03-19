@@ -5,6 +5,7 @@ from app.adapters.interfaces import AbstractOCRService
 from app.services.answer_sheet_pipeline.image_utils import _b64_to_cv2
 from app.services.answer_sheet_pipeline.config import ANCHOR_LEFT_RATIO
 from app.services.answer_sheet_pipeline.regex_patterns import QUESTION_ANCHOR_RE, WORKING_NOTE_RE, _normalize_sub_id
+from app.utils.debug_logger import write_debug_json, write_debug_txt
 
 
 async def run_region_ocr(
@@ -31,6 +32,17 @@ async def run_region_ocr(
         page_lines = page_res.get("lines", [])
         page_provider = page_res.get("provider", "unknown")
         fallback_used = bool(page_res.get("fallback_used", False))
+
+        # Stage 2: PAGE-LEVEL OCR
+        try:
+            write_debug_json(f"02_page_{page_idx + 1}_ocr.json", {
+                "extracted_words": page_words,
+                "lines": page_lines,
+                "provider": page_provider,
+                "fallback_flag": fallback_used
+            })
+        except Exception:
+            pass
 
         for block in page_blocks:
             block_id = block["block_id"]
@@ -110,4 +122,15 @@ async def run_region_ocr(
             )
 
     regions.sort(key=lambda r: (int(r["page_number"]), float(r["bbox"][1]), float(r["bbox"][0])))
+    
+    # Stage 3: OCR AGGREGATION
+    try:
+        full_text_blocks = []
+        for r in regions:
+            if r.get("text"):
+                full_text_blocks.append(r["text"])
+        write_debug_txt("03_full_ocr.txt", "\n\n".join(full_text_blocks))
+    except Exception:
+        pass
+        
     return regions

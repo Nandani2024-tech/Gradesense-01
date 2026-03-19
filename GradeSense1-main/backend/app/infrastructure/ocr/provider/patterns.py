@@ -10,7 +10,7 @@ QUESTION_ANCHOR_RE = re.compile(
 # Subpart patterns
 # Matches: (a), a), (i), i., etc.
 SUBPART_RE = re.compile(
-    r"^\s*(?:[\(\[]\s*([a-z])\s*[\)\]]|([a-z])[\).]|[\(\[]\s*(i{1,4}|v|vi{0,3}|ix|x)\s*[\)\]]|(i{1,4}|v|vi{0,3}|ix|x)[\).])",
+    r"(?:^|\W)(?:[\(\[]\s*([a-z])\s*[\)\]]|([a-z])[\).]|[\(\[]\s*(i{1,4}|v|vi{0,3}|ix|x)\s*[\)\]]|(i{1,4}|v|vi{0,3}|ix|x)[\).])",
     re.IGNORECASE
 )
 

@@ -1,5 +1,6 @@
 from typing import Dict, List, Optional
 from app.core.logging_config import logger
+from app.utils.debug_logger import write_debug_json
 
 
 def build_packets(regions: List[dict], blueprint: List[dict]) -> Dict[int, dict]:
@@ -112,6 +113,7 @@ def build_packets(regions: List[dict], blueprint: List[dict]) -> Dict[int, dict]
         pkt["subquestion_count"] = len(pkt["subanswers"])
         pkt["table_segments"] = pkt["tables"]
         pkt["working_note_segments"] = pkt["workings"]
+        logger.info(f"[PACKET_BUILT] Q{qn}: length={len(pkt['combined_text'])}, subquestions={pkt['subquestion_count']}, tables={len(pkt['tables'])}")
 
     mapped_count = assigned
     total_regions = len(regions)
@@ -136,4 +138,22 @@ def build_packets(regions: List[dict], blueprint: List[dict]) -> Dict[int, dict]
             for r in regions
         ],
     }
+
+    # Stage 4: PACKET BUILDING DEBUG
+    try:
+        packets_debug = []
+        for qn, pkt in packets.items():
+            if not isinstance(qn, int):
+                continue
+            packets_debug.append({
+                "detected_question_number": f"Q{qn}",
+                "raw_text": pkt.get("combined_text", ""),
+                "detected_subquestions": [sq.get("sub_id") for sq in pkt.get("subanswers", [])],
+                "length": len(pkt.get("combined_text", "")),
+                "table_count": len(pkt.get("tables", []))
+            })
+        write_debug_json("04_packets.json", packets_debug)
+    except Exception:
+        pass
+
     return packets

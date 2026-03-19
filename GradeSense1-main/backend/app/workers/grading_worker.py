@@ -9,6 +9,7 @@ from app.services.students import student_service
 from app.services.grading import grading_job_service, grading_service
 from app.services import blueprint_service
 from app.repositories import AnalyticsRepo
+from app.utils.debug_logger import current_job_id, write_debug_json
 
 analytics_repo = AnalyticsRepo()
 async def run_grading_pipeline(job_id: str, exam_id: str, files_data: List[dict], teacher_id: str, blueprint: dict):
@@ -18,6 +19,10 @@ async def run_grading_pipeline(job_id: str, exam_id: str, files_data: List[dict]
     from app.services.grading_pipeline import GradingPipelineRunner
     from app.adapters.llm_adapter import GeminiLLMService
     from app.adapters.ocr_adapter import GoogleOCRService
+    
+    # Enable debug context
+    job_token = current_job_id.set(str(job_id) if job_id else str(uuid.uuid4()))
+    
     try:
         # 1. Update status to processing
         await grading_job_service.mark_job_status(job_id, "processing")
@@ -39,6 +44,16 @@ async def run_grading_pipeline(job_id: str, exam_id: str, files_data: List[dict]
         async def process_single_file(file_entry):
             async with grading_semaphore:
                 try:
+                    # Stage 1: PDF INGESTION DEBUG
+                    try:
+                        write_debug_json("01_input_meta.json", {
+                            "filename": file_entry.get("filename"),
+                            "number_of_pages": "Calculated down-stream",
+                            "file_size_bytes": len(file_entry.get("content", []))
+                        })
+                    except Exception as logging_err:
+                        pass
+                
                     # A. Run grading pipeline
                     result = await runner.grade_pdf(
                         blueprint=blueprint,
@@ -96,6 +111,7 @@ async def run_grading_pipeline(job_id: str, exam_id: str, files_data: List[dict]
     finally:
         # 5. Release exam lock
         await grading_job_service.release_exam_lock(exam_id, job_id)
+        current_job_id.reset(job_token)
 
 async def run_regrade_all_submissions(exam_id: str, user_id: str) -> None:
     """

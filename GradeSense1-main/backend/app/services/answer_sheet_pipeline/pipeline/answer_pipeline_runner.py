@@ -1,6 +1,7 @@
 import os
 from typing import Any, Dict, List, Optional
 from app.adapters.interfaces import AbstractOCRService
+from app.utils.debug_logger import write_debug_json
 
 from app.core.logging_config import logger
 from app.services.extraction.blueprint import (
@@ -75,6 +76,12 @@ async def run_answer_packet_pipeline(
         structured = structure_accounting_answer(packet)
         # Use canonical threshold and rounding
         conf = float(packet.get("mapping_confidence", 0.0) or 0.0) if packet else 0.0
+        
+        if packet:
+            logger.info(f"[ALIGNED_PACKET] Expected Q{row['question_id']} mapped to packet Q{packet.get('question_id', 'Unknown')} with {len(packet.get('subanswers', []))} subquestions (conf={conf})")
+        else:
+            logger.warning(f"[ALIGNED_PACKET_MISSING] Expected Q{row['question_id']} has no matching packet")
+            
         issues: List[str] = []
         if not packet:
             issues.append("missing_packet")
@@ -96,6 +103,33 @@ async def run_answer_packet_pipeline(
                 "packet": packet,
             }
         )
+
+    # Stage 5: PACKET ALIGNMENT DEBUG
+    try:
+        alignment_debug = {
+            "mappings": [],
+            "missing_mappings": []
+        }
+        for row in aligned:
+            expected_id = f"Q{row['question_id']}"
+            packet = row.get("packet")
+            if packet:
+                alignment_debug["mappings"].append({
+                    "expected_question_id": expected_id,
+                    "matched_packet_id": f"Q{packet.get('question_id')}",
+                    "confidence_score": float(packet.get("mapping_confidence", 0.0)),
+                    "fallback_used": row.get("aligned_by") == "sequence_fallback",
+                    "reason": "fallback" if row.get("aligned_by") == "sequence_fallback" else None
+                })
+            else:
+                alignment_debug["missing_mappings"].append({
+                    "expected_question_id": expected_id,
+                    "reason": "Expected but not found/mapped"
+                })
+                
+        write_debug_json("05_alignment.json", alignment_debug)
+    except Exception:
+        pass
 
     return {
         "question_blueprint": blueprint,

@@ -10,6 +10,20 @@ from app.services.grading.concept_matcher import ConceptMatcher
 from app.services.grading.rubric_builder import RubricBuilder
 from app.core.logging_config import logger
 
+from typing import Tuple
+from app.core.exceptions import CustomServiceException
+from app.models.submission import QuestionScore
+from app.repositories import ExamRepo
+from app.services.pipelines.ai_structured.utils.common import _to_float
+from app.services.pipelines.ai_structured.extraction.utils import _derive_total_marks, _structure_confidence
+from app.repositories import ExamRepo
+from app.services.pipelines.ai_structured.extraction.utils import _derive_total_marks, _structure_confidence
+from app.services.pipelines.ai_structured.grading.alignment_service import ALIGNMENT_COVERAGE_GATE, align_answers
+from app.services.pipelines.ai_structured.grading.grading_interface import GRADING_CONTRACT_VERSION, grade_answers_with_contracts
+from app.layers.ai_structured.validation import validate_structure
+
+exam_repo = ExamRepo()
+
 class IdentityManager:
     """Standardizes Question IDs from Vision models (e.g., '1', '22a', 'Q 34')."""
     
@@ -57,6 +71,7 @@ class GradingEngine:
         
         # Support both 'id' (new) and 'question_number' (legacy)
         qid = str(question.get("id") or question.get("question_number") or "Unknown")
+        q_id = qid # For user snippet compatibility
         
         # Support both 'marks' (new) and 'max_marks' (legacy)
         max_marks = float(question.get("marks") or question.get("max_marks") or 0.0)
@@ -71,14 +86,17 @@ class GradingEngine:
         clean_qid = self.id_manager.normalize_id(qid)
         q_logs.append(f"Question {clean_qid}: max_marks={max_marks}")
         
-        # Improvement 2: Answer Confidence Gate
+        # Resolve initial raw_text and mapped_subanswers for entry evaluation
         confidence = 1.0
         raw_text = ""
+        mapped_subanswers = {}
         
         if isinstance(mapped_packet, dict):
             confidence = float(mapped_packet.get("mapping_confidence", 1.0))
             raw_text = mapped_packet.get("combined_text", "")
-            q_logs.append(f"mapped_packet raw_text length={len(raw_text)}")
+            if mapped_packet.get("subanswers"):
+                for sa in mapped_packet.get("subanswers", []):
+                    mapped_subanswers[sa.get("sub_id", "").lower()] = sa
             
             if "." in clean_qid and mapped_packet.get("subanswers"):
                 sub_id = clean_qid.split(".")[-1].lower()
@@ -91,6 +109,26 @@ class GradingEngine:
 
         elif isinstance(mapped_packet, str):
             raw_text = mapped_packet
+
+        # Handle sub-questions
+        sub_questions: List[Dict[str, Any]] = question.get("sub_questions") or question.get("subquestions") or []
+
+        # ✅ STEP 0 — ENTRY LOG (PER QUESTION)
+        logger.info(
+            "Grading question started",
+            extra={
+                "question_id": q_id,
+                "has_subquestions": bool(sub_questions),
+                "subquestion_count": len(sub_questions) if sub_questions else 0,
+                "has_raw_text": bool(raw_text.strip()),
+                "raw_text_length": len(raw_text) if raw_text else 0,
+                "subanswers_detected": len(mapped_subanswers) if mapped_subanswers else 0
+            }
+        )
+
+        # ✅ STEP 1 — INITIALIZE COUNTERS (PER QUESTION)
+        fallback_used_count = 0
+        empty_subanswers_count = 0
         
         # previously we short‑circuited low‑confidence packets; now record but continue
         if confidence < 0.2:
@@ -112,18 +150,12 @@ class GradingEngine:
             # caution log but proceed to grading using whatever text was captured
             q_logs.append(f"Low confidence {confidence} (below advisory threshold)")
 
-        # Handle sub-questions
-        sub_questions: List[Dict[str, Any]] = question.get("sub_questions") or question.get("subquestions") or []
         sub_scores = []
         total_awarded = 0.0
         final_feedback = []
 
         if sub_questions:
-            # New sub-question logic
-            mapped_subanswers = {}
-            if isinstance(mapped_packet, dict) and mapped_packet.get("subanswers"):
-                for sa in mapped_packet.get("subanswers", []):
-                    mapped_subanswers[sa.get("sub_id", "").lower()] = sa
+            # Logic here uses pre-initialized mapped_subanswers
             
             for sq in sub_questions:
                 sq_id = str(sq.get("sub_id") or sq.get("id") or "Unknown")
@@ -134,6 +166,39 @@ class GradingEngine:
                 # Find matching student answer
                 matched_sa = mapped_subanswers.get(sq_id.lower())
                 sq_raw_text = matched_sa.get("combined_text", "") if matched_sa else ""
+
+                fallback_used = False
+
+                # ✅ STEP 2 — FIX SUB-QUESTION FALLBACK LOGIC
+                # CRITICAL RULE: Only fallback if NO subanswers exist at all
+                if not sq_raw_text.strip():
+                    if not mapped_subanswers and raw_text.strip():
+                        sq_raw_text = raw_text
+                        fallback_used = True
+
+                # ✅ STEP 3 — CONTROLLED LOGGING (NO SPAM)
+                if fallback_used:
+                    fallback_used_count += 1
+                    logger.warning(
+                        "Fallback used for subquestion",
+                        extra={
+                            "question_id": q_id,
+                            "sub_id": sq_id,
+                            "reason": "no_subanswers_detected",
+                            "raw_text_length": len(raw_text)
+                        }
+                    )
+
+                elif not sq_raw_text.strip():
+                    empty_subanswers_count += 1
+                    logger.info(
+                        "Subquestion marked as not attempted",
+                        extra={
+                            "question_id": q_id,
+                            "sub_id": sq_id,
+                            "reason": "no_text_found"
+                        }
+                    )
                 
                 # If no raw text found, mark as not attempted
                 if not sq_raw_text.strip():
@@ -167,7 +232,8 @@ class GradingEngine:
                 )
                 
                 # Apply deterministic score and validate
-                sq_eval_result["score"] = min(sq_deterministic_score, sq_max_marks)
+                # FIX: Do not overwrite with deterministic_score. Use the evaluated LLM score capped at max_marks.
+                sq_eval_result["score"] = min(float(sq_eval_result.get("score", 0.0)), sq_max_marks)
                 sq_validated = self.evaluator.validator.validate(sq_eval_result, sq_max_marks)
                 sq_awarded = sq_validated["score"]
 
@@ -183,6 +249,18 @@ class GradingEngine:
                     "ai_feedback": fb,
                     "annotations": []
                 })
+            
+            # ✅ STEP 5 — SUMMARY LOG (PER QUESTION, NOT FUNCTION)
+            logger.info(
+                "Question grading input resolution complete",
+                extra={
+                    "question_id": q_id,
+                    "total_subquestions": len(sub_questions) if sub_questions else 0,
+                    "fallback_used_count": fallback_used_count,
+                    "empty_subanswers_count": empty_subanswers_count,
+                    "subanswers_detected": len(mapped_subanswers) if mapped_subanswers else 0
+                }
+            )
             
             # Aggregate stats for parent
             final_awarded = min(total_awarded, max_marks)
@@ -220,7 +298,8 @@ class GradingEngine:
             )
             
             # 4. Override with Deterministic Score & Validate
-            eval_result["score"] = min(deterministic_score, max_marks)
+            # FIX: Do not overwrite with deterministic_score. Use the evaluated LLM score capped at max_marks.
+            eval_result["score"] = min(float(eval_result.get("score", 0.0)), max_marks)
             validated = self.evaluator.validator.validate(
                 eval_result,
                 max_marks
@@ -324,6 +403,143 @@ class GradingEngine:
             "grades": results,
             "logs": all_logs
         }
+
+async def perform_grading(
+    exam: Dict[str, Any],
+    images: List[str],
+    model_answer_text: str,
+    structure: Dict[str, Any],
+    model_answer_map: Dict[str, Any],
+    model_answer_images: List[str],
+    question_paper_images: List[str],
+    grading_mode: str,
+    exam_id: str,
+    model_name: str,
+    job_id: str,
+    PIPELINE_VERSION: str,
+    PROMPT_VERSION: str,
+) -> Tuple[List[QuestionScore], Dict[str, Any]]:
+
+    derived_total = _derive_total_marks(structure)
+    declared_total = _to_float(structure.get("total_marks"), 0.0)
+    validation_meta = exam.get("question_structure_validation") or {}
+    header_total_marks = _to_float(validation_meta.get("header_total_marks"), 0.0)
+    header_total_reliable = bool(validation_meta.get("header_total_reliable"))
+
+    if header_total_reliable and header_total_marks > 0:
+        if abs(declared_total - header_total_marks) > 0.5:
+            logger.warning(
+                "TOTAL_MARKS_HEADER_OVERRIDE exam_id=%s declared=%.2f header=%.2f",
+                exam_id, declared_total, header_total_marks,
+            )
+        structure["total_marks"] = header_total_marks
+        structure["effective_total_marks"] = header_total_marks
+        if exam_id:
+            try:
+                await exam_repo.update_exam(
+                    exam_id, {"$set": {"total_marks": header_total_marks, "effective_total_marks": header_total_marks}},
+                )
+            except Exception as exc:
+                logger.warning("TOTAL_MARKS_UPDATE_FAILED exam_id=%s error=%s", exam_id, exc)
+    elif derived_total > 0 and (declared_total <= 0 or abs(derived_total - declared_total) > 0.5):
+        logger.warning(
+            "TOTAL_MARKS_MISMATCH exam_id=%s declared=%.2f derived=%.2f",
+            exam_id, declared_total, derived_total,
+        )
+        structure["total_marks"] = derived_total
+        structure["effective_total_marks"] = derived_total
+        if exam_id:
+            try:
+                await exam_repo.update_exam(
+                    exam_id, {"$set": {"total_marks": derived_total, "effective_total_marks": derived_total}},
+                )
+            except Exception as exc:
+                logger.warning("TOTAL_MARKS_UPDATE_FAILED exam_id=%s error=%s", exam_id, exc)
+
+    validation = validate_structure(structure)
+    if not validation.get("is_valid"):
+        logger.warning(
+            "BLUEPRINT_VALIDATION_WARNING exam_id=%s errors=%s",
+            exam_id, validation.get("errors") or [],
+        )
+
+    alignment_result = await align_answers(
+        submission_id=f"adhoc_{exam_id}",
+        question_structure=structure,
+        answer_images=images,
+        blueprint_signature=str(exam.get("active_structure_hash") or ""),
+        model_name=model_name,
+        use_cache=False,
+    )
+
+    mapping_coverage = _to_float(alignment_result.get("alignment_coverage"), 0.0)
+    mapped_ratio = _to_float(alignment_result.get("coverage_ratio"), 0.0)
+    unresolved_questions = [
+        int(qn) for qn, ok in (alignment_result.get("question_coverage_map") or {}).items()
+        if not ok and str(qn).isdigit()
+    ]
+    if unresolved_questions or (alignment_result.get("unmapped_answers") or []) or (alignment_result.get("duplicate_answers") or []):
+        logger.warning(
+            "ALIGNMENT_GAP_DETECTED exam_id=%s unresolved=%s unmapped=%s duplicates=%s",
+            exam_id, unresolved_questions, len(alignment_result.get("unmapped_answers") or []), len(alignment_result.get("duplicate_answers") or []),
+        )
+    if mapping_coverage < ALIGNMENT_COVERAGE_GATE:
+        logger.warning(
+            "PIPELINE_BLOCKED_ALIGNMENT exam_id=%s coverage=%.3f threshold=%.3f",
+            exam_id, mapping_coverage, ALIGNMENT_COVERAGE_GATE,
+        )
+        raise CustomServiceException("alignment_coverage_low", 500)
+
+    grading_result = await grade_answers_with_contracts(
+        question_structure=structure,
+        alignment_result=alignment_result,
+        model_answer_text=model_answer_text,
+        model_answer_map=model_answer_map or {},
+        answer_images=images,
+        model_answer_images=model_answer_images or [],
+        question_paper_images=question_paper_images or [],
+        grading_mode=grading_mode,
+        exam_id=exam_id,
+        model_name=model_name,
+        job_id=job_id,
+    )
+
+    structure_conf = _to_float(exam.get("structure_confidence"), _structure_confidence(structure))
+    alignment_conf = _to_float(alignment_result.get("alignment_confidence_score"), 0.0)
+    grading_conf = _to_float(grading_result.get("grading_confidence"), 0.0)
+    overall_conf = round(min(structure_conf, alignment_conf, grading_conf), 2)
+
+    packet_meta = {
+        "pipeline": "ai_structured",
+        "mapping_status": "pass",
+        "mapped_question_ratio": round(mapped_ratio, 2),
+        "mapping_coverage": round(mapping_coverage, 2),
+        "unresolved_questions": [int(qn) for qn in unresolved_questions],
+        "mapping_fail_reasons": [],
+        "packets_generated": int(alignment_result.get("mapped_questions", 0) or 0),
+        "subpacket_count": 0,
+        "low_confidence_questions": [],
+        "consistency_flags": [],
+        "grading_reference_mode": "rubric_only",
+        "structure_confidence": structure_conf,
+        "alignment_confidence": alignment_conf,
+        "grading_confidence": grading_conf,
+        "overall_confidence": overall_conf,
+        "question_coverage_map": alignment_result.get("question_coverage_map", {}),
+        "unmapped_answers": alignment_result.get("unmapped_answers", []),
+        "duplicate_answers": alignment_result.get("duplicate_answers", []),
+        "orphan_pages": alignment_result.get("orphan_pages", []),
+        "objective_key_flags": grading_result.get("objective_key_flags", {}),
+        "grading_report": grading_result.get("grading_report", {}),
+        "blueprint_version_used": int(exam.get("blueprint_version", 0) or 0),
+        "grading_contract_version": grading_result.get("grading_contract_version", GRADING_CONTRACT_VERSION),
+        "prompt_version": PROMPT_VERSION,
+        "pipeline_version": PIPELINE_VERSION,
+        "model_name": model_name,
+    }
+
+    return grading_result.get("question_scores", []), packet_meta
+
 
 if __name__ == "__main__":
     # Production Test Scenario (Standalone Execution)

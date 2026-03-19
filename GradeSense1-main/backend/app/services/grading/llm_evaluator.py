@@ -4,10 +4,32 @@ from typing import Dict, Any, Optional
 from app.services.grading.score_validator import ScoreValidator
 from app.adapters.interfaces import AbstractLLMService
 from app.core.logging_config import logger
+from app.utils.debug_logger import add_llm_response
 from app.services.grading.constants import (
     LLM_PROMPT_TEMPLATE,
     JSON_EXTRACTOR_PATTERN
 )
+
+def _extract_json_block(raw_response: str) -> dict:
+    """
+    Safely extract first valid JSON object from LLM response.
+    """
+
+    if not raw_response:
+        raise ValueError("Empty LLM response")
+
+    start = raw_response.find("{")
+    end = raw_response.rfind("}")
+
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError("No valid JSON boundaries found")
+
+    candidate = raw_response[start:end + 1]
+
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON format: {str(e)}")
 
 class LlmEvaluator:
     """
@@ -73,7 +95,7 @@ class LlmEvaluator:
                 logger.info(f"[LLM] Question {question_number}: Sending prompt to AI (len={len(prompt)})")
                 raw_response = await self.llm_service.predict(prompt)
                 logger.info(f"[LLM] Question {question_number}: Received raw response (len={len(raw_response)})")
-                logger.debug(f"[LLM] Raw Response: {raw_response}")
+                logger.info(f"[LLM_RAW] Response for {question_number}: {raw_response}")
             else:
                 # Mock response for standalone testing
                 raw_response = json.dumps({
@@ -82,33 +104,87 @@ class LlmEvaluator:
                     "score": float(max_marks),
                     "feedback": "The answer accurately demonstrates full understanding."
                 })
-            
-            # Robust JSON extraction
-            # Try to find JSON block in the response
-            json_match = re.search(JSON_EXTRACTOR_PATTERN, raw_response.replace('\n', ' '), re.DOTALL)
-            if json_match:
-                try:
-                    parsed_result = json.loads(json_match.group(1))
-                    return self.validator.validate(parsed_result, max_marks)
-                except json.JSONDecodeError:
-                    # If regex matched but JSON is still invalid, try cleaning common issues
-                    # (e.g., trailing commas, though json.loads is strict)
-                    # For now, fallback to generic error
-                    pass
-
-            fallback = {
-                "attempted": True,
-                "relevant": True,
-                "score": 0.0,
-                "feedback": "Evaluation error: invalid LLM response"
-            }
-            return self.validator.validate(fallback, max_marks)
                 
+            # Stage 7: LLM RAW RESPONSES TRACKING
+            try:
+                add_llm_response(question_number, {
+                    "raw_response": raw_response,
+                    "prompt_length": len(prompt),
+                    "question_id": question_number
+                })
+            except Exception:
+                pass
+            
+            try:
+                parsed = _extract_json_block(raw_response)
+            except Exception as e:
+                logger.error(
+                    "LLM JSON parsing failed",
+                    extra={
+                        "error": str(e),
+                        "response_preview": raw_response[:300]  # avoid full dump
+                    },
+                    exc_info=True
+                )
+                return {
+                    "score": None,
+                    "feedback": "Evaluation failed due to invalid LLM response",
+                    "error": "LLM_PARSE_FAILED"
+                }
+
+            if not isinstance(parsed, dict):
+                logger.error(
+                    "LLM response is not a JSON object",
+                    extra={"parsed_type": type(parsed).__name__}
+                )
+                return {
+                    "score": None,
+                    "feedback": "Invalid response structure",
+                    "error": "INVALID_JSON_STRUCTURE"
+                }
+
+            if "score" not in parsed:
+                logger.error(
+                    "Missing score in LLM response",
+                    extra={"keys_present": list(parsed.keys())}
+                )
+                return {
+                    "score": None,
+                    "feedback": "Missing score in evaluation",
+                    "error": "MISSING_SCORE"
+                }
+
+            try:
+                score = float(parsed.get("score", 0))
+            except Exception:
+                logger.error(
+                    "Score conversion failed",
+                    extra={"raw_score": parsed.get("score")}
+                )
+                return {
+                    "score": None,
+                    "feedback": "Invalid score format",
+                    "error": "INVALID_SCORE"
+                }
+
+            logger.info(
+                "LLM evaluation successful",
+                extra={
+                    "score": score,
+                    "has_feedback": bool(parsed.get("feedback")),
+                }
+            )
+
+            return self.validator.validate(parsed, max_marks)
+
         except Exception as e:
-            fallback = {
-                "attempted": True,
-                "relevant": True,
-                "score": 0.0,
-                "feedback": f"Evaluation error: {str(e)}"
+            logger.error(
+                "LLM evaluation failed unexpectedly",
+                extra={"error": str(e)},
+                exc_info=True
+            )
+            return {
+                "score": None,
+                "feedback": "Evaluation error",
+                "error": "UNEXPECTED_FAILURE"
             }
-            return self.validator.validate(fallback, max_marks)

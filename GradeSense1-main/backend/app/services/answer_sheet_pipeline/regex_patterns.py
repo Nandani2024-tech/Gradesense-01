@@ -15,7 +15,7 @@ FORMULA_RE = re.compile(r"[=+\-*/]")
 
 
 def _normalize_sub_id(text: str) -> Optional[str]:
-    m = SUBPART_RE.match((text or "").strip())
+    m = SUBPART_RE.search((text or "").strip())
     if not m:
         return None
     token = m.group(1) or m.group(2) or m.group(3) or m.group(4)
