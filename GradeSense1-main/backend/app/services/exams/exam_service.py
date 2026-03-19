@@ -12,11 +12,10 @@ from app.services.storage.gridfs_helpers import get_exam_model_answer_images, ge
 from app.services.files import file_service
 from app.services.validation_service import validation_service
 from app.domain.factories import ExamFactory, SubmissionFactory, SubmissionSchema
-from app.services.llm.config import get_llm_api_key, GEMINI_MODEL_NAME
-from app.adapters.llm_adapter import GeminiLLMService
+from app.config.llm_config import get_llm_api_key, GEMINI_MODEL_NAME, get_llm_service
 
 def _get_llm_service():
-    return GeminiLLMService(api_key=get_llm_api_key() or "")
+    return get_llm_service()
 
 class ExamService:
     def __init__(self):

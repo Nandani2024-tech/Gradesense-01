@@ -15,11 +15,10 @@ from app.services.extraction.mark_validation import (
 )
 from app.services.extraction.parsing import parse_question_number
 from app.services.extraction.utils import _to_float_or_none, _normalize_sub_id
-from app.services.llm.config import get_llm_api_key
-from app.adapters.llm_adapter import GeminiLLMService
+from app.config.llm_config import get_llm_api_key, get_llm_service
 
 def _get_llm_service():
-    return GeminiLLMService(api_key=get_llm_api_key() or "")
+    return get_llm_service()
 
 # Feature flags
 MARK_VALIDATION_ENABLED = True

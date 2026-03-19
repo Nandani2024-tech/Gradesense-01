@@ -1,13 +1,18 @@
 from .llm_service import LlmChat, UserMessage, ImageContent
-from .config import GEMINI_API_KEY, GEMINI_MODEL_NAME, get_llm_api_key, LLMConfig
+from app.config.llm_config import GEMINI_API_KEY, GEMINI_MODEL_NAME, get_llm_api_key, LLMConfig, get_llm_service
 
 async def call_llm_async(prompt: str, images: list = None, config: LLMConfig = None, api_key: str = None) -> str:
-    """Convenience wrapper for async LLM calls."""
-    chat = LlmChat(api_key=api_key or GEMINI_API_KEY)
-    if config:
-        chat.with_params(temperature=config.temperature, max_output_tokens=config.max_tokens)
+    """Convenience wrapper for async LLM calls using the centralized factory."""
+    llm_service = get_llm_service()
     
-    msg = UserMessage(text=prompt, file_contents=[ImageContent(img) for img in (images or [])])
-    return await chat.send_message(msg)
+    # Map old LLMConfig if provided
+    temp = config.temperature if config else None
+    
+    return await llm_service.predict(
+        prompt=prompt,
+        images=images,
+        temperature=temp,
+        api_key=api_key or GEMINI_API_KEY
+    )
 
-__all__ = ["LlmChat", "UserMessage", "ImageContent", "LLMConfig", "call_llm_async", "get_llm_api_key"]
+__all__ = ["LlmChat", "UserMessage", "ImageContent", "LLMConfig", "call_llm_async", "get_llm_api_key", "get_llm_service"]

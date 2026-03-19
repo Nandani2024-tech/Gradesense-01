@@ -2,11 +2,10 @@ from typing import List, Dict, Any, Optional
 from app.repositories import SubmissionRepo, ExamRepo, AnalyticsRepo, StudentRepo
 from app.services.llm.grading_llm_service import grading_llm_service
 from app.core.logging_config import logger
-from app.services.llm.config import get_llm_api_key
-from app.adapters.llm_adapter import GeminiLLMService
+from app.config.llm_config import get_llm_api_key, get_llm_service
 
 def _get_llm_service():
-    return GeminiLLMService(api_key=get_llm_api_key() or "")
+    return get_llm_service()
 
 class MetricsService:
     def __init__(self):

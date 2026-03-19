@@ -2,7 +2,7 @@ import uuid
 import re
 from typing import List, Dict, Any, Optional
 from app.core.logging_config import logger
-from app.services.llm.config import get_llm_api_key
+from app.config.llm_config import get_llm_api_key
 from app.adapters.interfaces import AbstractLLMService
 from app.services.extraction.utils import (
     _parse_llm_json,
@@ -23,37 +23,7 @@ def _to_int(value: Any, default: int = 0) -> int:
     except (ValueError, TypeError):
         return default
 
-MARK_VALIDATION_SYSTEM_PROMPT = """You are an exam-analysis assistant. The user will upload a PDF of a question paper (any subject). Your goal is to extract the marks allocation for each question and each sub-question.
-
-Tasks:
-1) Identify each question number (e.g., Q1, Q2, etc.) and extract its mark value if explicitly given.
-2) Detect implicit marking schemes. If the paper states a range with per-question marks and a total (e.g., "Q1–Q5: 2 marks each (total 10)"), assign the per-question marks accordingly.
-3) Handle sub-parts. If a question has parts (e.g., Q1(a), Q1(b), or Q1a/Q1b), extract marks for each sub-part.
-4) Be subject-agnostic; use only text/layout cues from the paper.
-5) Do not hallucinate. If marks are unclear or not present, set them to null and add an entry in unknown_marks.
-
-Output STRICT JSON only with this schema:
-{
-  "questions": [
-    {
-      "question_number": "Q1",
-      "marks": 2,
-      "subparts": [{"part": "a", "marks": 1}],
-      "inferred_from_rule": false
-    }
-  ],
-  "implicit_rules_detected": ["Q1–Q5: 2 marks each (total 10)"],
-  "unknown_marks": ["Q12: marks not stated"],
-  "total_questions_found": 0,
-  "total_marks_inferred": 0
-}
-
-Rules:
-- marks must be numeric or null
-- subparts must be an array (empty if none)
-- inferred_from_rule true only when derived from a stated rule
-- Output valid JSON with no extra commentary.
-"""
+# (Note: MARK_VALIDATION_SYSTEM_PROMPT moved to app.prompts.llm_prompts.MARK_VALIDATION_SYSTEM_PROMPT_v1)
 
 def _validator_total_from_entry(entry: Dict[str, Any]) -> Optional[float]:
     direct = _to_float_or_none(entry.get("marks"))

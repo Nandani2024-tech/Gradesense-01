@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional
 
 from app.core.logging_config import logger
 from app.core.database import db
-from app.services.llm.config import get_llm_api_key
+from app.config.llm_config import GEMINI_MODEL_NAME, TEMPERATURE, get_llm_api_key
 from app.adapters.interfaces import AbstractLLMService
 # from app.services.answer_sheet_pipeline import build_question_blueprint_from_exam_questions
 from app.services.extraction.utils import (
@@ -80,7 +80,10 @@ def _render_model_answer_map(amap: Dict[str, Any]) -> str:
 
 from app.schemas.ai_outputs import ModelAnswerExtractionSchema
 from app.prompts.prompt_manager import get_prompt
-from app.services.llm.config import GEMINI_MODEL_NAME
+from app.prompts.llm_prompts import (
+    MODEL_ANSWER_EXTRACTION_SYSTEM_v1,
+    SINGLE_QUESTION_EXTRACTION_USER_v1
+)
 
 async def extract_model_answer_content(model_answer_images: List[str], questions: List[dict], llm_service: "AbstractLLMService") -> tuple[str, Dict[str, Dict[str, str]]]:
     api_key = get_llm_api_key()
@@ -135,7 +138,7 @@ async def extract_model_answer_content(model_answer_images: List[str], questions
                                 images=imgs,
                                 response_schema=ModelAnswerExtractionSchema,
                                 model_name=GEMINI_MODEL_NAME,
-                                temperature=0
+                                temperature=TEMPERATURE
                             ),
                             timeout=120
                         )
@@ -173,15 +176,14 @@ async def extract_questions_from_question_paper(
     api_key = get_llm_api_key()
     if not api_key: return []
     try:
-        prompt = "Extract all questions as JSON."
-        full_prompt = f"Extract questions from images as JSON.\n\n{prompt}"
+        full_prompt = f"Extract questions from images as JSON.\n\n{SINGLE_QUESTION_EXTRACTION_USER_v1}"
         
         for attempt in range(max_retries):
             try:
                 logger.info(
                     "LLM_CALL provider=%s model=%s images=%s prompt_len=%s",
                     getattr(llm_service, "provider", "gemini"),
-                    "gemini-2.5-flash",
+                    GEMINI_MODEL_NAME,
                     len(question_paper_images),
                     len(full_prompt)
                 )
@@ -189,8 +191,8 @@ async def extract_questions_from_question_paper(
                     llm_service.predict(
                         prompt=full_prompt,
                         images=question_paper_images,
-                        model_name="gemini-2.5-flash",
-                        temperature=0
+                        model_name=GEMINI_MODEL_NAME,
+                        temperature=TEMPERATURE
                     ),
                     timeout=90
                 )
@@ -381,8 +383,8 @@ async def extract_question_structure_from_paper(
                         llm_service.predict(
                             prompt=full_p,
                             images=[],
-                            model_name="gemini-2.5-flash",
-                            temperature=0
+                            model_name=GEMINI_MODEL_NAME,
+                            temperature=TEMPERATURE
                         ),
                         timeout=60
                     )
