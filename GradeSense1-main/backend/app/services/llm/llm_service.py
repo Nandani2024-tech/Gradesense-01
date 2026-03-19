@@ -76,9 +76,9 @@ class LlmChat:
         self._system_message = system_message
         self._provider = "gemini"
         self._model_name = GEMINI_MODEL_NAME
-        self._temperature = None
-        self._extra_params = {}
-        self._client = None
+        self._temperature: Optional[float] = None
+        self._extra_params: Dict[str, Any] = {}
+        self._client: Optional[genai.Client] = None
         self._chat = None  # lazily created
 
     def with_model(self, provider: str, model_name: str) -> "LlmChat":
@@ -86,7 +86,7 @@ class LlmChat:
         self._model_name = model_name
         return self
 
-    def with_params(self, temperature: float = None, **kwargs) -> "LlmChat":
+    def with_params(self, temperature: Optional[float] = None, **kwargs) -> "LlmChat":
         """Set generation parameters."""
         if temperature is not None:
             self._temperature = temperature
@@ -96,12 +96,16 @@ class LlmChat:
                     self._extra_params[key] = value
         return self
 
-    def _ensure_gemini_chat(self, response_schema: Optional[Any] = None):
-        """Lazily create the underlying google-genai chat session."""
+    def _ensure_client(self) -> genai.Client:
+        """Ensure the underlying google-genai client exists."""
         if not self._api_key:
             raise ValueError("Missing Gemini API key")
+        if self._client is None:
+            self._client = genai.Client(api_key=self._api_key)
+        return self._client
 
-        gen_config = {}
+    def _get_gen_config(self, response_schema: Optional[Any] = None) -> Any:
+        gen_config: Dict[str, Any] = {}
         if self._temperature is not None:
             gen_config["temperature"] = self._temperature
             
@@ -120,42 +124,52 @@ class LlmChat:
             gen_config["response_mime_type"] = "application/json"
             gen_config["response_schema"] = response_schema
 
-        config = genai.types.GenerateContentConfig(**gen_config) if gen_config else None
-        
-        if self._client is None:
-            self._client = genai.Client(api_key=self._api_key)
-            
-        self._chat = self._client.chats.create(
-            model=self._model_name,
-            config=config,
-            history=[],
-        )
+        return genai.types.GenerateContentConfig(**gen_config) if gen_config else None
 
     async def send_message(self, message: UserMessage) -> str:
         """Send a message and return the response text."""
-        self._ensure_gemini_chat()
+        client = self._ensure_client()
         parts = message.to_genai_parts()
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
-            None, lambda: self._chat.send_message(parts)
-        )
-        return response.text or ""
-
-    async def send_message_structured(self, message: UserMessage, response_schema: Any) -> Any:
-        """Send a message and return the parsed response (JSON/Pydantic)."""
-        self._ensure_gemini_chat(response_schema=response_schema)
-        parts = message.to_genai_parts()
+        config = self._get_gen_config()
         
-        if hasattr(self._client, "aio"):
-             # Use async client if available for better performance
-            response = await self._client.aio.models.generate_content(
+        # Use models.generate_content instead of chat.send_message for independent hits
+        if hasattr(client, "aio"):
+            response = await client.aio.models.generate_content(
                 model=self._model_name,
                 contents=parts,
-                config=self._chat._config
+                config=config
             )
         else:
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
-                None, lambda: self._chat.send_message(parts)
+                None, lambda: client.models.generate_content(
+                    model=self._model_name,
+                    contents=parts,
+                    config=config
+                )
+            )
+        return response.text or ""
+
+    async def send_message_structured(self, message: UserMessage, response_schema: Any) -> Any:
+        """Send a message and return the parsed response (JSON/Pydantic)."""
+        client = self._ensure_client()
+        parts = message.to_genai_parts()
+        config = self._get_gen_config(response_schema=response_schema)
+        
+        if hasattr(client, "aio"):
+             # Use async client if available for better performance
+            response = await client.aio.models.generate_content(
+                model=self._model_name,
+                contents=parts,
+                config=config
+            )
+        else:
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None, lambda: client.models.generate_content(
+                    model=self._model_name,
+                    contents=parts,
+                    config=config
+                )
             )
         return response.parsed

@@ -46,9 +46,10 @@ class GradingPipelineRunner:
                 self.ocr_service
             )
 
-            # pipeline may return {"packets": {...}}
-            packets = pipeline_result.get("packets", pipeline_result)
-            logger.info(f"GradingPipelineRunner: extracted {len(packets)} packets")
+            # pipeline returns {"aligned_answers": [...], "final_output": [...], "packets": {...}}
+            aligned_answers = pipeline_result.get("aligned_answers", [])
+            packets = pipeline_result.get("packets", {})
+            logger.info(f"GradingPipelineRunner: extracted {len(packets)} raw packets, {len(aligned_answers)} aligned")
 
             # ----------------------------
             # Step 3 — Normalize question IDs
@@ -56,9 +57,20 @@ class GradingPipelineRunner:
             id_manager = IdentityManager()
             vision_answers = {}
 
-            for qn, pkt in packets.items():
-                clean_qn = id_manager.normalize_id(str(qn))
-                vision_answers[clean_qn] = pkt
+            # Map from the verified alignment array to avoid losing sequence-fallback packets
+            if aligned_answers:
+                for row in aligned_answers:
+                    qn = row.get("question_id")
+                    pkt = row.get("packet")
+                    if qn is not None and pkt is not None:
+                        clean_qn = id_manager.normalize_id(str(qn))
+                        logger.info(f"GradingPipelineRunner: mapping aligned packet {qn} -> normalized ID {clean_qn}")
+                        vision_answers[clean_qn] = pkt
+            else:
+                # Fallback to direct raw packets just in case
+                for qn, pkt in packets.items():
+                    clean_qn = id_manager.normalize_id(str(qn))
+                    vision_answers[clean_qn] = pkt
 
             # ----------------------------
             # Step 4 — Run grading engine
@@ -84,7 +96,7 @@ class GradingPipelineRunner:
                     awarded += float(g.get("marks_awarded", 0))
                 result["total_awarded"] = awarded
 
-            logger.info(f"GradingPipelineRunner: result awarded={result.get('total_awarded')} possible={result.get('total_possible')}")
+            logger.info(f"GradingPipelineRunner: final result awarded={result.get('total_awarded')} possible={result.get('total_possible')}")
             return result
 
         except Exception as e:

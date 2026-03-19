@@ -1,4 +1,5 @@
 from typing import Dict, List
+from app.core.logging_config import logger
 
 
 def align_packets_to_blueprint(blueprint: List[dict], packets: Dict[int, dict]) -> List[dict]:
@@ -21,6 +22,7 @@ def align_packets_to_blueprint(blueprint: List[dict], packets: Dict[int, dict]) 
                 cand_q = int(cand.get("question_id", -1))
                 if cand_q not in used_packets:
                     pkt = cand
+                    logger.info(f"align_packets_to_blueprint: using sequence_fallback for Q{qid} -> candidate Q{cand_q}")
                     aligned_by = "sequence_fallback"
                     break
         if pkt:

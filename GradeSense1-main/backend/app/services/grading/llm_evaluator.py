@@ -3,6 +3,7 @@ import re
 from typing import Dict, Any, Optional
 from app.services.grading.score_validator import ScoreValidator
 from app.adapters.interfaces import AbstractLLMService
+from app.core.logging_config import logger
 from app.services.grading.constants import (
     LLM_PROMPT_TEMPLATE,
     JSON_EXTRACTOR_PATTERN
@@ -21,7 +22,8 @@ class LlmEvaluator:
     def _build_prompt(self, 
                       question_number: str, 
                       question_text: str, 
-                      model_answer: str, 
+                      model_answer: str,
+                      max_marks: float,
                       student_answer: str,
                       matched_concepts: list,
                       missing_concepts: list) -> str:
@@ -30,6 +32,7 @@ class LlmEvaluator:
             question_number=question_number,
             question_text=question_text,
             model_answer=model_answer,
+            max_marks=max_marks,
             student_answer=student_answer,
             matched_concepts=matched_concepts,
             missing_concepts=missing_concepts
@@ -58,6 +61,7 @@ class LlmEvaluator:
             question_number=question_number,
             question_text=question_text,
             model_answer=model_answer,
+            max_marks=max_marks,
             student_answer=student_answer,
             matched_concepts=matched_concepts or [],
             missing_concepts=missing_concepts or []
@@ -66,7 +70,10 @@ class LlmEvaluator:
         try:
             if self.llm_service:
                 # Actual LLM call using the base adapter interface
+                logger.info(f"[LLM] Question {question_number}: Sending prompt to AI (len={len(prompt)})")
                 raw_response = await self.llm_service.predict(prompt)
+                logger.info(f"[LLM] Question {question_number}: Received raw response (len={len(raw_response)})")
+                logger.debug(f"[LLM] Raw Response: {raw_response}")
             else:
                 # Mock response for standalone testing
                 raw_response = json.dumps({

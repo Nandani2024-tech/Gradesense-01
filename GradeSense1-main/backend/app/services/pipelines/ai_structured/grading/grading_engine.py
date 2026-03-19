@@ -50,209 +50,217 @@ class GradingEngine:
         self.normalizer = AnswerNormalizer()
         self.matcher = ConceptMatcher()
         self.rubric_builder = RubricBuilder()
+        self.semaphore = asyncio.Semaphore(5)  # Limit parallel LLM calls
 
     async def _grade_worker(self, question: Dict[str, Any], mapped_packet: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-        # logs for this question
-        q_logs: List[str] = []
-        
-        # Support both 'id' (new) and 'question_number' (legacy)
-        qid = str(question.get("id") or question.get("question_number") or "Unknown")
-        
-        # Support both 'marks' (new) and 'max_marks' (legacy)
-        max_marks = float(question.get("marks") or question.get("max_marks") or 0.0)
-        
-        # Support both 'question' (new) and 'question_text'/'rubric' (legacy)
-        q_text = question.get("question") or question.get("question_text") or question.get("rubric") or "N/A"
-        
-        # For semantic evaluation
-        model_answer = question.get("model_answer") or question.get("expected_answer") or "Refer to standard definition."
-        
-        # Identity
-        clean_qid = self.id_manager.normalize_id(qid)
-        q_logs.append(f"Question {clean_qid}: max_marks={max_marks}")
-        
-        # Improvement 2: Answer Confidence Gate
-        confidence = 1.0
-        raw_text = ""
-        
-        if isinstance(mapped_packet, dict):
-            confidence = float(mapped_packet.get("mapping_confidence", 1.0))
-            raw_text = mapped_packet.get("combined_text", "")
-            q_logs.append(f"mapped_packet raw_text length={len(raw_text)}")
+        async with self.semaphore:
+            # logs for this question
+            q_logs: List[str] = []
             
-            if "." in clean_qid and mapped_packet.get("subanswers"):
-                sub_id = clean_qid.split(".")[-1].lower()
-                for sa in mapped_packet.get("subanswers", []):
-                    if sa.get("sub_id", "").lower() == sub_id:
-                        raw_text = sa.get("combined_text", "")
-                        confidence = float(sa.get("mapping_confidence", confidence))
-                        q_logs.append(f"subanswer {sub_id} raw_text length={len(raw_text)}")
-                        break
+            # Support both 'id' (new) and 'question_number' (legacy)
+            qid = str(question.get("id") or question.get("question_number") or "Unknown")
+            
+            # Support both 'marks' (new) and 'max_marks' (legacy)
+            max_marks = float(question.get("marks") or question.get("max_marks") or 0.0)
+            
+            # Support both 'question' (new) and 'question_text'/'rubric' (legacy)
+            q_text = question.get("question") or question.get("question_text") or question.get("rubric") or "N/A"
+            
+            # For semantic evaluation
+            model_answer = question.get("model_answer") or question.get("expected_answer") or "Refer to standard definition."
+            
+            # Identity
+            clean_qid = self.id_manager.normalize_id(qid)
+            logger.info("Grading question %s (max %s marks)...", clean_qid, max_marks)
+            q_logs.append(f"Question {clean_qid}: max_marks={max_marks}")
+            
+            # Improvement 2: Answer Confidence Gate
+            confidence = 1.0
+            raw_text = ""
+            
+            if isinstance(mapped_packet, dict):
+                confidence = float(mapped_packet.get("mapping_confidence", 1.0))
+                raw_text = mapped_packet.get("combined_text", "")
+                logger.info(f"[GRADING] Question {clean_qid}: mapped_packet found, confidence={confidence}, text_len={len(raw_text)}")
+                q_logs.append(f"mapped_packet raw_text length={len(raw_text)}")
+                
+                if "." in clean_qid and mapped_packet.get("subanswers"):
+                    sub_id = clean_qid.split(".")[-1].lower()
+                    for sa in mapped_packet.get("subanswers", []):
+                        if sa.get("sub_id", "").lower() == sub_id:
+                            raw_text = sa.get("combined_text", "")
+                            confidence = float(sa.get("mapping_confidence", confidence))
+                            q_logs.append(f"subanswer {sub_id} raw_text length={len(raw_text)}")
+                            break
 
-        elif isinstance(mapped_packet, str):
-            raw_text = mapped_packet
-        
-        # previously we short‑circuited low‑confidence packets; now record but continue
-        if confidence < 0.2:
-            # still very low, keep same treatment as before
-            q_logs.append(f"Very low confidence {confidence}, marking needs review")
+            elif isinstance(mapped_packet, str):
+                raw_text = mapped_packet
+            
+            # previously we short‑circuited low‑confidence packets; now record but continue
+            if confidence < 0.2:
+                # still very low, keep same treatment as before
+                q_logs.append(f"Very low confidence {confidence}, marking needs review")
+                return {
+                    "question_number": qid,
+                    "question_id": qid,
+                    "max_marks": max_marks,
+                    "marks_awarded": 0.0,
+                    "status": "needs_review",
+                    "feedback": "Needs Review: Low OCR confidence for answer block.",
+                    "reason": "low OCR confidence",
+                    "normalized_answer": None,
+                    "sub_scores": [],
+                    "logs": q_logs
+                }
+            elif confidence < 0.4:
+                # caution log but proceed to grading using whatever text was captured
+                q_logs.append(f"Low confidence {confidence} (below advisory threshold)")
+
+            # Handle sub-questions
+            sub_questions: List[Dict[str, Any]] = question.get("sub_questions") or question.get("subquestions") or []
+            sub_scores = []
+            total_awarded = 0.0
+            final_feedback = []
+
+            if sub_questions:
+                # New sub-question logic
+                mapped_subanswers = {}
+                if isinstance(mapped_packet, dict) and mapped_packet.get("subanswers"):
+                    for sa in mapped_packet.get("subanswers", []):
+                        mapped_subanswers[sa.get("sub_id", "").lower()] = sa
+                
+                for sq in sub_questions:
+                    sq_id = str(sq.get("sub_id") or sq.get("id") or "Unknown")
+                    sq_max_marks = float(sq.get("marks") or sq.get("max_marks") or 0.0)
+                    sq_text = sq.get("question") or sq.get("question_text") or sq.get("rubric") or f"Part {sq_id}"
+                    sq_model = sq.get("model_answer") or sq.get("expected_answer") or "Refer to standard definition."
+                    
+                    # Find matching student answer
+                    matched_sa = mapped_subanswers.get(sq_id.lower())
+                    sq_raw_text = matched_sa.get("combined_text", "") if matched_sa else ""
+                    
+                    # If OCR failed to isolate the subanswer text, fallback to the entire packet's raw text
+                    if not sq_raw_text.strip():
+                        sq_raw_text = raw_text
+                    
+                    # If STILL no raw text found, mark as not attempted
+                    if not sq_raw_text.strip():
+                        sub_scores.append({
+                            "sub_id": sq_id,
+                            "max_marks": sq_max_marks,
+                            "obtained_marks": 0.0,
+                            "ai_feedback": "Not attempted/found",
+                            "annotations": []
+                        })
+                        continue
+
+                    # Normalization
+                    sq_norm_result = self.normalizer.normalize(sq_raw_text)
+                    sq_clean_answer = sq_norm_result["normalized_answer"]
+
+                    # Rubric & Concept Match (Deterministic base)
+                    sq_rubric = self.rubric_builder.build_rubric(sq_text, sq_model, sq_max_marks)
+                    sq_match = self.matcher.match_concepts(sq_rubric, sq_clean_answer)
+                    sq_deterministic_score = float(sq_match["score"])
+
+                    # LLM Evaluation
+                    sq_eval_result = await self.evaluator.evaluate(
+                        question_number=f"{clean_qid}.{sq_id}",
+                        question_text=sq_text,
+                        model_answer=sq_model,
+                        max_marks=sq_max_marks,
+                        student_answer=sq_clean_answer,
+                        matched_concepts=sq_match["matched_concepts"],
+                        missing_concepts=sq_match["missing_concepts"]
+                    )
+                    
+                    # Improvement: Prioritize LLM score over deterministic if LLM score is reliable
+                    # But we cap it by max_marks for safety.
+                    sq_awarded = min(float(sq_eval_result.get("score", 0.0)), sq_max_marks)
+                    
+                    # Validation pass
+                    sq_eval_result["score"] = sq_awarded
+                    sq_validated = self.evaluator.validator.validate(sq_eval_result, sq_max_marks)
+                    sq_awarded = sq_validated["score"]
+
+                    total_awarded += sq_awarded
+                    fb = sq_validated.get("feedback", "")
+                    if fb:
+                        final_feedback.append(f"Part {sq_id}: {fb}")
+
+                    sub_scores.append({
+                        "sub_id": sq_id,
+                        "max_marks": sq_max_marks,
+                        "obtained_marks": sq_awarded,
+                        "ai_feedback": fb,
+                        "annotations": []
+                    })
+                
+                # Aggregate stats for parent
+                final_awarded = min(total_awarded, max_marks)
+                global_feedback = "\n".join(final_feedback) if final_feedback else "Graded successfully."
+                global_answer = raw_text
+
+            else:
+                # Legacy monolithic logic
+                norm_result = self.normalizer.normalize(raw_text)
+                clean_answer = norm_result["normalized_answer"]
+
+                # 1. Build Rubric Deterministically
+                rubric = self.rubric_builder.build_rubric(
+                    q_text,
+                    model_answer,
+                    max_marks
+                )
+
+                # 2. Match Concepts Deterministically
+                match_result = self.matcher.match_concepts(
+                    rubric,
+                    clean_answer
+                )
+                deterministic_score = float(match_result["score"])
+
+                # 3. Generate Feedback using LLM
+                eval_result = await self.evaluator.evaluate(
+                    question_number=clean_qid,
+                    question_text=q_text,
+                    model_answer=model_answer,
+                    max_marks=max_marks,
+                    student_answer=clean_answer,
+                    matched_concepts=match_result["matched_concepts"],
+                    missing_concepts=match_result["missing_concepts"]
+                )
+                
+                # Improvement: Prioritize LLM score over deterministic (more flexible with OCR noise)
+                llm_score = float(eval_result.get("score", 0.0))
+                
+                # 4. Use LLM score and Validate
+                eval_result["score"] = min(llm_score, max_marks)
+                validated = self.evaluator.validator.validate(
+                    eval_result,
+                    max_marks
+                )
+                
+                final_awarded = validated["score"]
+                global_feedback = validated.get("feedback", "No feedback provided.")
+                global_answer = clean_answer
+
+            # log summary for this question
+            q_logs.append(f"Final awarded for {clean_qid}: {final_awarded}/{max_marks}")
             return {
                 "question_number": qid,
                 "question_id": qid,
                 "max_marks": max_marks,
-                "marks_awarded": 0.0,
-                "status": "needs_review",
-                "feedback": "Needs Review: Low OCR confidence for answer block.",
-                "reason": "low OCR confidence",
-                "normalized_answer": None,
-                "sub_scores": [],
+                "obtained_marks": final_awarded,
+                "marks_awarded": final_awarded,
+                "status": "graded",
+                "ai_feedback": global_feedback,
+                "feedback": global_feedback,
+                "normalized_answer": global_answer,
+                "answer_type": "text",
+                "sub_scores": sub_scores,
                 "logs": q_logs
             }
-        elif confidence < 0.4:
-            # caution log but proceed to grading using whatever text was captured
-            q_logs.append(f"Low confidence {confidence} (below advisory threshold)")
-
-        # Handle sub-questions
-        sub_questions: List[Dict[str, Any]] = question.get("sub_questions") or question.get("subquestions") or []
-        sub_scores = []
-        total_awarded = 0.0
-        final_feedback = []
-
-        if sub_questions:
-            # New sub-question logic
-            mapped_subanswers = {}
-            if isinstance(mapped_packet, dict) and mapped_packet.get("subanswers"):
-                for sa in mapped_packet.get("subanswers", []):
-                    mapped_subanswers[sa.get("sub_id", "").lower()] = sa
-            
-            for sq in sub_questions:
-                sq_id = str(sq.get("sub_id") or sq.get("id") or "Unknown")
-                sq_max_marks = float(sq.get("marks") or sq.get("max_marks") or 0.0)
-                sq_text = sq.get("question") or sq.get("question_text") or sq.get("rubric") or f"Part {sq_id}"
-                sq_model = sq.get("model_answer") or sq.get("expected_answer") or "Refer to standard definition."
-                
-                # Find matching student answer
-                matched_sa = mapped_subanswers.get(sq_id.lower())
-                sq_raw_text = matched_sa.get("combined_text", "") if matched_sa else ""
-                
-                # If no raw text found, mark as not attempted
-                if not sq_raw_text.strip():
-                    sub_scores.append({
-                        "sub_id": sq_id,
-                        "max_marks": sq_max_marks,
-                        "obtained_marks": 0.0,
-                        "ai_feedback": "Not attempted/found",
-                        "annotations": []
-                    })
-                    continue
-
-                # Normalization
-                sq_norm_result = self.normalizer.normalize(sq_raw_text)
-                sq_clean_answer = sq_norm_result["normalized_answer"]
-
-                # Rubric & Concept Match (Deterministic base)
-                sq_rubric = self.rubric_builder.build_rubric(sq_text, sq_model, sq_max_marks)
-                sq_match = self.matcher.match_concepts(sq_rubric, sq_clean_answer)
-                sq_deterministic_score = float(sq_match["score"])
-
-                # LLM Evaluation
-                sq_eval_result = await self.evaluator.evaluate(
-                    question_number=f"{clean_qid}.{sq_id}",
-                    question_text=sq_text,
-                    model_answer=sq_model,
-                    max_marks=sq_max_marks,
-                    student_answer=sq_clean_answer,
-                    matched_concepts=sq_match["matched_concepts"],
-                    missing_concepts=sq_match["missing_concepts"]
-                )
-                
-                # Improvement: Prioritize LLM score over deterministic if LLM score is reliable
-                # But we cap it by max_marks for safety.
-                sq_awarded = min(float(sq_eval_result.get("score", 0.0)), sq_max_marks)
-                
-                # Validation pass
-                sq_eval_result["score"] = sq_awarded
-                sq_validated = self.evaluator.validator.validate(sq_eval_result, sq_max_marks)
-                sq_awarded = sq_validated["score"]
-
-                total_awarded += sq_awarded
-                fb = sq_validated.get("feedback", "")
-                if fb:
-                    final_feedback.append(f"Part {sq_id}: {fb}")
-
-                sub_scores.append({
-                    "sub_id": sq_id,
-                    "max_marks": sq_max_marks,
-                    "obtained_marks": sq_awarded,
-                    "ai_feedback": fb,
-                    "annotations": []
-                })
-            
-            # Aggregate stats for parent
-            final_awarded = min(total_awarded, max_marks)
-            global_feedback = "\n".join(final_feedback) if final_feedback else "Graded successfully."
-            global_answer = raw_text
-
-        else:
-            # Legacy monolithic logic
-            norm_result = self.normalizer.normalize(raw_text)
-            clean_answer = norm_result["normalized_answer"]
-
-            # 1. Build Rubric Deterministically
-            rubric = self.rubric_builder.build_rubric(
-                q_text,
-                model_answer,
-                max_marks
-            )
-
-            # 2. Match Concepts Deterministically
-            match_result = self.matcher.match_concepts(
-                rubric,
-                clean_answer
-            )
-            deterministic_score = float(match_result["score"])
-
-            # 3. Generate Feedback using LLM
-            eval_result = await self.evaluator.evaluate(
-                question_number=clean_qid,
-                question_text=q_text,
-                model_answer=model_answer,
-                max_marks=max_marks,
-                student_answer=clean_answer,
-                matched_concepts=match_result["matched_concepts"],
-                missing_concepts=match_result["missing_concepts"]
-            )
-            
-            # Improvement: Prioritize LLM score over deterministic (more flexible with OCR noise)
-            llm_score = float(eval_result.get("score", 0.0))
-            
-            # 4. Use LLM score and Validate
-            eval_result["score"] = min(llm_score, max_marks)
-            validated = self.evaluator.validator.validate(
-                eval_result,
-                max_marks
-            )
-            
-            final_awarded = validated["score"]
-            global_feedback = validated.get("feedback", "No feedback provided.")
-            global_answer = clean_answer
-
-        # log summary for this question
-        q_logs.append(f"Final awarded for {clean_qid}: {final_awarded}/{max_marks}")
-        return {
-            "question_number": qid,
-            "question_id": qid,
-            "max_marks": max_marks,
-            "obtained_marks": final_awarded,
-            "marks_awarded": final_awarded,
-            "status": "graded",
-            "ai_feedback": global_feedback,
-            "feedback": global_feedback,
-            "normalized_answer": global_answer,
-            "answer_type": "text",
-            "sub_scores": sub_scores,
-            "logs": q_logs
-        }
 
     async def run_production_grading(self, blueprint: Dict[str, Any], vision_answers: Dict[str, Any]) -> Dict[str, Any]:
         """Runs the production grading pipeline asynchronously."""

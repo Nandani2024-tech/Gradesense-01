@@ -1,4 +1,5 @@
 from typing import Dict, List, Optional
+from app.core.logging_config import logger
 
 
 def build_packets(regions: List[dict], blueprint: List[dict]) -> Dict[int, dict]:
@@ -22,6 +23,7 @@ def build_packets(regions: List[dict], blueprint: List[dict]) -> Dict[int, dict]
             chosen = last_seen_q
         elif r.get("question_anchor") in expected_qs:
             chosen = int(r["question_anchor"])
+            logger.info(f"build_packets: detected anchor {chosen} in region {r['block_id']}")
             active_q = chosen
             last_seen_q = chosen
 

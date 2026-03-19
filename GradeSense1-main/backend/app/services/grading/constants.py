@@ -138,7 +138,7 @@ Return only valid JSON.
 {{
 "attempted": true or false,
 "relevant": true or false,
-"score": 0,
+"score": 5.0
 "feedback": "brief overall summary",
 "strengths": "what the student did well",
 "weaknesses": "what was missing or wrong",
