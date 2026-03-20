@@ -4,7 +4,7 @@ from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 from app.core.logging_config import logger
 from app.infrastructure.serialization.safe_numeric import to_float, to_int
-from app.constants.layers import _EXPLICIT_SOURCES
+from app.constants.layers import _EXPLICIT_SOURCES, MARK_REASON_RECONCILED
 
 from .mark_sources import (
     _norm_source,
@@ -183,7 +183,7 @@ def _initial_mark_pass(
                 sub_values = [even for _ in subparts]
                 sub_sources = [source for _ in subparts]
                 mode = "shared"
-                logger.info("MARK_REASON_APPLIED q=%s reason=subpart_shared marks=%s", qn, round(total, 4))
+                logger.info("MARK_REASON_RECONCILED q=%s reason=subpart_shared marks=%s", qn, round(total, 4))
                 if source == "section_math":
                     logger.info(
                         "SUBPART_AUTO_SPLIT q=%s total=%s per_subpart=%s",
@@ -313,7 +313,7 @@ def _reconcile_header_marks(
             q = by_num[qn]
             add = min(pattern, delta)
             q["marks"] = round(float(add), 4)
-            q["mark_source"] = "inferred"
+            q["mark_source"] = MARK_REASON_RECONCILED
             q["distribution_mode"] = "header_total_fill"
             by_num[qn] = q
             delta = round(delta - add, 4)
@@ -328,7 +328,7 @@ def _reconcile_header_marks(
                 q = by_num[qn]
                 cur = to_float(q.get("marks"), 0.0)
                 q["marks"] = round(cur + extra, 4)
-                q["mark_source"] = "inferred"
+                q["mark_source"] = MARK_REASON_RECONCILED
                 q["distribution_mode"] = "header_total_spread"
                 by_num[qn] = q
                 changed_questions.add(qn)
@@ -346,7 +346,7 @@ def _reconcile_header_marks(
                 continue
             cut = min(cur, need)
             q["marks"] = round(cur - cut, 4)
-            q["mark_source"] = "inferred"
+            q["mark_source"] = MARK_REASON_RECONCILED
             q["distribution_mode"] = "header_total_trim"
             by_num[qn] = q
             need = round(need - cut, 4)
@@ -388,6 +388,78 @@ def _redistribute_subparts_only(question: Dict[str, Any]) -> bool:
             last = missing[-1]
             subparts[last]["marks"] = round(float(max(0.0, to_float(subparts[last].get("marks"), 0.0) + diff)), 4)
     question["subquestions"] = subparts
+    return True
+
+
+def _reconcile_subpart_marks(question: Dict[str, Any], model_answer_marks: Optional[Dict[str, float]] = None) -> bool:
+    """Ensure subpart sum matches parent marks. If mismatch, scale or distribute diff.
+    If model_answer_marks is provided, use it for auto-correction.
+    """
+    subparts = list(question.get("subquestions") or [])
+    if not subparts:
+        return False
+    
+    qn = to_int(question.get("number"), 0)
+    parent_marks = max(0.0, to_float(question.get("marks"), 0.0))
+    sub_sum = sum(max(0.0, to_float(sq.get("marks"), 0.0)) for sq in subparts)
+    
+    if abs(sub_sum - parent_marks) < 1e-6 and not model_answer_marks:
+        return False
+        
+    if abs(sub_sum - parent_marks) > 1e-6:
+        logger.warning(
+            "SUBPART_SUM_MISMATCH q=%s expected=%s inferred=%s",
+            qn, round(parent_marks, 4), round(sub_sum, 4)
+        )
+    
+    # Priority 1: Model Answer
+    if model_answer_marks:
+        logger.info("MARK_REASON_RECONCILED q=%s reason=model_answer marks=%s", qn, round(parent_marks, 4))
+        for sq in subparts:
+            label = str(sq.get("label") or "").strip()
+            if label in model_answer_marks:
+                sq["marks"] = round(to_float(model_answer_marks[label], 0.0), 4)
+                sq["mark_source"] = MARK_REASON_RECONCILED
+                sq["distribution_mode"] = "model_answer"
+        question["subquestions"] = subparts
+        # Final check if model answer changed parent
+        new_sub_sum = sum(max(0.0, to_float(sq.get("marks"), 0.0)) for sq in subparts)
+        if abs(new_sub_sum - parent_marks) > 1e-6:
+            question["marks"] = round(new_sub_sum, 4)
+            question["mark_source"] = MARK_REASON_RECONCILED
+            logger.info("MARK_REASON_RECONCILED q=%s reason=auto_correct marks=%s", qn, round(new_sub_sum, 4))
+        return True
+
+    # Priority 2: Standard Reconciliation
+    logger.info(
+        "MARK_REASON_RECONCILED q=%s reason=gap_fill marks=%s",
+        qn, round(parent_marks, 4)
+    )
+    
+    if sub_sum < parent_marks:
+        # Distribute missing marks
+        diff = parent_marks - sub_sum
+        per_sub = diff / len(subparts)
+        for sq in subparts:
+            sq["marks"] = round(to_float(sq.get("marks"), 0.0) + per_sub, 4)
+            sq["mark_source"] = MARK_REASON_RECONCILED
+            sq["distribution_mode"] = "subpart_fill"
+    else:
+        # Scale down
+        factor = parent_marks / sub_sum if sub_sum > 0 else 0.0
+        for sq in subparts:
+            sq["marks"] = round(to_float(sq.get("marks"), 0.0) * factor, 4)
+            sq["mark_source"] = MARK_REASON_RECONCILED
+            sq["distribution_mode"] = "scale"
+            
+    # Rounding fix for last subpart
+    new_sum = sum(max(0.0, to_float(sq.get("marks"), 0.0)) for sq in subparts)
+    drift = round(parent_marks - new_sum, 4)
+    if abs(drift) > 1e-6:
+        subparts[-1]["marks"] = round(max(0.0, to_float(subparts[-1].get("marks"), 0.0) + drift), 4)
+
+    question["subquestions"] = subparts
+    question["mark_source"] = MARK_REASON_RECONCILED
     return True
 
 

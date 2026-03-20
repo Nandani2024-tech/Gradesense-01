@@ -7,7 +7,7 @@ from app.core.logging_config import logger
 from app.infrastructure.serialization.safe_numeric import parse_section_math_expression, to_float, to_int
 from .validation import normalize_structure_payload
 
-from app.constants.layers import _EXPLICIT_SOURCES
+from app.constants.layers import _EXPLICIT_SOURCES, MARK_REASON_RECONCILED
 
 from .mark_sources import (
     _norm_source,
@@ -29,6 +29,7 @@ from .mark_merger import (
     _mode_positive,
     _redistribute_subparts_only,
     _sync_audit_for_question,
+    _reconcile_subpart_marks,
 )
 
 
@@ -38,6 +39,7 @@ def resolve_marks(
     visual_entities: Optional[Dict[str, Any]] = None,
     header_total_marks: Optional[float] = None,
     header_total_reliable: bool = False,
+    model_answer_map: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Deterministic mark computation priority:
@@ -153,37 +155,36 @@ def resolve_marks(
                 _sync_audit_for_question(qn, question_audit_tree, by_num)
         logger.info("OR_GROUP_RESOLVED group=%s members=%s effective_marks=%s", gid, members, round(shared, 4))
 
-    # Validate section rules.
-    for rule in section_rules:
-        run = list(rule.get("questions") or [])
-        if not run:
+    # Final reconciliation pass for all questions
+    for qn in qnums:
+        q = by_num.get(qn)
+        if not q:
             continue
-        run_sum = round(sum(max(0.0, to_float((by_num.get(qn) or {}).get("marks"), 0.0)) for qn in run), 4)
-        expected_total = round(max(0.0, to_float(rule.get("total"), 0.0)), 4)
-        if abs(run_sum - expected_total) > 1e-6:
-            logger.warning(
-                "SECTION_RULE_MISMATCH start=%s count=%s expected=%s actual=%s",
-                to_int(rule.get("start_question"), 0),
-                to_int(rule.get("count"), 0),
-                expected_total,
-                run_sum,
-            )
-            if run_sum > 0:
-                logger.info(
-                    "SECTION_RULE_OVERRIDE start=%s reason=validation_failed new_total=%s",
-                    to_int(rule.get("start_question"), 0),
-                    run_sum,
-                )
-                rule["total"] = run_sum
-                rule["count"] = len(run)
-            for qn in run:
-                q = by_num.get(qn)
-                if not q:
-                    continue
-                if _redistribute_subparts_only(q):
-                    by_num[qn] = q
-                    logger.info("SUBPART_AUTO_SPLIT q=%s total=%s", qn, round(to_float(q.get("marks"), 0.0), 4))
-                    _sync_audit_for_question(qn, question_audit_tree, by_num)
+        
+        # Priority 0: Model Answer Check
+        ma_entry = (model_answer_map or {}).get(str(qn)) or (model_answer_map or {}).get(qn)
+        ma_marks = None
+        ma_sub_marks = None
+        if isinstance(ma_entry, dict):
+            ma_marks = to_float(ma_entry.get("marks"), 0.0)
+            ma_sub_marks = {str(k): to_float(v, 0.0) for k, v in (ma_entry.get("subparts") or {}).items()}
+        elif ma_entry is not None:
+            ma_marks = to_float(ma_entry, 0.0)
+
+        if ma_marks is not None and ma_marks > 0:
+            old = to_float(q.get("marks"), 0.0)
+            if abs(old - ma_marks) > 1e-6:
+                q["marks"] = round(ma_marks, 4)
+                q["mark_source"] = MARK_REASON_RECONCILED
+                q["distribution_mode"] = "model_answer"
+                by_num[qn] = q
+                changed_questions.add(qn)
+                logger.info("MARK_REASON_RECONCILED q=%s reason=model_answer marks=%s", qn, round(ma_marks, 4))
+
+        if _reconcile_subpart_marks(q, ma_sub_marks):
+            by_num[qn] = q
+            logger.info("SUBPART_RECONCILED q=%s total=%s", qn, round(to_float(q.get("marks"), 0.0), 4))
+            _sync_audit_for_question(qn, question_audit_tree, by_num)
 
     resolved_questions = [by_num[qn] for qn in qnums]
     resolved_structure = {

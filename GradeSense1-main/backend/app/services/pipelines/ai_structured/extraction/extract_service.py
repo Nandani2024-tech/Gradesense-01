@@ -7,22 +7,48 @@ from app.repositories import ExamRepo, SubmissionRepo
 logger = pipeline_logger(__name__)
 exam_repo = ExamRepo()
 submission_repo = SubmissionRepo()
+from typing import Any, Dict, List, Tuple, Optional
+from app.adapters.interfaces import AbstractLLMService
+from app.services.pipelines.ai_extraction_service import extract_question_structure
+from app.services.pipelines.ai_structured.utils.logging import with_logging, pipeline_logger
+from app.repositories import ExamRepo, SubmissionRepo
+
+logger = pipeline_logger(__name__)
+exam_repo = ExamRepo()
+submission_repo = SubmissionRepo()
+
+
+from typing import Any, Dict, List, Tuple, Optional
+from app.adapters.interfaces import AbstractLLMService
+from app.services.pipelines.ai_extraction_service import extract_question_structure
+from app.services.pipelines.ai_structured.utils.logging import with_logging, pipeline_logger
+from app.repositories import ExamRepo, SubmissionRepo
+
+logger = pipeline_logger(__name__)
+exam_repo = ExamRepo()
+submission_repo = SubmissionRepo()
 
 @with_logging
 async def perform_extraction(
     question_paper_images: List[str],
     expected_total_marks: float,
     expected_question_count: int,
-    model_name: str,
-    llm_service: AbstractLLMService,
+    model_name: str = "qwen2.5:latest",
+    llm_service: Optional["AbstractLLMService"] = None,
+    model_answer_map: Optional[Dict[str, Any]] = None,
+    raw_ocr_text: Optional[str] = None,
+    max_retries: int = 3,
 ) -> Tuple[Dict[str, Any], Dict[str, Any], str, int]:
+    """Perform question structure extraction with layered pipeline."""
     return await extract_question_structure(
         question_paper_images=question_paper_images,
+        raw_ocr_text=raw_ocr_text,
         expected_total_marks=expected_total_marks,
         expected_question_count=expected_question_count,
-        max_retries=3,
+        max_retries=max_retries,
         model_name=model_name,
         llm_service=llm_service,
+        model_answer_map=model_answer_map,
     )
 
 @with_logging

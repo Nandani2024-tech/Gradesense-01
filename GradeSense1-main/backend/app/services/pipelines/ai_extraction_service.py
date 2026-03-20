@@ -1511,6 +1511,7 @@ async def extract_question_structure(
     max_retries: int = 3,
     model_name: str = "qwen2.5:latest",
     llm_service: "AbstractLLMService",
+    model_answer_map: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any], str, int]:
     """Extract question structure with layered visual+semantic pipeline."""
 
@@ -1772,6 +1773,7 @@ async def extract_question_structure(
         visual_entities=visual_entities,
         header_total_marks=header_total_marks,
         header_total_reliable=header_total_reliable,
+        model_answer_map=model_answer_map,
     )
     structure = reasoned.get("resolved_structure") or stage2_structure
     question_audit_tree = list(reasoned.get("question_audit_tree") or [])
@@ -1833,6 +1835,7 @@ async def extract_question_structure(
                     visual_entities=visual_entities,
                     header_total_marks=header_total_marks,
                     header_total_reliable=header_total_reliable,
+                    model_answer_map=model_answer_map,
                 )
                 reconstructed_structure = reconstructed_reasoned.get("resolved_structure") or reconstructed_semantic
                 reconstructed_audit = list(reconstructed_reasoned.get("question_audit_tree") or [])

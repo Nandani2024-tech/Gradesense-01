@@ -10,6 +10,7 @@ from app.core.logging_config import logger
 
 from app.infrastructure.serialization.safe_numeric import parse_section_math_expression, to_float, to_int
 from .validation import normalize_structure_payload
+from app.constants.layers import MARK_REASON_RECONCILED
 
 
 def _dedupe_subparts(structure: Dict[str, Any]) -> int:
@@ -37,35 +38,16 @@ def _dedupe_subparts(structure: Dict[str, Any]) -> int:
         deduped = sorted(best.values(), key=lambda row: str(row.get("label") or ""))
         if len(deduped) != len(subparts):
             q["subquestions"] = deduped
+            q["mark_source"] = MARK_REASON_RECONCILED
     return changed
 
 
 def _apply_shared_subparts(structure: Dict[str, Any]) -> int:
+    from .mark_merger import _reconcile_subpart_marks
     changed = 0
     for q in (structure.get("questions") or []):
-        subparts = list(q.get("subquestions") or [])
-        if not subparts:
-            continue
-        total = max(0.0, to_float(q.get("marks"), 0.0))
-        if total <= 0:
-            continue
-        cur_sum = sum(max(0.0, to_float(sq.get("marks"), 0.0)) for sq in subparts)
-        if abs(cur_sum - total) <= 1e-6:
-            continue
-        count = len(subparts)
-        even = round(total / float(count), 4)
-        # Assign even marks, then adjust last to fix rounding drift.
-        for idx, sq in enumerate(subparts):
-            if idx < count - 1:
-                sq["marks"] = even
-            else:
-                remainder = round(total - even * (count - 1), 4)
-                sq["marks"] = max(0.0, remainder)
-            if str(sq.get("mark_source") or "").strip().lower() not in {"margin", "section_math", "instruction"}:
-                sq["mark_source"] = str(q.get("mark_source") or "inferred")
-        q["subquestions"] = subparts
-        q["distribution_mode"] = "shared"
-        changed += 1
+        if _reconcile_subpart_marks(q):
+            changed += 1
     return changed
 
 

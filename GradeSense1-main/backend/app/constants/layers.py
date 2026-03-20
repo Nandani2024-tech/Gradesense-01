@@ -65,3 +65,7 @@ WRITTEN_FALLBACK_CONF = 0.35       # Default confidence for written OCR fallback
 
 # Subpart Mark Sources
 _EXPLICIT_SOURCES = {"margin", "section_math", "instruction"}
+
+# Mark Reconciliation Reasons
+MARK_REASON_RECONCILED = "reconciled"
+

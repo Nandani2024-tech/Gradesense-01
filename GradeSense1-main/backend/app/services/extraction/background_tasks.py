@@ -9,10 +9,6 @@ from app.services.extraction.auto_extraction import (
     auto_extract_questions,
     extract_model_answer_content
 )
-from app.services.extraction.mark_validation import (
-    validate_marks_llm_free,
-    compare_validator_to_extracted
-)
 from app.services.extraction.parsing import parse_question_number
 from app.services.extraction.utils import _to_float_or_none, _normalize_sub_id
 from app.config.llm_config import get_llm_api_key, get_llm_service
@@ -83,24 +79,16 @@ async def _process_question_paper_async(exam_id: str):
             async def run_mark_validation():
                 if MARK_VALIDATION_ENABLED:
                     try:
-                        validation_data = result.get("blueprint_health") or {}
-                        visual_entities = validation_data.get("visual_entities") or {}
-                        structure = result.get("question_structure_v2") or {}
-
-                        validator_payload = await validate_marks_llm_free(
-                            structure=structure,
-                            visual_entities=visual_entities
-                        )
-                        if validator_payload:
-                            extracted_qs = await db.questions.find({"exam_id": exam_id}).to_list(1000)
-                            report = compare_validator_to_extracted(extracted_qs, validator_payload)
+                        report = result.get("validation_report") or {}
+                        if report:
                             await db.exams.update_one(
                                 {"exam_id": exam_id},
-                                {"$set": {"mark_validation_status": report.get("status"), "mark_validation_report": report}}
+                                {"$set": {"mark_validation_status": "pass" if report.get("is_valid") else "warning", "mark_validation_report": report}}
                             )
-                            logger.info(f"[QP-ASYNC] Mark validation completed successfully for exam {exam_id}. status={report.get('status')}")
+                            logger.info(f"[QP-ASYNC] Mark validation completed from core result for exam {exam_id}. valid={report.get('is_valid')}")
                     except Exception as ve:
-                        logger.warning(f"Mark validation failed: {ve}")
+                        logger.warning(f"Mark validation report sync failed: {ve}")
+
 
             await asyncio.gather(run_model_answer(), run_mark_validation())
 

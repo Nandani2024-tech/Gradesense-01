@@ -68,8 +68,14 @@ async def extract_and_persist(
             raw_ocr_text = cached.get("raw_ocr_text") or ""
             retry_count = int(cached.get("retry_count") or 0)
         else:
+            model_answer_map = locked_exam.get("model_answer_map")
             structure, validation_report, raw_ocr_text, retry_count = await perform_extraction(
-                question_paper_images, expected_total_marks, expected_question_count, model_name, llm_service
+                question_paper_images=question_paper_images,
+                expected_total_marks=expected_total_marks,
+                expected_question_count=expected_question_count,
+                model_name=model_name,
+                llm_service=llm_service,
+                model_answer_map=model_answer_map,
             )
             set_cached_structure(
                 exam_id, int(locked_exam.get("blueprint_version", 0) or 0), extraction_hash_seed,
