@@ -164,7 +164,7 @@ async def regrade_all_submissions(exam_id: str, user_id: str) -> Dict[str, Any]:
     llm_service = get_llm_service()
     
     question_structure = await extract_question_structure(
-        paper_images=paper_images,
+        question_paper_images=paper_images,
         model_answer_images=model_answer_imgs,
         extract_student_info=True,
         infer_topics=True,

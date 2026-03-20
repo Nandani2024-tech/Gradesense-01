@@ -186,7 +186,7 @@ async def _process_grading_job_core(job_id: str, exam_id: str, files_data: List[
                 
                 # Unified Phase 3 pipeline extraction
                 question_structure = await extract_question_structure(
-                    paper_images=paper_images,
+                    question_paper_images=paper_images,
                     model_answer_images=model_answer_imgs,
                     extract_student_info=True,
                     infer_topics=True,

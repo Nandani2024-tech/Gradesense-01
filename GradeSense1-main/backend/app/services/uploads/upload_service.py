@@ -254,7 +254,7 @@ class UploadService:
 
         # NEW: Using unified Phase 3 extraction pipeline
         question_structure = await extract_question_structure(
-            paper_images=paper_images,
+            question_paper_images=paper_images,
             model_answer_images=model_answer_imgs,
             extract_student_info=True,
             infer_topics=True,

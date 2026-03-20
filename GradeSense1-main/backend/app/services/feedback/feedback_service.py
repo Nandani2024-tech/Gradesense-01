@@ -150,8 +150,9 @@ class FeedbackService:
         paper_images = await get_exam_question_paper_images(exam_id)
         
         # Unified Phase 3 pipeline extraction
+        llm_service = _get_llm_service()
         question_structure = await extract_question_structure(
-            paper_images=paper_images,
+            question_paper_images=paper_images,
             model_answer_images=model_answer_imgs,
             extract_student_info=True,
             infer_topics=True,
