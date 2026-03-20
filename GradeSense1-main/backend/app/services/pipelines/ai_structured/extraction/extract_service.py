@@ -1,23 +1,3 @@
-from typing import Any, Dict, List, Tuple
-from app.adapters.interfaces import AbstractLLMService
-from app.services.pipelines.ai_extraction_service import extract_question_structure
-from app.services.pipelines.ai_structured.utils.logging import with_logging, pipeline_logger
-from app.repositories import ExamRepo, SubmissionRepo
-
-logger = pipeline_logger(__name__)
-exam_repo = ExamRepo()
-submission_repo = SubmissionRepo()
-from typing import Any, Dict, List, Tuple, Optional
-from app.adapters.interfaces import AbstractLLMService
-from app.services.pipelines.ai_extraction_service import extract_question_structure
-from app.services.pipelines.ai_structured.utils.logging import with_logging, pipeline_logger
-from app.repositories import ExamRepo, SubmissionRepo
-
-logger = pipeline_logger(__name__)
-exam_repo = ExamRepo()
-submission_repo = SubmissionRepo()
-
-
 from typing import Any, Dict, List, Tuple, Optional
 from app.adapters.interfaces import AbstractLLMService
 from app.services.pipelines.ai_extraction_service import extract_question_structure
@@ -30,7 +10,7 @@ submission_repo = SubmissionRepo()
 
 @with_logging
 async def perform_extraction(
-    paper_images: List[str],
+    question_paper_images: List[str],
     expected_total_marks: float,
     expected_question_count: int,
     model_name: str = "qwen2.5:latest",
@@ -40,7 +20,7 @@ async def perform_extraction(
     max_retries: int = 3,
 ) -> Tuple[Dict[str, Any], Dict[str, Any], str, int]:
     """Perform question structure extraction with layered pipeline."""
-    return await extract_question_structure(
+    result = await extract_question_structure(
         question_paper_images=question_paper_images,
         raw_ocr_text=raw_ocr_text,
         expected_total_marks=expected_total_marks,
@@ -50,7 +30,7 @@ async def perform_extraction(
         llm_service=llm_service,
         model_answer_map=model_answer_map,
     )
-    return result, result.get("_validation_report"), result.get("_raw_ocr_text", ""), result.get("_retry_count", 0)
+    return result, result.get("_validation_report") or {}, result.get("_raw_ocr_text", ""), result.get("_retry_count", 0)
 
 @with_logging
 async def persist_extracted_structure(

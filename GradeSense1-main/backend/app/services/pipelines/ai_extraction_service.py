@@ -1634,7 +1634,7 @@ QUESTIONS:
 
 async def extract_question_structure(
     *,
-    paper_images: List[str],
+    question_paper_images: List[str],
     answer_paper_images: Optional[List[str]] = None,
     model_answer_images: Optional[List[str]] = None,
     raw_ocr_text: Optional[str] = None,
@@ -1651,14 +1651,14 @@ async def extract_question_structure(
 ) -> Tuple[Dict[str, Any], Dict[str, Any], str, int]:
     """Extract question structure with layered visual+semantic pipeline."""
 
-    if not paper_images:
+    if not question_paper_images:
         raise ValueError("paper_images_required")
 
     # Layer 1: multimodal visual evidence (Gemini Vision), fallback to OCR visual layer.
     batch_size = max(1, int(os.getenv("AI_STRUCTURED_PAGE_BATCH_SIZE", "8")))
     chunks: List[Tuple[int, List[str]]] = []
-    for i in range(0, len(paper_images), batch_size):
-        chunks.append((i, paper_images[i:i + batch_size]))
+    for i in range(0, len(question_paper_images), batch_size):
+        chunks.append((i, question_paper_images[i:i + batch_size]))
 
     async def _extract_visual_chunk(start_idx: int, chunk_images: List[str], idx: int, total: int) -> Dict[str, Any]:
         prompt = build_visual_extraction_prompt(
@@ -1726,7 +1726,7 @@ async def extract_question_structure(
     except Exception as exc:
         logger.warning("VISUAL_ENTITIES_FAILED error=%s", exc)
         try:
-            visual_entities = extract_visual_entities(paper_images, force_ocr_fallback=True)
+            visual_entities = extract_visual_entities(question_paper_images, force_ocr_fallback=True)
         except Exception as exc2:
             logger.warning("VISUAL_OCR_FALLBACK_FAILED error=%s", exc2)
             visual_entities = {
@@ -1762,7 +1762,7 @@ async def extract_question_structure(
     )
 
     if raw_ocr_text is None:
-        raw_ocr_text = await _build_raw_ocr_text(paper_images)
+        raw_ocr_text = await _build_raw_ocr_text(question_paper_images)
 
     # Layer 2: Gemini semantic extraction only (marks ignored).
 
@@ -1869,7 +1869,7 @@ async def extract_question_structure(
 
     # Merge question anchors from visual + OCR + structured sources to avoid anchor drift.
     try:
-        ocr_anchors = _extract_ocr_question_anchors(paper_images)
+        ocr_anchors = _extract_ocr_question_anchors(question_paper_images)
     except Exception as exc:
         logger.warning("OCR_ANCHOR_EXTRACTION_FAILED error=%s", exc)
         ocr_anchors = []
@@ -1896,7 +1896,7 @@ async def extract_question_structure(
         header_total_source = str(visual_header.get("source") or "visual_header")
     else:
         header_total_marks, header_total_reliable, header_total_conf, header_total_source = _extract_header_total_from_images(
-            paper_images
+            question_paper_images
         )
         if not header_total_marks:
             header_total_marks, header_total_reliable, header_total_conf, header_total_source = _extract_header_total_hint(
@@ -1959,7 +1959,7 @@ async def extract_question_structure(
                     raw_ocr_text=raw_ocr_text,
                 )
                 reconstructed_raw = await _call_extraction_llm(
-                    paper_images,
+                    question_paper_images,
                     reconstruction_prompt,
                     model_name=model_name,
                     llm_service=llm_service,
