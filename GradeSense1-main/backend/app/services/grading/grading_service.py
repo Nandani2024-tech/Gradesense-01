@@ -140,10 +140,11 @@ async def create_submission_from_file(
 async def regrade_all_submissions(exam_id: str, user_id: str) -> Dict[str, Any]:
     """Regrade all submissions for an exam with current settings."""
     from app.services.grading import grade_with_ai
-    from app.services.extraction import get_exam_model_answer_text, get_exam_model_answer_map
+    from app.services.pipelines.ai_extraction_service import extract_question_structure
     from app.services.annotation import generate_annotated_images_with_vision_ocr, generate_annotated_images
     from app.services import blueprint_service
-    from app.services.storage.gridfs_helpers import get_exam_model_answer_images
+    from app.services.storage.gridfs_helpers import get_exam_model_answer_images, get_exam_question_paper_images
+    from app.config.llm_config import get_llm_service
     from app.services.score_normalization import normalize_submission_scores
     from app.services.files import file_service
 
@@ -157,14 +158,40 @@ async def regrade_all_submissions(exam_id: str, user_id: str) -> Dict[str, Any]:
     if not submissions:
         return {"message": "No submissions to regrade", "regraded_count": 0, "total_submissions": 0}
 
+    # Unified Phase 3 pipeline extraction
+    model_answer_imgs = await get_exam_model_answer_images(exam_id)
+    paper_images = await get_exam_question_paper_images(exam_id)
+    llm_service = get_llm_service()
+    
+    question_structure = await extract_question_structure(
+        paper_images=paper_images,
+        model_answer_images=model_answer_imgs,
+        extract_student_info=True,
+        infer_topics=True,
+        llm_service=llm_service
+    )
+    model_answer_text = question_structure['model_answers']['text']
+    model_answer_map = question_structure['model_answers']['map']
+
     model_answer_imgs = await get_exam_model_answer_images(exam_id)
     subject_name = None
     if exam.get("subject_id"):
         subject_doc = await analytics_repo.find_one_subject({"subject_id": exam["subject_id"]}, projection={"name": 1})
         subject_name = subject_doc.get("name") if subject_doc else None
 
-    model_answer_text = await get_exam_model_answer_text(exam_id)
-    model_answer_map = await get_exam_model_answer_map(exam_id)
+    paper_images = await get_exam_question_paper_images(exam_id)
+    llm_service = get_llm_service()
+
+    # Unified Phase 3 extraction pipeline to get model answer content
+    question_result = await extract_question_structure(
+        question_paper_images=paper_images,
+        model_answer_images=model_answer_imgs,
+        llm_service=llm_service
+    )
+    question_structure, _, _, _ = question_result
+    
+    model_answer_text = question_structure.get('model_answers', {}).get('text') or ""
+    model_answer_map = question_structure.get('model_answers', {}).get('map') or {}
 
     logger.info("REGRADE_ALL_STARTED exam_id=%s submission_count=%s", exam_id, len(submissions))
     regraded_count = 0

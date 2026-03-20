@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from app.adapters.interfaces import AbstractLLMService
 from app.services.pipelines.ai_extraction_service import extract_question_structure
 from app.services.pipelines.ai_structured.utils.logging import with_logging, pipeline_logger
@@ -10,20 +10,33 @@ submission_repo = SubmissionRepo()
 
 @with_logging
 async def perform_extraction(
-    question_paper_images: List[str],
+    paper_images: List[str],
     expected_total_marks: float,
     expected_question_count: int,
     model_name: str,
     llm_service: AbstractLLMService,
+    answer_paper_images: Optional[List[str]] = None,
+    model_answer_images: Optional[List[str]] = None,
+    extract_student_info: bool = False,
+    infer_topics: bool = False,
+    subject_name: Optional[str] = None,
+    exam_name: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any], str, int]:
-    return await extract_question_structure(
-        question_paper_images=question_paper_images,
+    result = await extract_question_structure(
+        paper_images=paper_images,
+        answer_paper_images=answer_paper_images,
+        model_answer_images=model_answer_images,
         expected_total_marks=expected_total_marks,
         expected_question_count=expected_question_count,
+        extract_student_info=extract_student_info,
+        infer_topics=infer_topics,
+        subject_name=subject_name,
+        exam_name=exam_name,
         max_retries=3,
         model_name=model_name,
         llm_service=llm_service,
     )
+    return result, result.get("_validation_report"), result.get("_raw_ocr_text", ""), result.get("_retry_count", 0)
 
 @with_logging
 async def persist_extracted_structure(

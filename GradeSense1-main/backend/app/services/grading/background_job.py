@@ -66,8 +66,7 @@ async def _process_grading_job_core(job_id: str, exam_id: str, files_data: List[
     from app.services.storage.gridfs_helpers import get_exam_model_answer_images
     from app.services.extraction import (
         auto_extract_questions,
-        get_exam_model_answer_text,
-        get_exam_model_answer_map,
+        extract_question_structure,
     )
     from app.services.students import student_service
     from app.services.answer_sheet_pipeline import pdf_to_clean_images
@@ -182,8 +181,19 @@ async def _process_grading_job_core(job_id: str, exam_id: str, files_data: List[
                 questions_from_db = await exam_repo.find_questions({"exam_id": exam_id}, limit=1000)
                 questions_to_grade = questions_from_db if questions_from_db else exam.get("questions", [])
 
-                model_answer_text = await get_exam_model_answer_text(exam_id)
-                model_answer_map = await get_exam_model_answer_map(exam_id)
+                paper_images = await get_exam_question_paper_images(exam_id)
+                llm_service = get_llm_service()
+                
+                # Unified Phase 3 pipeline extraction
+                question_structure = await extract_question_structure(
+                    paper_images=paper_images,
+                    model_answer_images=model_answer_imgs,
+                    extract_student_info=True,
+                    infer_topics=True,
+                    llm_service=llm_service
+                )
+                model_answer_text = question_structure['model_answers']['text']
+                model_answer_map = question_structure['model_answers']['map']
                 
                 # Subject name for context
                 subject_name = None

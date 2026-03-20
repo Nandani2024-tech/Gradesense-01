@@ -8,7 +8,7 @@ from app.repositories import FeedbackRepo, SubmissionRepo, ExamRepo
 from app.core.logging_config import logger
 from app.services.llm.config import get_llm_api_key
 
-from app.services.extraction import get_exam_model_answer_text
+from app.services.pipelines.ai_extraction_service import extract_question_structure
 from app.adapters.llm_adapter import GeminiLLMService
 
 def _get_llm_service():
@@ -145,7 +145,19 @@ class FeedbackService:
         if not question:
             return {"error": f"Question {question_number} not found", "status_code": 404}
 
-        model_answer_text = await get_exam_model_answer_text(exam_id)
+        from app.services.storage.gridfs_helpers import get_exam_model_answer_images, get_exam_question_paper_images
+        model_answer_imgs = await get_exam_model_answer_images(exam_id)
+        paper_images = await get_exam_question_paper_images(exam_id)
+        
+        # Unified Phase 3 pipeline extraction
+        question_structure = await extract_question_structure(
+            paper_images=paper_images,
+            model_answer_images=model_answer_imgs,
+            extract_student_info=True,
+            infer_topics=True,
+            llm_service=llm_service
+        )
+        model_answer_text = question_structure.get('model_answers', {}).get('text') or ""
         updated_count = 0
 
         for submission in submissions:

@@ -1,8 +1,10 @@
 import os
 import hashlib
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from app.adapters.interfaces import AbstractLLMService
 
+from app.core.database import db
 from app.core.exceptions import CustomServiceException
 from app.models.submission import QuestionScore, SubQuestionScore
 import uuid
@@ -40,6 +42,7 @@ async def extract_and_persist(
     lock_owner: Optional[str] = None,
     model_name: str = DEFAULT_MODEL_NAME,
     llm_service: "AbstractLLMService",
+    model_answer_images: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     owner = lock_owner or f"extract_{exam_id}"
     locked_exam: Dict[str, Any] = {}
@@ -69,7 +72,15 @@ async def extract_and_persist(
             retry_count = int(cached.get("retry_count") or 0)
         else:
             structure, validation_report, raw_ocr_text, retry_count = await perform_extraction(
-                question_paper_images, expected_total_marks, expected_question_count, model_name, llm_service
+                paper_images=question_paper_images,
+                expected_total_marks=expected_total_marks,
+                expected_question_count=expected_question_count,
+                model_name=model_name,
+                llm_service=llm_service,
+                model_answer_images=model_answer_images,
+                infer_topics=True, # Always infer topics for new blueprints
+                subject_name=locked_exam.get("subject_name"),
+                exam_name=locked_exam.get("exam_name"),
             )
             set_cached_structure(
                 exam_id, int(locked_exam.get("blueprint_version", 0) or 0), extraction_hash_seed,
@@ -143,6 +154,20 @@ async def extract_and_persist(
         }
 
         await persist_extracted_structure(exam_id, legacy_questions, exam_update_payload, next_version)
+
+        # Persist model answers if extracted
+        if model_answer_images and (structure.get("model_answer_map") or structure.get("model_answer_text")):
+            await db.exam_files.update_one(
+                {"exam_id": exam_id, "file_type": "model_answer"},
+                {
+                    "$set": {
+                        "model_answer_map": structure.get("model_answer_map"),
+                        "model_answer_text": structure.get("model_answer_text"),
+                        "updated_at": datetime.now(timezone.utc).isoformat()
+                    }
+                },
+                upsert=True
+            )
 
         return {
             "success": True,

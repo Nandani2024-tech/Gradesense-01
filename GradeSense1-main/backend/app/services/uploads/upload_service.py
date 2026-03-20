@@ -229,10 +229,11 @@ class UploadService:
         """Upload and grade papers."""
         from app.services.grading import grade_with_ai
         from app.services import blueprint_service
-        from app.services.extraction import get_exam_model_answer_text, get_exam_model_answer_map
-        from app.services.storage.gridfs_helpers import get_exam_model_answer_images
+        from app.services.pipelines.ai_extraction_service import extract_question_structure
+        from app.services.storage.gridfs_helpers import get_exam_model_answer_images, get_exam_question_paper_images
         from app.services.students.student_service import student_service
         from app.services.submissions.submission_service import submission_service
+        from app.config.llm_config import get_llm_service
 
         exam = await self.exam_repo.find_one_exam({"exam_id": exam_id})
         if not exam:
@@ -248,8 +249,20 @@ class UploadService:
         errors = []
 
         model_answer_imgs = await get_exam_model_answer_images(exam_id)
-        model_answer_text = await get_exam_model_answer_text(exam_id)
-        model_answer_map = await get_exam_model_answer_map(exam_id)
+        paper_images = await get_exam_question_paper_images(exam_id)
+        llm_service = get_llm_service()
+
+        # NEW: Using unified Phase 3 extraction pipeline
+        question_structure = await extract_question_structure(
+            paper_images=paper_images,
+            model_answer_images=model_answer_imgs,
+            extract_student_info=True,
+            infer_topics=True,
+            llm_service=llm_service
+        )
+        
+        model_answer_text = question_structure.get('model_answers', {}).get('text') or ""
+        model_answer_map = question_structure.get('model_answers', {}).get('map') or {}
         
         subject_name = None
         if exam.get("subject_id"):

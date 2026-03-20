@@ -432,8 +432,10 @@ class ExamService:
             
         validation_service.validate_blueprint_unlocked(exam)
 
+        llm_service = _get_llm_service()
         result = await auto_extract_questions(
             exam_id=exam_id,
+            llm_service=llm_service,
             force=True,
             use_model_answer_fallback=False
         )
@@ -452,8 +454,10 @@ class ExamService:
 
         validation_service.validate_blueprint_unlocked(exam)
 
+        llm_service = _get_llm_service()
         result = await auto_extract_questions(
             exam_id=exam_id,
+            llm_service=llm_service,
             force=True,
             use_model_answer_fallback=False
         )

@@ -30,21 +30,29 @@ async def _process_question_paper_async(exam_id: str):
     success = False
     try:
         logger.info(f"[QP-ASYNC] Starting question extraction for exam {exam_id}")
+        logger.info(f"[QP-ASYNC] Starting unified extraction for exam {exam_id}")
         exam_doc = await db.exams.find_one({"exam_id": exam_id})
         if exam_doc:
             teacher_id = exam_doc.get("teacher_id")
             exam_name = exam_doc.get("exam_name", "exam")
 
         llm_service = _get_llm_service()
+        model_images = await get_exam_model_answer_images(exam_id)
 
-        result = await auto_extract_questions(exam_id, llm_service=llm_service, force=True, lock_owner=f"upload_question_paper:{exam_id}")
+        # Unified Extraction: Questions + Topics + Model Answers in one go
+        result = await auto_extract_questions(
+            exam_id=exam_id, 
+            llm_service=llm_service, 
+            force=True, 
+            lock_owner=f"upload_question_paper:{exam_id}",
+            model_answer_images=model_images
+        )
         success = result.get("success")
         
         if success:
-            if result.get("count", 0) == 0:
-                logger.warning(f"[QP-ASYNC] Extraction completed partially but with missing questions for exam {exam_id}. count=0")
-            else:
-                logger.info(f"[QP-ASYNC] Extraction completed successfully for exam {exam_id}. count={result.get('count')}")
+            logger.info(f"[QP-ASYNC] Unified extraction completed successfully for exam {exam_id}. count={result.get('count')}")
+        else:
+            logger.warning(f"[QP-ASYNC] Unified extraction failed for exam {exam_id}")
 
         # Update exam with extraction results
         blueprint_status = result.get("blueprint_status", "ready_unlocked" if success else "failed")
@@ -58,51 +66,27 @@ async def _process_question_paper_async(exam_id: str):
         }
         await db.exams.update_one({"exam_id": exam_id}, {"$set": update_data})
 
-        # Process model answer and mark validation concurrently if question extraction was successful
-        if success:
-            model_images = await get_exam_model_answer_images(exam_id)
-            exam_updated = await db.exams.find_one({"exam_id": exam_id})
-            questions = exam_updated.get("questions", [])
+        # Mark validation (still separate as it depends on extracted questions)
+        if success and MARK_VALIDATION_ENABLED:
+            try:
+                validation_data = result.get("blueprint_health") or {}
+                visual_entities = validation_data.get("visual_entities") or {}
+                structure = result.get("question_structure_v2") or {}
 
-            async def run_model_answer():
-                if model_images:
-                    ma_text, ma_map = await extract_model_answer_content(
-                        model_answer_images=model_images,
-                        questions=questions,
-                        llm_service=llm_service
+                validator_payload = await validate_marks_llm_free(
+                    structure=structure,
+                    visual_entities=visual_entities
+                )
+                if validator_payload:
+                    extracted_qs = await db.questions.find({"exam_id": exam_id}).to_list(1000)
+                    report = compare_validator_to_extracted(extracted_qs, validator_payload)
+                    await db.exams.update_one(
+                        {"exam_id": exam_id},
+                        {"$set": {"mark_validation_status": report.get("status"), "mark_validation_report": report}}
                     )
-                    if ma_text or ma_map:
-                        logger.info(f"[QP-ASYNC] Model answer text and map extracted successfully for exam {exam_id}")
-                        await db.exam_files.update_one(
-                            {"exam_id": exam_id, "file_type": "model_answer"},
-                            {"$set": {"model_answer_text": ma_text, "model_answer_map": ma_map}}
-                        )
-                    else:
-                        logger.warning(f"[QP-ASYNC] Model answer extraction returned empty text or map for exam {exam_id}")
-
-            async def run_mark_validation():
-                if MARK_VALIDATION_ENABLED:
-                    try:
-                        validation_data = result.get("blueprint_health") or {}
-                        visual_entities = validation_data.get("visual_entities") or {}
-                        structure = result.get("question_structure_v2") or {}
-
-                        validator_payload = await validate_marks_llm_free(
-                            structure=structure,
-                            visual_entities=visual_entities
-                        )
-                        if validator_payload:
-                            extracted_qs = await db.questions.find({"exam_id": exam_id}).to_list(1000)
-                            report = compare_validator_to_extracted(extracted_qs, validator_payload)
-                            await db.exams.update_one(
-                                {"exam_id": exam_id},
-                                {"$set": {"mark_validation_status": report.get("status"), "mark_validation_report": report}}
-                            )
-                            logger.info(f"[QP-ASYNC] Mark validation completed successfully for exam {exam_id}. status={report.get('status')}")
-                    except Exception as ve:
-                        logger.warning(f"Mark validation failed: {ve}")
-
-            await asyncio.gather(run_model_answer(), run_mark_validation())
+                    logger.info(f"[QP-ASYNC] Mark validation completed successfully for exam {exam_id}. status={report.get('status')}")
+            except Exception as ve:
+                logger.warning(f"Mark validation failed for exam {exam_id}: {ve}")
 
     except Exception as e:
         logger.error(f"[QP-ASYNC] Failed for exam {exam_id}: {e}", exc_info=True)
@@ -134,36 +118,24 @@ async def _process_model_answer_async(exam_id: str):
             exam_name = exam_doc.get("exam_name", "exam")
 
         llm_service = _get_llm_service()
-        qp_imgs = await get_exam_question_paper_images(exam_id)
-        force_extraction = not bool(qp_imgs)
-        
-        result = await auto_extract_questions(exam_id, llm_service=llm_service, force=force_extraction, lock_owner=f"upload_model_answer:{exam_id}")
-        
-        if result.get("success"):
-            if result.get("count", 0) == 0:
-                logger.warning(f"[MA-ASYNC] Extraction completed partially but with missing questions for exam {exam_id}. count=0")
-            else:
-                logger.info(f"[MA-ASYNC] Extraction completed successfully for exam {exam_id}. count={result.get('count')}")
-
         model_images = await get_exam_model_answer_images(exam_id)
-        exam_updated = await db.exams.find_one({"exam_id": exam_id})
-        model_answer_text, model_answer_map = await extract_model_answer_content(
-            model_answer_images=model_images,
-            questions=exam_updated.get("questions", []),
-            llm_service=llm_service
+
+        # Unified Extraction: Re-run question paper extraction but focus on model answers
+        result = await auto_extract_questions(
+            exam_id=exam_id, 
+            llm_service=llm_service, 
+            force=False, 
+            lock_owner=f"upload_model_answer:{exam_id}",
+            model_answer_images=model_images
         )
+        success = result.get("success")
         
-        if model_answer_text or model_answer_map:
-            logger.info(f"[MA-ASYNC] Model answer text and map extracted successfully for exam {exam_id}")
-            await db.exam_files.update_one(
-                {"exam_id": exam_id, "file_type": "model_answer"},
-                {"$set": {"model_answer_text": model_answer_text, "model_answer_map": model_answer_map}}
-            )
+        if success:
+            logger.info(f"[MA-ASYNC] Unified model answer extraction completed for exam {exam_id}")
         else:
-            logger.warning(f"[MA-ASYNC] Model answer extraction returned empty text or map for exam {exam_id}")
+            logger.warning(f"[MA-ASYNC] Unified model answer extraction failed for exam {exam_id}")
 
         await db.exams.update_one({"exam_id": exam_id}, {"$set": {"model_answer_processing": False, "model_answer_processed_at": datetime.now(timezone.utc).isoformat()}})
-        success = True
 
     except Exception as e:
         logger.error(f"[MA-ASYNC] Failed for exam {exam_id}: {e}", exc_info=True)
