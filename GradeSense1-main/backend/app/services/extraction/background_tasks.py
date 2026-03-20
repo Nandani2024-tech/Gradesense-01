@@ -26,21 +26,29 @@ async def _process_question_paper_async(exam_id: str):
     success = False
     try:
         logger.info(f"[QP-ASYNC] Starting question extraction for exam {exam_id}")
+        logger.info(f"[QP-ASYNC] Starting unified extraction for exam {exam_id}")
         exam_doc = await db.exams.find_one({"exam_id": exam_id})
         if exam_doc:
             teacher_id = exam_doc.get("teacher_id")
             exam_name = exam_doc.get("exam_name", "exam")
 
         llm_service = _get_llm_service()
+        model_images = await get_exam_model_answer_images(exam_id)
 
-        result = await auto_extract_questions(exam_id, llm_service=llm_service, force=True, lock_owner=f"upload_question_paper:{exam_id}")
+        # Unified Extraction: Questions + Topics + Model Answers in one go
+        result = await auto_extract_questions(
+            exam_id=exam_id, 
+            llm_service=llm_service, 
+            force=True, 
+            lock_owner=f"upload_question_paper:{exam_id}",
+            model_answer_images=model_images
+        )
         success = result.get("success")
         
         if success:
-            if result.get("count", 0) == 0:
-                logger.warning(f"[QP-ASYNC] Extraction completed partially but with missing questions for exam {exam_id}. count=0")
-            else:
-                logger.info(f"[QP-ASYNC] Extraction completed successfully for exam {exam_id}. count={result.get('count')}")
+            logger.info(f"[QP-ASYNC] Unified extraction completed successfully for exam {exam_id}. count={result.get('count')}")
+        else:
+            logger.warning(f"[QP-ASYNC] Unified extraction failed for exam {exam_id}")
 
         # Update exam with extraction results
         blueprint_status = result.get("blueprint_status", "ready_unlocked" if success else "failed")
@@ -122,36 +130,24 @@ async def _process_model_answer_async(exam_id: str):
             exam_name = exam_doc.get("exam_name", "exam")
 
         llm_service = _get_llm_service()
-        qp_imgs = await get_exam_question_paper_images(exam_id)
-        force_extraction = not bool(qp_imgs)
-        
-        result = await auto_extract_questions(exam_id, llm_service=llm_service, force=force_extraction, lock_owner=f"upload_model_answer:{exam_id}")
-        
-        if result.get("success"):
-            if result.get("count", 0) == 0:
-                logger.warning(f"[MA-ASYNC] Extraction completed partially but with missing questions for exam {exam_id}. count=0")
-            else:
-                logger.info(f"[MA-ASYNC] Extraction completed successfully for exam {exam_id}. count={result.get('count')}")
-
         model_images = await get_exam_model_answer_images(exam_id)
-        exam_updated = await db.exams.find_one({"exam_id": exam_id})
-        model_answer_text, model_answer_map = await extract_model_answer_content(
-            model_answer_images=model_images,
-            questions=exam_updated.get("questions", []),
-            llm_service=llm_service
+
+        # Unified Extraction: Re-run question paper extraction but focus on model answers
+        result = await auto_extract_questions(
+            exam_id=exam_id, 
+            llm_service=llm_service, 
+            force=False, 
+            lock_owner=f"upload_model_answer:{exam_id}",
+            model_answer_images=model_images
         )
+        success = result.get("success")
         
-        if model_answer_text or model_answer_map:
-            logger.info(f"[MA-ASYNC] Model answer text and map extracted successfully for exam {exam_id}")
-            await db.exam_files.update_one(
-                {"exam_id": exam_id, "file_type": "model_answer"},
-                {"$set": {"model_answer_text": model_answer_text, "model_answer_map": model_answer_map}}
-            )
+        if success:
+            logger.info(f"[MA-ASYNC] Unified model answer extraction completed for exam {exam_id}")
         else:
-            logger.warning(f"[MA-ASYNC] Model answer extraction returned empty text or map for exam {exam_id}")
+            logger.warning(f"[MA-ASYNC] Unified model answer extraction failed for exam {exam_id}")
 
         await db.exams.update_one({"exam_id": exam_id}, {"$set": {"model_answer_processing": False, "model_answer_processed_at": datetime.now(timezone.utc).isoformat()}})
-        success = True
 
     except Exception as e:
         logger.error(f"[MA-ASYNC] Failed for exam {exam_id}: {e}", exc_info=True)

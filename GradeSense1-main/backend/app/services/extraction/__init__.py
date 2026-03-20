@@ -7,19 +7,19 @@ from .blueprint import (
     build_question_blueprint_from_exam_questions,
     build_question_blueprint_from_pdf
 )
+
 from .auto_extraction import (
     auto_extract_questions,
-    extract_questions_from_question_paper,
-    extract_questions_from_model_answer,
-    extract_question_structure_from_paper,
-    extract_model_answer_content,
-    get_exam_model_answer_text,
-    get_exam_model_answer_map
+    extract_model_answer_content
 )
+from app.services.pipelines.ai_extraction_service import extract_question_structure
+
+
 from .background_tasks import (
     _process_model_answer_async,
     _process_question_paper_async
 )
+
 from .parsing import (
     parse_question_number,
     is_section_heading,
@@ -31,21 +31,11 @@ from .parsing import (
     SUBPART_RE
 )
 
-from .background_tasks import (
-    _process_question_paper_async,
-    _process_model_answer_async
-)
-
 __all__ = [
+    "auto_extract_questions",
+    "extract_model_answer_content",
     "build_question_blueprint_from_exam_questions",
     "build_question_blueprint_from_pdf",
-    "auto_extract_questions",
-    "extract_questions_from_question_paper",
-    "extract_questions_from_model_answer",
-    "extract_question_structure_from_paper",
-    "extract_model_answer_content",
-    "get_exam_model_answer_text",
-    "get_exam_model_answer_map",
     "parse_question_number",
     "is_section_heading",
     "is_subpart_pattern",
@@ -53,5 +43,7 @@ __all__ = [
     "infer_type",
     "expected_components",
     "_process_question_paper_async",
-    "_process_model_answer_async"
+    "_process_model_answer_async",
+    "extract_question_structure"
 ]
+

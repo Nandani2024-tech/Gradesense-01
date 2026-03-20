@@ -30,7 +30,7 @@ submission_repo = SubmissionRepo()
 
 @with_logging
 async def perform_extraction(
-    question_paper_images: List[str],
+    paper_images: List[str],
     expected_total_marks: float,
     expected_question_count: int,
     model_name: str = "qwen2.5:latest",
@@ -50,6 +50,7 @@ async def perform_extraction(
         llm_service=llm_service,
         model_answer_map=model_answer_map,
     )
+    return result, result.get("_validation_report"), result.get("_raw_ocr_text", ""), result.get("_retry_count", 0)
 
 @with_logging
 async def persist_extracted_structure(

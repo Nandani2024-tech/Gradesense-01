@@ -345,7 +345,7 @@ def _normalize_visual_payload(payload: Dict[str, Any], page_offset: int, page_co
             {
                 "q": qn,
                 "sub": row.get("sub"),
-                "marks": round(_to_float(row.get("marks"), 0.0), 4),
+                "marks": round(float(_to_float(row.get("marks"), 0.0)), 4),
                 "text": row.get("text") or row.get("raw"),
                 "split": row.get("split"),
                 "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
@@ -365,13 +365,13 @@ def _normalize_visual_payload(payload: Dict[str, Any], page_offset: int, page_co
         out["section_math"].append(
             {
                 "count": count,
-                "per": round(per, 4),
-                "total": round(total, 4),
+                "per": round(float(per), 4),
+                "total": round(float(total), 4),
                 "range": {
                     "start": _to_int(row.get("start_question"), 0),
                     "end": _to_int(row.get("start_question"), 0) + count - 1,
                 },
-                "expr": str(row.get("expression") or f"{count} x {round(per, 4)} = {round(total, 4)}"),
+                "expr": str(row.get("expression") or f"{count} x {round(float(per), 4)} = {round(float(total), 4)}"),
                 "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
                 "page": _norm_page(row.get("page_index")),
                 "confidence": round(_to_float(row.get("confidence"), 0.0), 4),
@@ -1502,12 +1502,148 @@ async def _call_visual_extraction_llm(
         raise
 
 
+async def _extract_student_info(
+    images: List[str],
+    llm_service: "AbstractLLMService",
+    model_name: str = "gemini-2.0-flash",
+) -> Dict[str, Any]:
+    """Extract student ID and Name from the first page of answer images."""
+    if not images:
+        return {}
+
+    logger.info("STUDENT_INFO_EXTRACTION starting on 1 page")
+    prompt = """You are an expert at reading student information from handwritten or printed exam papers.
+Extract the student's Roll Number (or Student ID) and Full Name.
+Look for fields like 'Roll No', 'Name', 'Student ID', etc.
+Return ONLY valid JSON:
+{
+  "student_id": "string or null",
+  "student_name": "string or null"
+}"""
+    try:
+        raw = await llm_service.predict(
+            prompt=prompt,
+            images=[images[0]],
+            model_name=model_name,
+            temperature=0,
+        )
+        payload = _parse_json_object(raw)
+        return {
+            "student_id": str(payload.get("student_id") or "").strip() or None,
+            "student_name": str(payload.get("student_name") or "").strip() or None,
+        }
+    except Exception as exc:
+        logger.warning("STUDENT_INFO_EXTRACTION_FAILED error=%s", exc)
+        return {}
+
+
+async def _extract_model_answers(
+    images: List[str],
+    questions: List[Dict[str, Any]],
+    llm_service: "AbstractLLMService",
+    model_name: str = "gemini-2.0-flash",
+) -> Dict[str, Any]:
+    """Extract model answers and map them to question numbers."""
+    if not images or not questions:
+        return {}
+
+    logger.info("MODEL_ANSWER_EXTRACTION starting on %s images", len(images))
+    ctx = "\n".join([f"Q{q.get('number')}: {q.get('marks')} marks" for q in questions])
+    prompt = f"""You are an expert at extracting model answers/solutions from images.
+Below is the question structure (number and marks).
+Extract the model answer text for each question.
+If the answer key is structured, preserve that structure.
+
+CONTEXT:
+{ctx}
+
+Return ONLY valid JSON:
+{{
+  "answers": [
+    {{
+      "number": 1,
+      "text": "Correct answer text..."
+    }}
+  ],
+  "overall_text": "Full extracted text..."
+}}"""
+    try:
+        raw = await llm_service.predict(
+            prompt=prompt,
+            images=images,
+            model_name=model_name,
+            temperature=0,
+        )
+        payload = _parse_json_object(raw)
+        ans_list = payload.get("answers") or []
+        ans_map = {str(a.get("number")): str(a.get("text") or "").strip() for a in ans_list if a.get("number")}
+        return {
+            "model_answer_map": ans_map,
+            "model_answer_text": str(payload.get("overall_text") or "").strip(),
+        }
+    except Exception as exc:
+        logger.warning("MODEL_ANSWER_EXTRACTION_FAILED error=%s", exc)
+        return {}
+
+
+async def _infer_topics(
+    subject_name: str,
+    exam_name: str,
+    questions: List[Dict[str, Any]],
+    llm_service: "AbstractLLMService",
+    model_name: str = "gemini-2.5-flash",
+) -> List[Dict[str, Any]]:
+    """Infers topic tags for each question based on content and subject."""
+    if not questions:
+        return []
+
+    logger.info("TOPIC_INFERENCE starting for %s questions", len(questions))
+    
+    # Batch topics for efficiency if many questions, but for now single call is fine for typical papers
+    q_data = []
+    for q in questions:
+        q_data.append({
+            "number": q.get("number"),
+            "text": (q.get("question_text") or "")[:500] # Truncate for prompt
+        })
+
+    prompt = f"""You are an expert subject matter specialist for '{subject_name}' in the exam '{exam_name}'.
+Assign 1-3 specific topic tags to each question based on its text.
+Return ONLY valid JSON:
+[
+  {{
+    "question_number": "1",
+    "topics": ["Topic A", "Topic B"]
+  }}
+]
+
+QUESTIONS:
+{json.dumps(q_data, indent=2)}"""
+
+    try:
+        raw = await llm_service.predict(
+            prompt=prompt,
+            model_name=model_name,
+            temperature=0,
+        )
+        return _parse_any_json_value(raw) or []
+    except Exception as exc:
+        logger.warning("TOPIC_INFERENCE_FAILED error=%s", exc)
+        return []
+
+
 async def extract_question_structure(
     *,
-    question_paper_images: List[str],
+    paper_images: List[str],
+    answer_paper_images: Optional[List[str]] = None,
+    model_answer_images: Optional[List[str]] = None,
     raw_ocr_text: Optional[str] = None,
     expected_total_marks: Optional[float] = None,
     expected_question_count: Optional[int] = None,
+    extract_student_info: bool = False,
+    infer_topics: bool = False,
+    subject_name: Optional[str] = None,
+    exam_name: Optional[str] = None,
     max_retries: int = 3,
     model_name: str = "qwen2.5:latest",
     llm_service: "AbstractLLMService",
@@ -1515,14 +1651,14 @@ async def extract_question_structure(
 ) -> Tuple[Dict[str, Any], Dict[str, Any], str, int]:
     """Extract question structure with layered visual+semantic pipeline."""
 
-    if not question_paper_images:
-        raise ValueError("question_paper_images_required")
+    if not paper_images:
+        raise ValueError("paper_images_required")
 
     # Layer 1: multimodal visual evidence (Gemini Vision), fallback to OCR visual layer.
     batch_size = max(1, int(os.getenv("AI_STRUCTURED_PAGE_BATCH_SIZE", "8")))
     chunks: List[Tuple[int, List[str]]] = []
-    for i in range(0, len(question_paper_images), batch_size):
-        chunks.append((i, question_paper_images[i:i + batch_size]))
+    for i in range(0, len(paper_images), batch_size):
+        chunks.append((i, paper_images[i:i + batch_size]))
 
     async def _extract_visual_chunk(start_idx: int, chunk_images: List[str], idx: int, total: int) -> Dict[str, Any]:
         prompt = build_visual_extraction_prompt(
@@ -1590,7 +1726,7 @@ async def extract_question_structure(
     except Exception as exc:
         logger.warning("VISUAL_ENTITIES_FAILED error=%s", exc)
         try:
-            visual_entities = extract_visual_entities(question_paper_images, force_ocr_fallback=True)
+            visual_entities = extract_visual_entities(paper_images, force_ocr_fallback=True)
         except Exception as exc2:
             logger.warning("VISUAL_OCR_FALLBACK_FAILED error=%s", exc2)
             visual_entities = {
@@ -1626,7 +1762,7 @@ async def extract_question_structure(
     )
 
     if raw_ocr_text is None:
-        raw_ocr_text = await _build_raw_ocr_text(question_paper_images)
+        raw_ocr_text = await _build_raw_ocr_text(paper_images)
 
     # Layer 2: Gemini semantic extraction only (marks ignored).
 
@@ -1733,7 +1869,7 @@ async def extract_question_structure(
 
     # Merge question anchors from visual + OCR + structured sources to avoid anchor drift.
     try:
-        ocr_anchors = _extract_ocr_question_anchors(question_paper_images)
+        ocr_anchors = _extract_ocr_question_anchors(paper_images)
     except Exception as exc:
         logger.warning("OCR_ANCHOR_EXTRACTION_FAILED error=%s", exc)
         ocr_anchors = []
@@ -1760,7 +1896,7 @@ async def extract_question_structure(
         header_total_source = str(visual_header.get("source") or "visual_header")
     else:
         header_total_marks, header_total_reliable, header_total_conf, header_total_source = _extract_header_total_from_images(
-            question_paper_images
+            paper_images
         )
         if not header_total_marks:
             header_total_marks, header_total_reliable, header_total_conf, header_total_source = _extract_header_total_hint(
@@ -1823,7 +1959,7 @@ async def extract_question_structure(
                     raw_ocr_text=raw_ocr_text,
                 )
                 reconstructed_raw = await _call_extraction_llm(
-                    question_paper_images,
+                    paper_images,
                     reconstruction_prompt,
                     model_name=model_name,
                     llm_service=llm_service,
@@ -1895,12 +2031,38 @@ async def extract_question_structure(
     confidence_vals = [_to_float(q.get("ai_confidence"), 0.0) for q in (structure.get("questions") or [])]
     structure["structure_confidence"] = round(float((sum(confidence_vals) / float(len(confidence_vals))) if confidence_vals else 0.0), 4)
 
+    # Layer 7: Unified Peripherals (Student Info, Model Answers, Topics)
+    if extract_student_info and answer_paper_images:
+        student_info = await _extract_student_info(answer_paper_images, llm_service, model_name="gemini-2.0-flash")
+        structure["student_info"] = student_info
+
+    if model_answer_images:
+        ma_results = await _extract_model_answers(model_answer_images, structure.get("questions") or [], llm_service, model_name="gemini-2.0-flash")
+        structure["model_answers"] = {
+            "map": ma_results.get("model_answer_map"),
+            "text": ma_results.get("model_answer_text")
+        }
+        # Maintain top-level for backward compatibility if needed, but the user explicitly requested nested
+        structure["model_answer_map"] = ma_results.get("model_answer_map")
+        structure["model_answer_text"] = ma_results.get("model_answer_text")
+
+    if infer_topics:
+        topics_list = await _infer_topics(subject_name or "General", exam_name or "Exam", structure.get("questions") or [], llm_service)
+        topic_map = {str(item.get("question_number")): item.get("topics", []) for item in (topics_list or [])}
+        for q in (structure.get("questions") or []):
+            q["topic_tags"] = topic_map.get(str(q.get("number")), [])
+
     validation_report["question_audit_tree"] = question_audit_tree
     validation_report["visual_entities"] = visual_entities
     validation_report["unresolved_flags"] = list(validation_report.get("errors") or [])
     validation_report["section_math_rules"] = list(structure.get("section_math_rules") or [])
 
-    return structure, validation_report, raw_ocr_text, retry_count
+    return {
+        **structure,
+        "_validation_report": validation_report,
+        "_raw_ocr_text": raw_ocr_text,
+        "_retry_count": retry_count
+    }
 
 
 __all__ = ["extract_question_structure"]
