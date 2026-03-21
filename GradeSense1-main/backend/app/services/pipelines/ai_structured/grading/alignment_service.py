@@ -55,54 +55,6 @@ def _is_objective_question(question: Dict[str, Any]) -> bool:
     return qtype in {"mcq", "fill_blank"}
 
 
-async def _extract_objective_from_ocr(
-    question_structure: Dict[str, Any],
-    answer_images: List[str],
-    ocr_service: AbstractOCRService,
-) -> Dict[int, Dict[str, Any]]:
-    """Extract objective answers (MCQ/fill-blank) from OCR lines as a fallback."""
-    objective_qns = {
-        int(q.get("number"))
-        for q in (question_structure.get("questions") or [])
-        if str(q.get("number", "")).isdigit() and _is_objective_question(q)
-    }
-    if not objective_qns:
-        return {}
-
-    extracted: Dict[int, Dict[str, Any]] = {}
-
-    for page_idx, img in enumerate(answer_images):
-        try:
-            # Use lenient thresholds for objective answers: we rely on strict pattern matching.
-            res = await ocr.detect_async(img, min_conf=OBJECTIVE_OCR_MIN_CONF, min_words=1, min_lines=1, allow_fallback=False)
-            lines = [str(row.get("text") or "").strip() for row in (res.get("lines") or [])]
-        except Exception as exc:
-            logger.warning("Objective OCR fallback failed page=%s: %s", page_idx + 1, exc)
-            lines = []
-
-        for line in lines:
-            if not line:
-                continue
-            for match in ANSWER_MCQ_RE.finditer(line):
-                try:
-                    qn = int(match.group(1))
-                except Exception:
-                    continue
-                if qn not in objective_qns:
-                    continue
-                letter = str(match.group(2) or "").strip().upper()
-                if not letter:
-                    continue
-                if qn not in extracted:
-                    extracted[qn] = {
-                        "answer_text": letter,
-                        "page_index": page_idx,
-                        "confidence": MCQ_FALLBACK_CONF,
-                        "detected_type": "mcq",
-                    }
-    if extracted:
-        logger.info("MCQ_OCR_FALLBACK_FOUND questions=%s", sorted(extracted.keys()))
-    return extracted
 
 
 def _normalize_alignment_answers(payload: Dict[str, Any], expected_numbers: List[int]) -> List[Dict[str, Any]]:
@@ -253,53 +205,6 @@ async def _llm_align_answers(
         return {"answers": []}
 
 
-async def _fallback_align_answers(
-    *,
-    question_structure: Dict[str, Any],
-    answer_images: List[str],
-    ocr_service: AbstractOCRService,
-) -> Dict[str, Any]:
-    expected_numbers = [int(q.get("number")) for q in (question_structure.get("questions") or []) if str(q.get("number", "")).isdigit()]
-    expected_set = set(expected_numbers)
-    answers: List[Dict[str, Any]] = []
-    current_q: Optional[int] = None
-
-    for page_idx, img in enumerate(answer_images):
-        try:
-            res = await ocr.detect_async(img)
-            lines = [str(row.get("text") or "").strip() for row in (res.get("lines") or [])]
-        except Exception as exc:
-            logger.warning("Alignment OCR fallback failed page=%s: %s", page_idx + 1, exc)
-            lines = []
-
-        page_chunks: Dict[int, List[str]] = defaultdict(list)
-        for line in lines:
-            m = ANSWER_QUESTION_RE.match(line)
-            if m:
-                qn = int(m.group(1))
-                if qn in expected_set:
-                    current_q = qn
-                text_tail = (m.group(2) or "").strip()
-                if current_q and text_tail:
-                    page_chunks[current_q].append(text_tail)
-                continue
-            if current_q and line:
-                page_chunks[current_q].append(line)
-
-        for qn, chunk_lines in page_chunks.items():
-            answers.append(
-                {
-                    "question_number": qn,
-                    "sub_label": None,
-                    "answer_text": "\n".join(chunk_lines).strip(),
-                    "detected_type": "written" if chunk_lines else "blank",
-                    "page_index": page_idx,
-                    "bbox": None,
-                    "confidence": WRITTEN_FALLBACK_CONF,
-                }
-            )
-
-    return {"answers": answers}
 
 
 async def align_answers(
@@ -345,23 +250,9 @@ async def align_answers(
                         ans["page_index"] = int(ans["page_index"]) + start_idx
                 return _normalize_alignment_answers(payload, expected_numbers)
             except Exception as exc:
-                # ADDED LOGGING START
-                logger.error("[STEP FAILED] BATCH_ALIGNMENT | error=%s", exc)
-                # ADDED LOGGING END
-                logger.warning("ALIGNMENT_BATCH_FAILED submission=%s batch=%s error=%s", submission_id, start_idx // batch_size, exc)
-                # Fallback for this specific batch
-                # ADDED LOGGING START
-                logger.info("[FALLBACK TRIGGERED] FALLBACK_ALIGNMENT")
-                # ADDED LOGGING END
-                fb_payload = await _fallback_align_answers(
-                    question_structure=question_structure,
-                    answer_images=batch,
-                    ocr_service=ocr_service,
-                )
-                for ans in (fb_payload.get("answers") or []):
-                    if isinstance(ans, dict) and ans.get("page_index") is not None:
-                        ans["page_index"] = int(ans["page_index"]) + start_idx
-                return _normalize_alignment_answers(fb_payload, expected_numbers)
+                # SSOT ENFORCEMENT: No OCR fallback allowed
+                logger.error("[STEP FAILED] BATCH_ALIGNMENT | submission_id=%s | error=%s", submission_id, exc)
+                raise ValueError(f"Alignment batch failed for submission {submission_id}: {exc}")
 
     tasks = []
     for i in range(0, len(answer_images), batch_size):
@@ -380,54 +271,11 @@ async def align_answers(
         all_answers.extend(res)
 
     if not all_answers:
-        # Final safety fallback
-        fb_payload = await _fallback_align_answers(
-            question_structure=question_structure,
-            answer_images=answer_images,
-            ocr_service=ocr_service,
-        )
-        all_answers = _normalize_alignment_answers(fb_payload, expected_numbers)
+        # SSOT ENFORCEMENT: No final safety fallback allowed
+        logger.error("[STEP FAILED] ALIGNMENT_COMPLETE | submission_id=%s | reason=no_answers_found", submission_id)
+        raise ValueError(f"No answers found during alignment for submission {submission_id}")
 
-    # Objective fallback: if LLM alignment misses a clear MCQ answer, use OCR extraction.
-    objective_fallback = await _extract_objective_from_ocr(question_structure, answer_images)
-    if objective_fallback:
-        by_qn: Dict[int, Dict[str, Any]] = {}
-        for ans in all_answers:
-            try:
-                qn = int(ans.get("question_number"))
-                sub = str(ans.get("sub_label") or "").strip().lower() or None
-            except Exception:
-                continue
-            # Store by (qn, sub) to allow subparts, though objective fallback is usually for top-level Q
-            key = (qn, sub)
-            if key not in by_qn:
-                by_qn[qn] = ans # Simplification: objective fallback usually targets top-level
-
-        for qn, fallback in objective_fallback.items():
-            existing = by_qn.get(qn)
-            if existing:
-                existing_text = str(existing.get("answer_text") or "").strip()
-                if not existing_text or not _extract_option_letter(existing_text):
-                    existing["answer_text"] = fallback.get("answer_text")
-                    existing["detected_type"] = fallback.get("detected_type", existing.get("detected_type"))
-                    existing["page_index"] = fallback.get("page_index", existing.get("page_index"))
-                    existing["confidence"] = max(
-                        float(existing.get("confidence") or 0.0),
-                        float(fallback.get("confidence") or 0.0),
-                    )
-            else:
-                all_answers.append(
-                    {
-                        "question_number": qn,
-                        "sub_label": None,
-                        "answer_text": fallback.get("answer_text"),
-                        "detected_type": fallback.get("detected_type", "mcq"),
-                        "page_index": fallback.get("page_index"),
-                        "bbox": None,
-                        "confidence": float(fallback.get("confidence") or 0.0),
-                        "_is_expected": qn in set(expected_numbers),
-                    }
-                )
+    # Objective fallback removed to enforce SSOT purity
 
     # ADDED LOGGING START
     logger.info("[STEP START] METRICS_COMPUTATION")

@@ -208,29 +208,9 @@ async def align_submission_for_grading(
     try:
         structure = exam.get("question_structure_v2")
         if not structure:
-             structure = {
-                "questions": [
-                    {
-                        "number": q.get("question_number"),
-                        "question_text": q.get("question_text") or q.get("rubric") or "",
-                        "marks": q.get("max_marks", 0.0),
-                        "question_type": q.get("question_type", "descriptive"),
-                        "subquestions": [
-                            {
-                                "label": sq.get("sub_id"),
-                                "text": sq.get("rubric") or "",
-                                "marks": sq.get("max_marks", 0.0),
-                            }
-                            for sq in (q.get("sub_questions") or [])
-                        ],
-                        "or_group_id": q.get("or_group_id"),
-                    }
-                    for q in (exam.get("questions") or [])
-                ],
-                "total_marks": _to_float(exam.get("total_marks"), 0.0),
-                "total_questions": len(exam.get("questions") or []),
-                "numbering_contiguous": True,
-            }
+             # SSOT ENFORCEMENT: No legacy fallback allowed
+             logger.error("SSOT_MISSING exam_id=%s", exam.get("exam_id"))
+             raise CustomServiceException("SSOT_MISSING: question_structure_v2 required", 500)
 
         audit_tree = list(
             exam.get("question_audit_tree")
@@ -287,29 +267,9 @@ async def grade_images_with_locked_blueprint(
 
     structure = exam.get("question_structure_v2")
     if not structure:
-        structure = {
-            "questions": [
-                {
-                    "number": q.get("question_number"),
-                    "question_text": q.get("question_text") or q.get("rubric") or "",
-                    "question_type": q.get("question_type", "descriptive"),
-                    "marks": q.get("max_marks", 0.0),
-                    "subquestions": [
-                        {
-                            "label": sq.get("sub_id"),
-                            "text": sq.get("rubric") or "",
-                            "marks": sq.get("max_marks", 0.0),
-                        }
-                        for sq in (q.get("sub_questions") or [])
-                    ],
-                    "or_group_id": q.get("or_group_id"),
-                }
-                for q in (exam.get("questions") or [])
-            ],
-            "total_questions": len(exam.get("questions") or []),
-            "total_marks": _to_float(exam.get("effective_total_marks"), _to_float(exam.get("total_marks"), 0.0)),
-            "numbering_contiguous": True,
-        }
+        # SSOT ENFORCEMENT: No legacy fallback allowed
+        logger.error("SSOT_MISSING exam_id=%s", exam_id)
+        raise CustomServiceException("SSOT_MISSING: question_structure_v2 required", 500)
 
     audit_tree = list(
         exam.get("question_audit_tree")
@@ -341,12 +301,68 @@ async def grade_images_with_locked_blueprint(
     
     # 2. Convert alignment results to vision_answers map for the engine
     vision_answers = {}
-    for ans in (alignment_result.get("answers") or []):
-        qn = str(ans.get("question_number"))
-        # Store the most complete packet for this question number
-        vision_answers[qn] = ans
+    total_answers = 0
+    total_subanswers = 0
+    
+    for raw_ans in (alignment_result.get("answers") or []):
+        total_answers += 1
+        # DO NOT mutate original ans object — create copies
+        ans = raw_ans.copy()
         
-    # 3. Run the new class-based GradingEngine
+        qn = str(ans.get("question_number"))
+        sub_label = ans.get("sub_label")
+        
+        if qn not in vision_answers:
+            vision_answers[qn] = {
+                "question_number": qn,
+                "subanswers": [],
+                "combined_text": "",
+                "mapping_confidence": 1.0
+            }
+            
+        if sub_label:
+            total_subanswers += 1
+            # Ensure sub_id is set for GradingEngine compatibility
+            ans["sub_id"] = sub_label
+            vision_answers[qn]["subanswers"].append(ans)
+            
+            # Aggregate confidence/text for parent if needed (optional, GradingEngine often uses subanswers directly)
+            # For now, we keep the parent fields minimal to avoid confusion
+        else:
+            ans["sub_id"] = "root"
+            vision_answers[qn]["subanswers"].append(ans)
+            total_subanswers += 1
+
+
+    # 3. Add Safety Logging
+    unique_keys = list(vision_answers.keys())
+    logger.info(
+        "VISION_ANSWERS_BUILT total_answers=%s total_subanswers=%s unique_keys=%s keys=%s",
+        total_answers, total_subanswers, len(unique_keys), unique_keys
+    )
+    
+    # 4. Add Validation Check
+    # Total items preserved should equal total items received from alignment
+    # Note: A parent packet created for a subquestion doesn't count as an 'answer' itself unless it has its own content
+    nested_count = 0
+    for v in vision_answers.values():
+        if v.get("subanswers"):
+            nested_count += len(v["subanswers"])
+        # If it has sub_id (it was a subquestion) it was already counted in len(subanswers)
+        # If it doesn't have sub_id, check if it was a standalone answer
+        # Actually, our logic above puts ALL sub_labels into subanswers list.
+        # If no sub_label, it updates the vision_answers[qn] dict directly.
+        # So we count 1 for the parent if it has content and no subanswers, OR we count children.
+        if not v.get("subanswers") and v.get("answer_text"):
+            nested_count += 1
+            
+    if nested_count != total_answers:
+         logger.error(
+             "SUBQUESTION_LOSS_DETECTED: alignment_total=%s vision_total=%s",
+             total_answers, nested_count
+         )
+        
+    # 5. Run the new class-based GradingEngine
     grader = GradingEngine(llm_service=llm_service)
     grading_report = await grader.run_production_grading(
         blueprint=structure,
