@@ -57,16 +57,33 @@ async def run_grading_pipeline(job_id: str, exam_id: str, files_data: List[dict]
                     except Exception:
                         pass
 
-                    # A. Run grading pipeline
-                    logger.info("🚀 WORKER USING NEW ORCHESTRATOR for job %s", job_id)
+                    # 🚀 Phase 3 Integration: Orchestrate Student ID and Create Submission first
+                    try:
+                        user_id, stu_id, stu_name = await student_service.orchestrate_student_id(
+                            file_content=file_entry["content"],
+                            filename=file_entry["filename"],
+                            batch_id=blueprint.get("batch_id"),
+                            teacher_id=teacher_id
+                        )
+                        
+                        submission_id = await grading_service.create_initial_submission(
+                            exam_id=exam_id,
+                            job_id=job_id,
+                            student_info={"student_id": user_id, "student_name": stu_name},
+                            pdf_bytes=file_entry["content"],
+                            filename=file_entry["filename"]
+                        )
+                    except Exception as e:
+                        logger.error("❌ STUDENT_RESOLUTION/SUBMISSION_CREATION FAILED: %s", str(e))
+                        await grading_job_service.update_job_progress(job_id, failed_inc=1, progress_inc=progress_increment)
+                        return
+
+                    # A. Run grading pipeline (Orchestrator now takes submission_id)
+                    logger.info("🚀 WORKER USING NEW ORCHESTRATOR for job %s, submission %s", job_id, submission_id)
                     try:
                         result = await run_grading_orchestrator(
-                            blueprint=blueprint,
-                            pdf_bytes=file_entry["content"],
-                            llm_service=llm_service,
-                            ocr_service=ocr_service,
                             exam_id=exam_id,
-                            filename=file_entry.get("filename")
+                            submission_id=submission_id
                         )
                     except Exception as e:
                         logger.error("❌ ORCHESTRATOR FAILED: %s", str(e))
@@ -97,21 +114,10 @@ async def run_grading_pipeline(job_id: str, exam_id: str, files_data: List[dict]
                         extra={"total_awarded": result.get("total_awarded")}
                     )
 
-                    # B. Student Identification & Resolution
-                    user_id, stu_id, stu_name = await student_service.orchestrate_student_id(
-                        file_content=file_entry["content"],
-                        filename=file_entry["filename"],
-                        batch_id=blueprint.get("batch_id"),
-                        teacher_id=teacher_id
-                    )
-
-                    # C. Create submission record
-                    await grading_service.create_submission_from_file(
-                        exam_id=exam_id,
-                        job_id=job_id,
-                        student_info={"student_id": user_id, "student_name": stu_name},
-                        result=result,
-                        filename=file_entry["filename"]
+                    # C. Update submission record with results
+                    await grading_service.update_submission_with_results(
+                        submission_id=submission_id,
+                        result=result
                     )
 
                     # D. Update job counters

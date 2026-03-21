@@ -4,6 +4,8 @@ from app.repositories import SubmissionRepo
 from app.services.pipelines.ai_structured.grading.alignment_service import align_answers
 from app.services.pipelines.ai_structured.utils.logging import with_logging, pipeline_logger
 from app.services.pipelines.ai_structured.alignment.coverage_checker import check_alignment_coverage
+from app.adapters.llm_adapter import GeminiLLMService
+from app.infrastructure.ocr.provider import get_ocr_provider
 
 logger = pipeline_logger(__name__)
 submission_repo = SubmissionRepo()
@@ -20,13 +22,18 @@ async def perform_alignment_and_update(
     PIPELINE_VERSION: str,
     PROMPT_VERSION: str,
 ) -> Dict[str, Any]:
+    llm_service = GeminiLLMService()
+    ocr_service = get_ocr_provider()
+
     alignment_result = await align_answers(
         submission_id=submission_id,
         question_structure=structure,
         answer_images=images,
         blueprint_signature=blueprint_signature,
-        model_name=model_name,
+        llm_service=llm_service,
+        ocr_service=ocr_service,
         use_cache=not force,
+        model_name=model_name,
     )
 
     alignment_status, grading_state, coverage, coverage_ratio, alignment_conf, unresolved_questions = \

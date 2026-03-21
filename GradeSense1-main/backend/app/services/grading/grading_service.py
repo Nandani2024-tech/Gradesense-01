@@ -6,9 +6,10 @@ from fastapi import UploadFile
 from app.core.exceptions import CustomServiceException
 from app.repositories import ExamRepo, SubmissionRepo, AnalyticsRepo
 from app.core.logging_config import logger
-from app.services.files import is_valid_answer_pdf
+from app.services.files import is_valid_answer_pdf, file_service
 from app.services.grading import grading_job_service
 from app.workers import grading_worker
+from app.services.answer_sheet_pipeline import pdf_to_clean_images
 
 exam_repo = ExamRepo()
 submission_repo = SubmissionRepo()
@@ -86,6 +87,97 @@ async def queue_grading_job(exam_id: str, files: List[UploadFile], user: Any) ->
 
     return job_id
 
+async def create_initial_submission(
+    exam_id: str,
+    job_id: str,
+    student_info: Dict[str, Any],
+    pdf_bytes: bytes,
+    filename: str
+) -> str:
+    """
+    Creates an initial submission record with status 'grading' and stores images in GridFS.
+    Yields the submission_id for Phase 3 pipeline.
+    """
+    submission_id = "sub_" + uuid.uuid4().hex
+    
+    # 1. Convert PDF to images for Phase 3 alignment
+    try:
+        images = await asyncio.to_thread(pdf_to_clean_images, pdf_bytes, normalize=True)
+    except Exception as e:
+        logger.error(f"Failed to convert PDF to images for {filename}: {e}")
+        raise CustomServiceException(status_code=500, message=f"PDF conversion failed: {str(e)}")
+
+    # 2. Store images in GridFS
+    images_gridfs_id = None
+    try:
+        images_gridfs_id = file_service.store_images(
+            images, 
+            filename=f"{submission_id}_source.pkl",
+            submission_id=submission_id
+        )
+    except Exception as e:
+        logger.error(f"Failed to store images in GridFS for {submission_id}: {e}")
+        # We can still proceed if file_images is used as fallback, but GridFS is preferred
+    
+    submission = {
+        "submission_id": submission_id,
+        "exam_id": exam_id,
+        "student_id": student_info["student_id"],
+        "student_name": student_info["student_name"],
+        "file_name": filename,
+        "status": "grading",
+        "grading_source": "pipeline_v3",
+        "job_id": job_id,
+        "file_images": images if not images_gridfs_id else None,
+        "images_gridfs_id": str(images_gridfs_id) if images_gridfs_id else None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "is_reviewed": False
+    }
+    
+    await submission_repo.insert_submission(submission)
+    logger.info("INITIAL_SUBMISSION_CREATED exam_id=%s submission_id=%s", exam_id, submission_id)
+    return submission_id
+
+async def update_submission_with_results(
+    submission_id: str,
+    result: Dict[str, Any]
+) -> None:
+    """
+    Updates an existing submission record with grading results.
+    """
+    total_awarded = result.get("total_awarded", 0.0)
+    total_possible = result.get("total_possible", 0.0)
+    percentage = (total_awarded / total_possible * 100) if total_possible > 0 else 0.0
+    
+    update_payload = {
+        "question_scores": result.get("grades", []),
+        "total_score": total_awarded,
+        "total_marks": total_possible,
+        "percentage": percentage,
+        "brief_feedback": f"Scored {percentage:.1f}% ({total_awarded}/{total_possible})",
+        "grading_logs": result.get("logs", []),
+        "status": "ai_graded",
+        "graded_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    
+    await submission_repo.update_submission(submission_id, {"$set": update_payload})
+    
+    # Update job summary via analytics repo if job_id is available
+    submission = await submission_repo.find_one_submission({"submission_id": submission_id})
+    if submission and submission.get("job_id"):
+        await analytics_repo.add_submission_to_job(submission["job_id"], {
+            "submission_id": submission_id,
+            "student_id": submission["student_id"],
+            "student_name": submission["student_name"],
+            "status": "ai_graded",
+            "total_score": total_awarded,
+            "percentage": percentage,
+            "brief_feedback": update_payload["brief_feedback"],
+            "logs": result.get("logs", [])
+        })
+
 async def create_submission_from_file(
     exam_id: str, 
     job_id: str, 
@@ -94,48 +186,12 @@ async def create_submission_from_file(
     filename: str
 ) -> str:
     """
-    Creates a submission record and links it to the job.
+    Legacy wrapper for create_initial_submission + update_submission_with_results.
     """
-    submission_id = "sub_" + uuid.uuid4().hex
-    percentage = (result["total_awarded"] / result["total_possible"] * 100) if result["total_possible"] > 0 else 0.0
-    
-    submission = {
-        "submission_id": submission_id,
-        "exam_id": exam_id,
-        "student_id": student_info["student_id"],
-        "student_name": student_info["student_name"],
-        "file_name": filename,
-        "question_scores": result.get("grades", []),
-        "total_score": result.get("total_awarded", 0.0),
-        "total_marks": result.get("total_possible", 0.0),
-        "percentage": percentage,
-        "brief_feedback": f"Scored {percentage:.1f}% ({result.get('total_awarded',0)}/{result.get('total_possible',0)})",
-        "grading_logs": result.get("logs", []),
-        "grading_source": "pipeline_v2",
-        "job_id": job_id,
-        "graded_at": datetime.now(timezone.utc).isoformat(),
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "is_reviewed": False,
-        "status": "ai_graded"
-    }
-    
-    await submission_repo.insert_submission(submission)
-    logger.info("SUBMISSION_INSERTED exam_id=%s submission_id=%s student_id=%s", exam_id, submission_id, student_info["student_id"])
-    
-    # Push lightweight summary into the job
-    await analytics_repo.add_submission_to_job(job_id, {
-        "submission_id": submission_id,
-        "student_id": student_info["student_id"],
-        "student_name": student_info["student_name"],
-        "status": "ai_graded",
-        "total_score": result.get("total_awarded", 0.0),
-        "percentage": percentage,
-        "brief_feedback": submission.get("brief_feedback"),
-        "logs": result.get("logs", [])
-    })
-    
-    
-    return submission_id
+    pdf_bytes = b"" # Placeholder since it's legacy
+    sub_id = await create_initial_submission(exam_id, job_id, student_info, pdf_bytes, filename)
+    await update_submission_with_results(sub_id, result)
+    return sub_id
 
 async def regrade_all_submissions(exam_id: str, user_id: str) -> Dict[str, Any]:
     """Regrade all submissions for an exam with current settings."""

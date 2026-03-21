@@ -195,10 +195,11 @@ async def _llm_align_answers(
     question_structure: Dict[str, Any],
     answer_images: List[str],
     llm_service: AbstractLLMService,
+    **kwargs,
 ) -> Dict[str, Any]:
     prompt = build_alignment_prompt(question_structure=question_structure)
     try:
-        raw = await llm_service.predict(prompt)
+        raw = await llm_service.predict(prompt, **kwargs)
         return parse_tolerant_json(raw)
     except Exception as e:
         logger.error(f"Alignment LLM failed: {e}")
@@ -216,6 +217,7 @@ async def align_answers(
     llm_service: AbstractLLMService,
     ocr_service: AbstractOCRService,
     use_cache: bool = True,
+    **kwargs,
 ) -> Dict[str, Any]:
     expected_numbers = sorted(
         {
@@ -243,6 +245,7 @@ async def align_answers(
                     question_structure=question_structure,
                     answer_images=batch,
                     llm_service=llm_service,
+                    **kwargs,
                 )
                 # Adjust page indices in the payload to account for batch offset
                 for ans in (payload.get("answers") or []):

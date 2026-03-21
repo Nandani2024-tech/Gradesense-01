@@ -3,44 +3,67 @@ from typing import Dict, Any, Optional
 
 from app.core.logging_config import logger
 from app.services.pipelines.ai_structured.grading.grading_engine import GradingEngine, IdentityManager
+from app.services.pipelines.ai_structured.engine import run_ai_pipeline, extract_question_structure
+from app.adapters.llm_adapter import GeminiLLMService
 
 async def run_grading_orchestrator(
-    blueprint: Dict[str, Any],
-    pdf_bytes: bytes,
-    llm_service: Any,
-    ocr_service: Any,
-    exam_id: Optional[str] = None,
-    filename: Optional[str] = None,
+    exam_id: str,
+    submission_id: str,
     **kwargs
 ) -> Dict[str, Any]:
     """
-    New orchestration layer replacing GradingPipelineRunner flow.
+    New orchestration layer integrating Phase 3 AI Pipeline.
+    Strict SSOT, no legacy fallbacks.
     """
-    logger.info("🚀 USING NEW ORCHESTRATOR")
-    logger.info(f"INPUT SUMMARY: exam_id={exam_id}, file={filename}, blueprint_version={blueprint.get('blueprint_version')}")
+    logger.info(f"🚀 Phase 3 AI pipeline started: exam_id={exam_id}, submission_id={submission_id}")
 
-    # Step 1: Extraction replacement
-    logger.warning("⚠️ Using existing blueprint (Phase 3 not wired yet)")
-    
-    # Step 2: Alignment Fallback
-    logger.warning("⚠️ TEMP ALIGNMENT USED")
-    id_manager = IdentityManager()
+    # 1. Run Phase 3 Alignment
+    try:
+        aligned = await run_ai_pipeline(exam_id, submission_id)
+        logger.info(f"✅ Phase 3 alignment complete: submission_id={submission_id}")
+    except Exception as e:
+        logger.error(f"Phase 3 Alignment failed: {e}", exc_info=True)
+        return {
+            "status": "failed",
+            "error": f"Alignment failed: {str(e)}"
+        }
+
+    # 2. Convert alignment results to GradingEngine format (vision_answers)
     vision_answers = {}
+    id_manager = IdentityManager()
     
-    for q in blueprint.get("questions", []):
-        q_id = id_manager.normalize_id(str(q.get("id") or q.get("question_number") or q.get("question_id") or ""))
-        if q_id:
-            vision_answers[q_id] = "TEMP_ANSWER"
+    for raw_ans in (aligned.get("answers") or []):
+        ans = raw_ans.copy()
+        
+        qn = str(ans.get("question_number"))
+        sub_label = ans.get("sub_label")
+        
+        # Normalize QID for GradingEngine
+        clean_qn = id_manager.normalize_id(qn)
+        
+        if clean_qn not in vision_answers:
+            vision_answers[clean_qn] = {
+                "question_number": clean_qn,
+                "subanswers": [],
+                "combined_text": "",
+                "mapping_confidence": 1.0
+            }
             
-        for sq in q.get("sub_questions", q.get("subquestions", [])):
-            sq_id = id_manager.normalize_id(str(sq.get("id") or ""))
-            if q_id and sq_id:
-                full_sq_id = f"{q_id}.{sq_id}"
-                vision_answers[full_sq_id] = "TEMP_ANSWER"
+        if sub_label:
+            ans["sub_id"] = sub_label
+            vision_answers[clean_qn]["subanswers"].append(ans)
+        else:
+            ans["sub_id"] = "root"
+            vision_answers[clean_qn]["subanswers"].append(ans)
 
-    # Step 3: Grade using the GradingEngine
+    # 3. Grade using the GradingEngine
+    llm_service = kwargs.get("llm_service") or GeminiLLMService()
     engine = GradingEngine(llm_service=llm_service)
     
+    # 4. Fetch the blueprint (SSOT)
+    logger.info(f"✅ Blueprint fetched: exam_id={exam_id}")
+    blueprint = await extract_question_structure(exam_id)
+
     try:
         result = await engine.run_production_grading(
             blueprint=blueprint,
@@ -67,4 +90,5 @@ async def run_grading_orchestrator(
         total_awarded = sum(float(g.get("marks_awarded", 0)) for g in result.get("grades", []))
         result["total_awarded"] = total_awarded
 
+    result["status"] = "completed"
     return result

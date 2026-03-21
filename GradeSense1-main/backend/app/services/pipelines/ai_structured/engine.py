@@ -185,26 +185,42 @@ async def extract_and_persist(
             await release_exam_lock(exam_id, owner=owner)
 
 @with_logging
+async def extract_question_structure(exam_id: str) -> Dict[str, Any]:
+    """
+    Fetches the question_structure_v2 for a specific exam.
+    Enforces strict SSOT: no legacy fallbacks allowed.
+    """
+    exam = await db.exams.find_one({"exam_id": exam_id})
+    if not exam:
+        logger.error(f"❌ Exam not found: exam_id={exam_id}")
+        raise CustomServiceException("exam_not_found", 404)
+        
+    structure = exam.get("question_structure_v2")
+    if not structure:
+        logger.error(f"❌ SSOT missing for exam_id={exam_id}")
+        raise CustomServiceException("SSOT_MISSING", 500)
+
+    # Apply audit tree marks to get the final structure
+    audit_tree = list(
+        exam.get("question_audit_tree")
+        or ((exam.get("question_structure_validation") or {}).get("question_audit_tree") or [])
+    )
+    structure = _apply_audit_tree_marks(structure, audit_tree)
+    
+    logger.info(f"✅ Blueprint fetched: exam_id={exam_id}, questions={len(structure.get('questions', []))}")
+    return structure
+
+@with_logging
 async def align_submission_for_grading(
     *,
     submission_id: str,
+    structure: Optional[Dict[str, Any]] = None,
     lock_owner: Optional[str] = None,
     force: bool = False,
     model_name: str = DEFAULT_MODEL_NAME,
 ) -> Dict[str, Any]:
-    exam, submission = await _load_exam_and_submission(submission_id)
-    latest_version = int(exam.get("blueprint_version", 0) or 0)
-    try:
-        submission_version = int(submission.get("blueprint_version_used"))
-    except Exception:
-        submission_version = None
-
-    if not exam.get("blueprint_locked") and str(exam.get("blueprint_status", "")).lower() != "ready_locked":
-        raise CustomServiceException("blueprint_not_locked", 500)
-
-    owner = lock_owner or f"align_{exam.get('exam_id')}_{submission_id}"
-    await acquire_exam_lock(exam.get("exam_id"), state="aligning", owner=owner)
-    try:
+    if not structure or not isinstance(structure, dict):
+        exam, submission = await _load_exam_and_submission(submission_id)
         structure = exam.get("question_structure_v2")
         if not structure:
              # SSOT ENFORCEMENT: No legacy fallback allowed
@@ -216,6 +232,18 @@ async def align_submission_for_grading(
             or ((exam.get("question_structure_validation") or {}).get("question_audit_tree") or [])
         )
         structure = _apply_audit_tree_marks(structure, audit_tree)
+        # Re-fetch exam/submission if they were loaded locally
+    else:
+        # If structure is passed, we still need the exam/submission for images/signature
+        exam, submission = await _load_exam_and_submission(submission_id)
+
+    if not exam.get("blueprint_locked") and str(exam.get("blueprint_status", "")).lower() != "ready_locked":
+        raise CustomServiceException("blueprint_not_locked", 500)
+
+    owner = lock_owner or f"align_{exam.get('exam_id')}_{submission_id}"
+    # EXCLUSIVE LOCK REMOVED: Alignment is stateless relative to the exam record.
+    # Parallel alignment for multiple submissions is now allowed.
+    try:
         blueprint_signature = str(exam.get("active_structure_hash") or structure_hash(structure))
         images = await _get_submission_images(submission)
         if not images:
@@ -234,15 +262,8 @@ async def align_submission_for_grading(
         )
         return result
     finally:
-        await release_exam_lock(exam.get("exam_id"), owner=owner)
-
-@with_logging
-async def preflight_submission_mapping(
-    *,
-    submission_id: str,
-    user_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    return await align_submission_for_grading(submission_id=submission_id, force=True)
+        # EXCLUSIVE LOCK REMOVED: No release needed as no lock was acquired.
+        pass
 
 @with_logging
 async def grade_images_with_locked_blueprint(
@@ -268,7 +289,7 @@ async def grade_images_with_locked_blueprint(
     if not structure:
         # SSOT ENFORCEMENT: No legacy fallback allowed
         logger.error("SSOT_MISSING exam_id=%s", exam_id)
-        raise CustomServiceException("SSOT_MISSING: question_structure_v2 required", 500)
+        raise CustomServiceException("SSOT_MISSING", 500)
 
     audit_tree = list(
         exam.get("question_audit_tree")
@@ -324,9 +345,6 @@ async def grade_images_with_locked_blueprint(
             # Ensure sub_id is set for GradingEngine compatibility
             ans["sub_id"] = sub_label
             vision_answers[qn]["subanswers"].append(ans)
-            
-            # Aggregate confidence/text for parent if needed (optional, GradingEngine often uses subanswers directly)
-            # For now, we keep the parent fields minimal to avoid confusion
         else:
             ans["sub_id"] = "root"
             vision_answers[qn]["subanswers"].append(ans)
@@ -340,27 +358,6 @@ async def grade_images_with_locked_blueprint(
         total_answers, total_subanswers, len(unique_keys), unique_keys
     )
     
-    # 4. Add Validation Check
-    # Total items preserved should equal total items received from alignment
-    # Note: A parent packet created for a subquestion doesn't count as an 'answer' itself unless it has its own content
-    nested_count = 0
-    for v in vision_answers.values():
-        if v.get("subanswers"):
-            nested_count += len(v["subanswers"])
-        # If it has sub_id (it was a subquestion) it was already counted in len(subanswers)
-        # If it doesn't have sub_id, check if it was a standalone answer
-        # Actually, our logic above puts ALL sub_labels into subanswers list.
-        # If no sub_label, it updates the vision_answers[qn] dict directly.
-        # So we count 1 for the parent if it has content and no subanswers, OR we count children.
-        if not v.get("subanswers") and v.get("answer_text"):
-            nested_count += 1
-            
-    if nested_count != total_answers:
-         logger.error(
-             "SUBQUESTION_LOSS_DETECTED: alignment_total=%s vision_total=%s",
-             total_answers, nested_count
-         )
-        
     # 3. Run the new class-based GradingEngine
     from app.services.pipelines.ai_structured.grading.grading_engine import GradingEngine
 
@@ -373,11 +370,9 @@ async def grade_images_with_locked_blueprint(
     # 4. Map GradingEngine results back to legacy return format
     question_scores: List[QuestionScore] = []
     
-    # GradingEngine results are in results_list/grading_report['grades']
     for g in grading_report.get("grades", []):
         q_num = str(g.get("question_id") or g.get("question_number"))
         
-        # Build sub_scores if present
         sub_scores_models: List[SubQuestionScore] = []
         for sg in g.get("sub_scores", []):
             sub_scores_models.append(SubQuestionScore(
@@ -402,3 +397,44 @@ async def grade_images_with_locked_blueprint(
     }
     
     return question_scores, packet_meta
+
+@with_logging
+async def preflight_submission_mapping(
+    *,
+    submission_id: str,
+    user_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    return await align_submission_for_grading(submission_id=submission_id, force=True)
+
+@with_logging
+async def run_ai_pipeline(exam_id: str, submission_id: str) -> Dict[str, Any]:
+    """
+    Phase 3 AI Pipeline Entry Point
+    Deterministic, strict SSOT, and fully logged.
+    """
+    logger.info(f"🚀 Phase 3 AI pipeline started: exam_id={exam_id}, submission_id={submission_id}")
+    
+    try:
+        # 1. Fetch Blueprint (SSOT)
+        structure = await extract_question_structure(exam_id)
+        
+        # 2. Perform Alignment
+        aligned = await align_submission_for_grading(
+            submission_id=submission_id,
+            structure=structure
+        )
+        
+        if not aligned or not aligned.get("answers"):
+            logger.error(f"❌ Alignment failed for submission_id={submission_id}")
+            raise ValueError("alignment_failed")
+            
+        logger.info(f"✅ Alignment complete: submission_id={submission_id}, questions_aligned={len(aligned.get('answers', []))}")
+        return aligned
+        
+    except CustomServiceException as e:
+        print(f"❌ run_ai_pipeline failed: {e.message} (HTTP {e.status_code})")
+        raise
+
+    except Exception as e:
+        logger.error(f"❌ Pipeline error for submission_id={submission_id}: {e}")
+        raise
