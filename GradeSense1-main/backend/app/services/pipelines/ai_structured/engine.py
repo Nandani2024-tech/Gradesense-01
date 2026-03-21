@@ -24,7 +24,6 @@ from app.services.pipelines.ai_structured.extraction.utils import _apply_audit_t
 from app.services.pipelines.ai_structured.blueprint.snapshot import create_blueprint_snapshot, PIPELINE_VERSION
 from app.services.pipelines.ai_structured.blueprint.structure_to_legacy import question_structure_to_legacy_questions
 from app.services.pipelines.ai_structured.alignment.alignment_service import perform_alignment_and_update
-from app.services.pipelines.ai_structured.grading.grading_engine import GradingEngine
 
 from app.services.llm.prompts.ai_structured_prompts import PROMPT_VERSION
 from app.services.storage.gridfs_helpers import get_exam_question_paper_images
@@ -347,6 +346,8 @@ async def grade_images_with_locked_blueprint(
         vision_answers[qn] = ans
         
     # 3. Run the new class-based GradingEngine
+    from app.services.pipelines.ai_structured.grading.grading_engine import GradingEngine
+
     grader = GradingEngine(llm_service=llm_service)
     grading_report = await grader.run_production_grading(
         blueprint=structure,
