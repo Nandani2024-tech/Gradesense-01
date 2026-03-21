@@ -25,6 +25,43 @@ async def perform_alignment_and_update(
     llm_service = GeminiLLMService()
     ocr_service = get_ocr_provider()
 
+    # OCR Preprocessing Step
+    submission_dict = (await submission_repo.find_one_submission({"submission_id": submission_id})) or {}
+    
+    class _SubWrapper:
+        def __init__(self, d, sid):
+            self._d = d
+            self.id = sid
+            self.pdf_path = d.get("pdf_path", d.get("answer_file_ref", ""))
+            self.raw_ocr_text = d.get("raw_ocr_text", "")
+    
+    submission = _SubWrapper(submission_dict, submission_id)
+
+    try:
+        logger.info(f"OCR_PROCESS_START: submission_id={submission.id}")
+        
+        # In case ocr_service does not have extract_text_from_pdf, fallback to images batch
+        if hasattr(ocr_service, "extract_text_from_pdf"):
+            ocr_text = ocr_service.extract_text_from_pdf(submission.pdf_path)
+        else:
+            # Fallback inline OCR over images
+            parts = []
+            for img in images:
+                res = await ocr_service.detect_async(img)
+                lines = res.get("lines") or []
+                parts.append(" ".join(ln.get("text", "") for ln in lines).strip())
+            ocr_text = "\n".join(parts)
+            
+        submission.raw_ocr_text = ocr_text
+        logger.info(f"OCR_PROCESS_COMPLETE: submission_id={submission.id}, characters_extracted={len(ocr_text)}")
+        
+        # Persist to DB
+        await submission_repo.update_submission(submission.id, {"$set": {"raw_ocr_text": ocr_text}})
+        
+    except Exception as e:
+        logger.error(f"OCR_FAILED: submission_id={submission.id}, error={str(e)}")
+        submission.raw_ocr_text = ""
+
     alignment_result = await align_answers(
         submission_id=submission_id,
         question_structure=structure,
