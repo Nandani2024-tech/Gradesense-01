@@ -7,9 +7,10 @@ from app.services.pipelines.ai_structured.engine import align_submission_for_gra
 from app.services.llm_provider import get_llm_service
 from app.services.pipelines.ai_extraction_service import _extract_student_info
 from app.services.pipelines.ai_structured.utils.file_utils import _get_submission_images
-from app.repositories import SubmissionRepo
+from app.repositories import SubmissionRepo, ExamRepo
 from app.models.submission import Submission, Answer, GradingResult, QuestionScore
 from pydantic import ValidationError
+from app.services.notifications.notifications_service import create_notification
 
 def build_fallback_response(exam_id: str, submission_id: str, exc: Exception) -> Submission:
     """
@@ -48,6 +49,20 @@ async def run_grading_orchestrator(
     try:
         llm_service = kwargs.get("llm_service") or get_llm_service()
         submission_repo = SubmissionRepo()
+        exam_repo = ExamRepo()
+
+        # Fetch teacher_id for notifications
+        exam = await exam_repo.find_one_exam({"exam_id": exam_id})
+        teacher_id = exam.get("teacher_id") if exam else None
+
+        if teacher_id:
+            logger.info("Sending grading_started notification to teacher_id=%s", teacher_id)
+            await create_notification(
+                user_id=teacher_id,
+                notification_type="grading_started",
+                title="Grading Started",
+                message=f"Grading has started for submission {submission_id}."
+            )
 
         # 1. Fetch the blueprint (SSOT)
         blueprint = await extract_question_structure(exam_id)
@@ -144,6 +159,18 @@ async def run_grading_orchestrator(
             logs=engine_result.logs
         )
 
+        if teacher_id:
+            score_msg = f"{final_submission.total_score}/{final_submission.total_possible}"
+            logger.info("Sending grading_finished notification to teacher_id=%s, score=%s", 
+                        teacher_id, score_msg)
+            await create_notification(
+                user_id=teacher_id,
+                notification_type="grading_finished",
+                title=f"Grading Finished: {score_msg}",
+                message=(f"Marks obtained: {score_msg}. "
+                         f"Submission: {submission_id}")
+            )
+
         logger.info("✅ SCHEMA_ENFORCED: Pipeline completed for student %s, score %s", student_id, final_submission.total_score)
         return final_submission
 
@@ -151,4 +178,19 @@ async def run_grading_orchestrator(
         logger.error(f"GRADING_FAILED: {type(e).__name__}: {str(e)}", 
                      extra={"exam_id": exam_id, "submission_id": submission_id}, 
                      exc_info=True)
+        
+        # Ensure a failure notification is sent if we have teacher_id
+        try:
+            # We might not have teacher_id if fetch failed before setting it
+            # But we can try to get it again or use a local variable if it was set
+            if 'teacher_id' in locals() and teacher_id:
+                await create_notification(
+                    user_id=teacher_id,
+                    notification_type="grading_failed",
+                    title="Grading Failed",
+                    message=f"Grading failed for submission {submission_id}. Error: {str(e)}"
+                )
+        except Exception as notif_exc:
+            logger.warning("Failed to send failure notification: %s", notif_exc)
+
         return build_fallback_response(exam_id, submission_id, e)

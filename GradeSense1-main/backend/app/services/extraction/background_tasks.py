@@ -107,7 +107,15 @@ async def _process_question_paper_async(exam_id: str):
         if teacher_id:
             from app.services.notifications.notifications_service import create_notification
             status_text = "Complete" if success else "Failed"
-            msg = f"Extracted questions for {exam_name}" if success else f"Extraction failed for {exam_name}. Please review manually."
+            
+            # Retrieve count if possible
+            count = result.get("count", 0) if 'result' in locals() and result else 0
+            
+            if success:
+                msg = f"Successfully extracted {count} questions for {exam_name}."
+            else:
+                msg = f"Extraction failed for {exam_name}. Please review manually."
+
             logger.info(f"[QP-ASYNC] Sending final notification for exam {exam_id}, status={status_text}")
             await create_notification(
                 user_id=teacher_id,
