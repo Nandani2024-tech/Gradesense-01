@@ -12,6 +12,7 @@ from .exam import (
     AnnotationData,
 )
 from .submission import (
+    Submission,
     StudentSubmission,
     QuestionScore,
     SubQuestionScore,

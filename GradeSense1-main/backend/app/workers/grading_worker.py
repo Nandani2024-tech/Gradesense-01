@@ -10,6 +10,7 @@ from app.services import blueprint_service
 from app.repositories import AnalyticsRepo
 from app.utils.debug_logger import current_job_id, write_debug_json
 from app.services.grading_core import run_grading_orchestrator
+from app.models.submission import Submission
 
 
 analytics_repo = AnalyticsRepo()
@@ -146,7 +147,7 @@ async def run_grading_pipeline(job_id: str, exam_id: str, files_data: List[dict]
                     # Safe logging only for valid results
                     logger.info(
                         "WORKER_ENGINE_RETURN: Engine completed",
-                        extra={"total_awarded": result.get("total_awarded")}
+                        extra={"total_awarded": result.total_score}
                     )
 
                     # C. Update submission record with results

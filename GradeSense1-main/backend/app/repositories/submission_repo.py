@@ -1,6 +1,7 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 from app.core.database import db
 from app.core.logging_config import logger
+from app.models.submission import Submission
 
 class SubmissionRepo:
     def __init__(self):
@@ -8,11 +9,17 @@ class SubmissionRepo:
         self.images_collection = db.submission_images
         self.student_submissions_collection = db.student_submissions
 
-    async def insert_submission(self, doc: Dict[str, Any]) -> Any:
+    async def insert_submission(self, doc: Union[Dict[str, Any], Submission]) -> Any:
         """Insert a new submission."""
-        logger.info("DB_WRITE_START entity=submission action=insert submission_id=%s", doc.get("submission_id"))
-        result = await self.collection.insert_one(doc)
-        logger.info("DB_WRITE_SUCCESS entity=submission action=insert submission_id=%s", doc.get("submission_id"))
+        if isinstance(doc, Submission):
+            doc_dict = doc.model_dump()
+        else:
+            doc_dict = doc
+            
+        submission_id = doc_dict.get("submission_id")
+        logger.info("DB_WRITE_START entity=submission action=insert submission_id=%s", submission_id)
+        result = await self.collection.insert_one(doc_dict)
+        logger.info("DB_WRITE_SUCCESS entity=submission action=insert submission_id=%s", submission_id)
         return result
 
     async def find_submissions(self, query: Dict[str, Any], limit: int = 1000, sort_field: Optional[str] = None, sort_dir: int = -1, projection: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
@@ -35,10 +42,15 @@ class SubmissionRepo:
             projection = {"_id": 0}
         return await self.collection.find_one(query, projection)
 
-    async def update_submission(self, submission_id: str, update_doc: Dict[str, Any]) -> Any:
+    async def update_submission(self, submission_id: str, update_doc: Union[Dict[str, Any], Submission]) -> Any:
         """Update submission record."""
+        if isinstance(update_doc, Submission):
+            update_data = {"$set": update_doc.model_dump(exclude_unset=True)}
+        else:
+            update_data = update_doc
+            
         logger.info("DB_WRITE_START entity=submission action=update submission_id=%s", submission_id)
-        result = await self.collection.update_one({"submission_id": submission_id}, update_doc)
+        result = await self.collection.update_one({"submission_id": submission_id}, update_data)
         logger.info("DB_WRITE_SUCCESS entity=submission action=update submission_id=%s", submission_id)
         return result
 

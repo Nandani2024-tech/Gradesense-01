@@ -32,7 +32,8 @@ class NotificationsService:
         """Get notifications for a user."""
         notifications = await self.analytics_repo.find_notifications(
             {"user_id": user_id},
-            limit=limit
+            limit=limit,
+            sort=[("created_at", -1)]
         )
         # Sort is missed in find_notifications, but usually repo methods should handle it
         # For now, let's keep it simple

@@ -14,9 +14,9 @@ class DashboardStats(BaseModel):
 
 class RecentSubmission(BaseModel):
     submission_id: str
-    student_name: str
+    student_name: Optional[str] = None
     exam_id: str
-    student_id: str
+    student_id: Optional[str] = None
     obtained_marks: Optional[float] = None
     total_marks: Optional[float] = None
     percentage: float
@@ -43,8 +43,8 @@ class ScoreDistributionItem(BaseModel):
     count: int
 
 class PerformanceItem(BaseModel):
-    name: str
-    student_id: str
+    name: Optional[str] = None
+    student_id: Optional[str] = None
     score: float
     percentage: float
 
@@ -72,7 +72,7 @@ class ClassInsightsResponse(BaseModel):
 # ============== MISCONCEPTIONS ==============
 
 class WrongAnswerItem(BaseModel):
-    student_name: str
+    student_name: Optional[str] = None
     submission_id: str
     obtained: float
     max: float
@@ -126,8 +126,8 @@ class SuspiciousAnswer(BaseModel):
     feedback_snippet: str
 
 class BluffCandidate(BaseModel):
-    student_id: str
-    student_name: str
+    student_id: Optional[str] = None
+    student_name: Optional[str] = None
     bluff_score: int
     suspicious_answers: List[SuspiciousAnswer]
 
@@ -160,8 +160,8 @@ class SyllabusCoverageResponse(BaseModel):
 # ============== PEER GROUPS ==============
 
 class PeerGroupStudent(BaseModel):
-    id: str
-    name: str
+    id: Optional[str] = None
+    name: Optional[str] = None
     strengths: List[str]
     weaknesses: List[str]
 
@@ -186,8 +186,8 @@ class PeerGroupSuggestionsResponse(BaseModel):
 # ============== SNAPSHOT ==============
 
 class StudentSnapshot(BaseModel):
-    student_id: str
-    student_name: str
+    student_id: Optional[str] = None
+    student_name: Optional[str] = None
     average: float
 
 class ClassSnapshotResponse(BaseModel):
@@ -240,9 +240,9 @@ class AskDataResponse(BaseModel):
 # ============== STUDENT DEEP DIVE ==============
 
 class DeepDiveStudent(BaseModel):
-    name: str
-    email: str
-    student_id: str
+    name: Optional[str] = None
+    email: Optional[str] = None
+    student_id: Optional[str] = None
 
 class WorstQuestion(BaseModel):
     exam_name: str
