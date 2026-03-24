@@ -16,8 +16,6 @@ from app.models.submission import QuestionScore
 from app.repositories import ExamRepo
 from app.services.pipelines.ai_structured.utils.common import _to_float
 from app.services.pipelines.ai_structured.extraction.utils import _derive_total_marks, _structure_confidence
-from app.repositories import ExamRepo
-from app.services.pipelines.ai_structured.extraction.utils import _derive_total_marks, _structure_confidence
 from app.services.pipelines.ai_structured.grading.alignment_service import ALIGNMENT_COVERAGE_GATE, align_answers
 from app.services.pipelines.ai_structured.grading.grading_interface import GRADING_CONTRACT_VERSION, grade_answers_with_contracts
 from app.layers.ai_structured.validation import validate_structure
@@ -66,11 +64,13 @@ class GradingEngine:
         self.rubric_builder = RubricBuilder()
 
     async def _grade_worker(self, question: Dict[str, Any], mapped_packet: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if not question:
+            raise ValueError("invalid_question_object")
         # logs for this question
         q_logs: List[str] = []
         
-        # Support both 'id' (new) and 'question_number' (legacy)
-        qid = str(question.get("id") or question.get("question_number") or "Unknown")
+        # Support both 'id' (new), 'question_number' (legacy), AND 'number' (AI structured SSOT)
+        qid = str(question.get("id") or question.get("question_number") or question.get("number") or "Unknown")
         q_id = qid # For user snippet compatibility
         
         # Support both 'marks' (new) and 'max_marks' (legacy)
@@ -132,20 +132,9 @@ class GradingEngine:
         
         # previously we short‑circuited low‑confidence packets; now record but continue
         if confidence < 0.2:
-            # still very low, keep same treatment as before
-            q_logs.append(f"Very low confidence {confidence}, marking needs review")
-            return {
-                "question_number": qid,
-                "question_id": qid,
-                "max_marks": max_marks,
-                "marks_awarded": 0.0,
-                "status": "needs_review",
-                "feedback": "Needs Review: Low OCR confidence for answer block.",
-                "reason": "low OCR confidence",
-                "normalized_answer": None,
-                "sub_scores": [],
-                "logs": q_logs
-            }
+            # SSOT ENFORCEMENT: Inner layers must raise exceptions on failure
+            logger.error(f"Very low confidence {confidence} for question {qid}, raising exception")
+            raise ValueError(f"low_ocr_confidence: {confidence}")
         elif confidence < 0.4:
             # caution log but proceed to grading using whatever text was captured
             q_logs.append(f"Low confidence {confidence} (below advisory threshold)")
@@ -203,13 +192,13 @@ class GradingEngine:
                         }
                     )
                 
-                # If no raw text found, mark as not attempted
+                # If no raw text found, mark as not attempted and continue
                 if not sq_raw_text.strip():
                     sub_scores.append({
                         "sub_id": sq_id,
                         "max_marks": sq_max_marks,
                         "obtained_marks": 0.0,
-                        "ai_feedback": "Not attempted/found",
+                        "ai_feedback": "No answer provided by student.",
                         "annotations": []
                     })
                     continue
@@ -235,13 +224,16 @@ class GradingEngine:
                 )
                 
                 # Apply deterministic score and validate
-                # FIX: Do not overwrite with deterministic_score. Use the evaluated LLM score capped at max_marks.
-                sq_eval_result["score"] = min(float(sq_eval_result.get("score", 0.0)), sq_max_marks)
-                sq_validated = self.evaluator.validator.validate(sq_eval_result, sq_max_marks)
-                sq_awarded = sq_validated["score"]
+                # Check for evaluation failure
+                if sq_eval_result.get("score") is None:
+                    error_msg = sq_eval_result.get("error") or "evaluation_failed"
+                    raise ValueError(f"evaluation_failure: question={qid} sub={sq_id} reason={error_msg}")
+
+                # Use the evaluated LLM score capped at max_marks.
+                sq_awarded = min(float(sq_eval_result.get("score", 0.0)), sq_max_marks)
 
                 total_awarded += sq_awarded
-                fb = sq_validated.get("feedback", "")
+                fb = sq_eval_result.get("feedback", "")
                 if fb:
                     final_feedback.append(f"Part {sq_id}: {fb}")
 
@@ -289,27 +281,32 @@ class GradingEngine:
             )
             deterministic_score = float(match_result["score"])
 
-            # 3. Generate Feedback using LLM (Original Score ignored)
-            eval_result = await self.evaluator.evaluate(
-                question_number=clean_qid,
-                question_text=q_text,
-                model_answer=model_answer,
-                max_marks=max_marks,
-                student_answer=clean_answer,
-                matched_concepts=match_result["matched_concepts"],
-                missing_concepts=match_result["missing_concepts"]
-            )
-            
-            # 4. Override with Deterministic Score & Validate
-            # FIX: Do not overwrite with deterministic_score. Use the evaluated LLM score capped at max_marks.
-            eval_result["score"] = min(float(eval_result.get("score", 0.0)), max_marks)
-            validated = self.evaluator.validator.validate(
-                eval_result,
-                max_marks
-            )
+            # 3. Generate Feedback using LLM
+            if clean_answer.strip():
+                eval_result = await self.evaluator.evaluate(
+                    question_number=clean_qid,
+                    question_text=q_text,
+                    model_answer=model_answer,
+                    max_marks=max_marks,
+                    student_answer=clean_answer,
+                    matched_concepts=match_result["matched_concepts"],
+                    missing_concepts=match_result["missing_concepts"]
+                )
+                
+                # Check for evaluation failure
+                if eval_result.get("score") is None:
+                    error_msg = eval_result.get("error") or "evaluation_failed"
+                    raise ValueError(f"evaluation_failure: question={qid} reason={error_msg}")
 
-            final_awarded = validated["score"]
-            global_feedback = validated.get("feedback", "No feedback provided.")
+                # Use the evaluated LLM score capped at max_marks.
+                final_awarded = min(float(eval_result.get("score", 0.0)), max_marks)
+                global_feedback = eval_result.get("feedback", "No feedback provided.")
+            else:
+                # Handle empty answer gracefully
+                logger.info(f"Empty answer detected for question {qid}")
+                final_awarded = 0.0
+                global_feedback = "No answer provided by student."
+
             global_answer = clean_answer
 
         # log summary for this question
@@ -357,7 +354,7 @@ class GradingEngine:
         # Rule 7: Parallel Execution Using Asyncio (Fixes ThreadPool sync mismatches)
         tasks = []
         for q in blueprint_questions:
-            raw_qid = q.get("id") or q.get("question_number")
+            raw_qid = q.get("id") or q.get("question_number") or q.get("number")
             clean_qid = self.id_manager.normalize_id(raw_qid)
             root_id = self.id_manager.get_root_id(clean_qid)
             
@@ -367,9 +364,25 @@ class GradingEngine:
                 
             tasks.append(self._grade_worker(q, mapped))
         
-        results = await asyncio.gather(*tasks, return_exceptions=False)
-        # Fix array mutability for tuple results
-        results_list = list(results)
+        # return_exceptions=True ensures one failure doesn't crash the whole run
+        raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        results_list = []
+        for i, res in enumerate(raw_results):
+            if isinstance(res, Exception):
+                q = blueprint_questions[i]
+                qid = str(q.get("id") or q.get("question_number") or q.get("number") or "Unknown")
+                logger.error(f"Grading failed for question {qid}: {res}", exc_info=True)
+                results_list.append({
+                    "question_id": qid,
+                    "max_marks": float(q.get("marks") or q.get("max_marks") or 0),
+                    "marks_awarded": 0.0,
+                    "status": "failed",
+                    "ai_feedback": f"Grading error: {str(res)}",
+                    "logs": [f"Execution error: {str(res)}"]
+                })
+            else:
+                results_list.append(res)
 
         # Sort results to match blueprint sequence
         order_map = {str(q.get("id") or q.get("question_number")): i for i, q in enumerate(blueprint_questions)}
@@ -403,7 +416,7 @@ class GradingEngine:
         return {
             "total_awarded": total_awarded,
             "total_possible": total_possible,
-            "grades": results,
+            "grades": results_list,
             "logs": all_logs
         }
 

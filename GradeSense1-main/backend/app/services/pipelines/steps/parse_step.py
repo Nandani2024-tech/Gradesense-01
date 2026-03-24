@@ -12,7 +12,7 @@ from app.infrastructure.serialization.safe_numeric import safe_float, safe_int, 
 from app.layers.ai_structured.validation import normalize_structure_payload
 from app.services.pipelines.steps import llm_step
 from app.adapters.interfaces import AbstractLLMService
-from app.services.llm.prompts.ai_structured_prompts import (
+from app.prompts.ai_structured_prompts import (
     build_extraction_prompt,
     build_visual_extraction_prompt,
 )

@@ -235,7 +235,7 @@ def normalize_ai_annotations(raw_annotations: List[dict]) -> List[AnnotationData
     # Simple limit as per legacy
     return normalized[:10]
 
-async def run_grading_orchestrator(
+async def _deprecated_run_grading_orchestrator_v2(
     images: List[str],
     model_answer_images: List[str],
     questions: List[dict],
@@ -254,7 +254,14 @@ async def run_grading_orchestrator(
     paper_hash: str = None,
     content_hash: str = None,
 ) -> Tuple[List[QuestionScore], Dict[str, Any]]:
-    """Core orchestration logic for AI grading."""
+    """Core orchestration logic for AI grading.
+    
+    # DO NOT USE — deprecated. Use run_grading_orchestrator(exam_id, submission_id)
+    """
+    
+    raise RuntimeError(
+        "DEPRECATED ORCHESTRATOR CALLED — migrate to run_grading_orchestrator(exam_id, submission_id)"
+    )
     
     # 1. Deterministic cutover check
     from app.services.pipelines.ai_structured_engine import grade_images_with_locked_blueprint

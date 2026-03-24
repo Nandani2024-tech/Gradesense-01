@@ -13,7 +13,6 @@ from app.schemas.responses import (
 from app.core.logging_config import logger
 from app.services.uploads.upload_service import upload_service
 from app.services.grading import grading_service
-from app.services.grading_core import run_grading_orchestrator
 
 router = APIRouter(tags=["uploads"])
 
@@ -65,8 +64,20 @@ async def upload_student_papers(
     # 🚀 ROUTE_TRIGGER: Log that this will eventually call run_grading_orchestrator via worker
     logger.info("🚀 ROUTE_TRIGGER: Calling run_grading_orchestrator logic via batch job for exam %s", exam_id)
     
-    data = await grading_service.queue_grading_job(exam_id, files, user)
-    return GradingJobResponse(**data)
+    import asyncio
+    from app.workers import grading_worker
+    
+    job_data = await grading_service.queue_grading_job(exam_id, files, user)
+    
+    # 🚀 REPLACE: Use centralized enqueue instead of asyncio.create_task
+    await grading_service.enqueue_grading_job("batch_grading", job_data)
+    
+    return GradingJobResponse(
+        job_id=job_data["job_id"],
+        status="pending",
+        total_papers=len(files),
+        message=f"Grading job started for {len(files)} papers. Use job_id to check progress."
+    )
 
 
 @router.post("/exams/{exam_id}/upload-more-papers", response_model=BatchUploadResponse)

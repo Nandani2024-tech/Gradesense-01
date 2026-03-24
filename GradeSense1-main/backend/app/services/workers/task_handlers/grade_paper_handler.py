@@ -39,15 +39,15 @@ async def process_grade_paper_tasks() -> bool:
     
     logger.info(f"TaskWorker: Claimed grade_paper task {task_id} for exam {exam_id}")
     
-    from app.services.grading.legacy_grading import process_grading_job_in_background
+    from app.services.grading.grading_service import enqueue_grading_job
     
     try:
-        # This function handles its own internal paper-loop and status updates
-        await process_grading_job_in_background(
-            exam_id=exam_id,
-            job_id=job_id,
-            task_id=task_id
-        )
+        # Enqueue to unified worker queue
+        logger.info("JOB_ENQUEUED by legacy TaskWorker")
+        await enqueue_grading_job("batch_grading", {
+            "job_id": job_id,
+            "exam_id": exam_id,
+        })
         
         await db.tasks.update_one(
             {"task_id": task_id},

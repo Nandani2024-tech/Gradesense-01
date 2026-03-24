@@ -4,7 +4,7 @@ from app.repositories import SubmissionRepo
 from app.services.pipelines.ai_structured.grading.alignment_service import align_answers
 from app.services.pipelines.ai_structured.utils.logging import with_logging, pipeline_logger
 from app.services.pipelines.ai_structured.alignment.coverage_checker import check_alignment_coverage
-from app.adapters.llm_adapter import GeminiLLMService
+from app.services.llm_provider import get_llm_service
 from app.infrastructure.ocr.provider import get_ocr_provider
 
 logger = pipeline_logger(__name__)
@@ -23,7 +23,7 @@ async def perform_alignment_and_update(
     PROMPT_VERSION: str,
     llm_service: Optional["AbstractLLMService"] = None,
 ) -> Dict[str, Any]:
-    llm_service = llm_service or GeminiLLMService()
+    llm_service = llm_service or get_llm_service()
     ocr_service = get_ocr_provider()
 
     # OCR Preprocessing Step
@@ -61,7 +61,7 @@ async def perform_alignment_and_update(
         
     except Exception as e:
         logger.error(f"OCR_FAILED: submission_id={submission.id}, error={str(e)}")
-        submission.raw_ocr_text = ""
+        raise Exception(f"OCR_FAILED: {str(e)}")
 
     alignment_result = await align_answers(
         submission_id=submission_id,

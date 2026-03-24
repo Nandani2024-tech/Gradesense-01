@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from app.core.logging_config import logger
 from app.services.llm.config import get_llm_api_key
-from app.adapters.llm_adapter import GeminiLLMService
+from app.services.llm_provider import get_llm_service
 
 
 STRICT_VISUAL_BLUEPRINT_PROMPT_VERSION = "v1"
@@ -309,8 +309,7 @@ async def run_strict_visual_blueprint(
         # Strict visual blueprint MUST use a vision-capable model.
         actual_model = "llama3.2-vision:latest"
 
-    llm_service = GeminiLLMService(api_key=api_key or "no-key")
-    logger.info("LLM_CALL provider=%s model=%s prompt_len=0", provider, actual_model)
+    llm_service = get_llm_service()
     
     raw = await llm_service.predict(
         prompt="",

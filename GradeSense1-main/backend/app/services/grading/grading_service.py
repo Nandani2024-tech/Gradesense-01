@@ -8,20 +8,42 @@ from app.repositories import ExamRepo, SubmissionRepo, AnalyticsRepo
 from app.core.logging_config import logger
 from app.services.files import is_valid_answer_pdf, file_service
 from app.services.grading import grading_job_service
-from app.workers import grading_worker
 from app.services.answer_sheet_pipeline import pdf_to_clean_images
-from app.services.grading_core import run_grading_orchestrator
 
 exam_repo = ExamRepo()
 submission_repo = SubmissionRepo()
 analytics_repo = AnalyticsRepo()
 
-def queue_regrade_all(exam_id: str, user_id: str, background_tasks: Any) -> None:
-    """Queue a regrading job in the background."""
-    from app.workers.grading_worker import run_regrade_all_submissions
-    background_tasks.add_task(run_regrade_all_submissions, exam_id, user_id)
+# 🚀 Phase 4: Unified Grading Queue (SSOT Routing)
+grading_queue: asyncio.Queue = asyncio.Queue()
 
-async def queue_grading_job(exam_id: str, files: List[UploadFile], user: Any) -> str:
+async def enqueue_grading_job(job_type: str, job_data: dict):
+    """
+    Centralized entry point for ALL grading executions.
+    Ensures: Queue -> Worker -> Orchestrator path.
+    """
+    logger.info("JOB_ENQUEUED", extra={
+        "job_type": job_type,
+        "exam_id": job_data.get("exam_id"),
+        "job_id": job_data.get("job_id"),
+        "submission_id": job_data.get("submission_id")
+    })
+    
+    task = {
+        "job_type": job_type,
+        "data": job_data,
+        "enqueued_at": datetime.now(timezone.utc).isoformat()
+    }
+    
+    await grading_queue.put(task)
+    return task
+
+def get_regrade_all_data(exam_id: str, user_id: str) -> Dict[str, Any]:
+    """Prepares data for regrading all submissions."""
+    # This will be used by the API to trigger the background task
+    return {"exam_id": exam_id, "user_id": user_id}
+
+async def queue_grading_job(exam_id: str, files: List[UploadFile], user: Any) -> Dict[str, Any]:
     """
     Validates the request, creates a job, and triggers the background worker.
     """
@@ -76,17 +98,14 @@ async def queue_grading_job(exam_id: str, files: List[UploadFile], user: Any) ->
     )
     logger.info("GRADING_JOB_QUEUED exam_id=%s job_id=%s paper_count=%s", exam_id, job_id, len(files_data))
 
-    # 4. Trigger worker (Async)
-    # We pass necessary context to the worker
-    asyncio.create_task(grading_worker.run_grading_pipeline(
-        job_id=job_id,
-        exam_id=exam_id,
-        files_data=files_data,
-        teacher_id=user.user_id,
-        blueprint=exam # Initial blueprint
-    ))
-
-    return job_id
+    # 4. Return data for Worker Trigger (API layer will trigger)
+    return {
+        "job_id": job_id,
+        "exam_id": exam_id,
+        "files_data": files_data,
+        "teacher_id": user.user_id,
+        "blueprint": exam
+    }
 
 async def create_initial_submission(
     exam_id: str,
@@ -147,20 +166,31 @@ async def update_submission_with_results(
     """
     Updates an existing submission record with grading results.
     """
-    total_awarded = result.get("total_awarded", 0.0)
-    total_possible = result.get("total_possible", 0.0)
-    percentage = (total_awarded / total_possible * 100) if total_possible > 0 else 0.0
+    total_awarded = result.get("total_awarded", result.get("total_score", 0.0))
+    total_possible = result.get("total_possible", result.get("total_marks", 0.0))
+    
+    percentage = result.get("percentage")
+    if percentage is None:
+        percentage = (total_awarded / total_possible * 100) if total_possible > 0 else 0.0
+    
+    status = result.get("status", "ai_graded")
+    # Normalize completed status to ai_graded for student view consistency
+    if status == "completed":
+        status = "ai_graded"
     
     update_payload = {
         "question_scores": result.get("grades", []),
         "total_score": total_awarded,
         "total_marks": total_possible,
         "percentage": percentage,
-        "brief_feedback": f"Scored {percentage:.1f}% ({total_awarded}/{total_possible})",
+        "brief_feedback": f"Error: {result.get('error')}" if status == "NEEDS_REVIEW" else f"Scored {percentage:.1f}% ({total_awarded}/{total_possible})",
         "grading_logs": result.get("logs", []),
-        "status": "ai_graded",
+        "status": status,
         "graded_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
+        "needs_manual_review": result.get("needs_manual_review", False),
+        "error": result.get("error"),
+        "error_type": result.get("error_type")
     }
     
     await submission_repo.update_submission(submission_id, {"$set": update_payload})
@@ -195,7 +225,7 @@ async def create_submission_from_file(
     return sub_id
 
 async def regrade_all_submissions(exam_id: str, user_id: str) -> Dict[str, Any]:
-    """Regrade all submissions for an exam using Phase 3 Orchestrator."""
+    """Regrade all submissions for an exam using Phase 3 Orchestrator via Worker."""
     exam = await exam_repo.find_one_exam({"exam_id": exam_id, "teacher_id": user_id})
     if not exam:
         raise CustomServiceException(status_code=404, message="Exam not found")
@@ -204,42 +234,25 @@ async def regrade_all_submissions(exam_id: str, user_id: str) -> Dict[str, Any]:
     if not submissions:
         return {"message": "No submissions to regrade", "regraded_count": 0, "total_submissions": 0}
 
-    logger.info("🚀 REGRADE_ALL_STARTED exam_id=%s submission_count=%s via Orchestrator", exam_id, len(submissions))
-    regraded_count = 0
-    errors = []
-
-    for submission in submissions:
-        try:
-            submission_id = submission["submission_id"]
-            logger.info("🚀 ROUTE_TRIGGER: Calling run_grading_orchestrator for exam %s, submission %s (regrade)", exam_id, submission_id)
-            
-            # 1. New Phase 3 Orchestration
-            result = await run_grading_orchestrator(
-                exam_id=exam_id,
-                submission_id=submission_id
-            )
-
-            if result.get("status") == "failed":
-                errors.append({"submission_id": submission_id, "error": result.get("error", "Orchestrator failed")})
-                continue
-
-            # 2. Update submission record with result
-            await update_submission_with_results(submission_id, result)
-            regraded_count += 1
-
-        except Exception as e:
-            logger.error(f"Regrade failed for {submission.get('submission_id')}: {e}")
-            errors.append({"submission_id": submission.get("submission_id"), "error": str(e)})
+    logger.info("🚀 REGRADE_ALL_QUEUED exam_id=%s submission_count=%s", exam_id, len(submissions))
+    
+    # NEW: Instead of running in loop, we enqueue a single batch regrade task
+    # The worker will handle the iteration and orchestrator calls
+    await enqueue_grading_job("regrade_all", {
+        "exam_id": exam_id,
+        "user_id": user_id,
+        "submission_ids": [s["submission_id"] for s in submissions]
+    })
 
     return {
-        "message": f"Regraded {regraded_count} submissions",
-        "regraded_count": regraded_count,
+        "message": f"Regrading for {len(submissions)} submissions has been enqueued.",
+        "regraded_count": 0, # Counters will be updated by worker
         "total_submissions": len(submissions),
-        "errors": errors[:5] if errors else []
+        "errors": []
     }
 
-async def grade_student_submissions(exam_id: str, user_id: str) -> Dict[str, Any]:
-    """Trigger grading for all submitted student answers using Orchestrator via worker."""
+async def get_grade_student_submissions_data(exam_id: str, user_id: str) -> Dict[str, Any]:
+    """Prepares data for batch grading student submissions."""
     from app.services import blueprint_service
     
     exam = await exam_repo.find_one_exam({"exam_id": exam_id})
@@ -254,34 +267,18 @@ async def grade_student_submissions(exam_id: str, user_id: str) -> Dict[str, Any
         raise CustomServiceException(status_code=400, message="No submissions to grade")
 
     job_id = f"job_{uuid.uuid4().hex[:12]}"
-    
-    # Redirection: We set the status and trigger the worker flow
-    logger.info("🚀 GRADE_STUDENT_SUBMISSIONS exam_id=%s triggering Orchestrator via batch", exam_id)
-    
-    # Convert submissions to file_data format that worker understands
-    # (Actually the worker fetches from GridFS if available, let's look at it)
-    # Wait, the worker expects files_data = [{"filename": ..., "content": ...}]
-    # Student uploads already have submissions in DB. We might need a specialized worker function or just use the same orchestrator logic.
-    
-    # For now, we'll iterate and call orchestrator (simpler for Step 4 redirection)
-    async def run_batch_grade():
-        for sub in submissions:
-            sub_id = sub["submission_id"]
-            logger.info("🚀 ROUTE_TRIGGER: Calling run_grading_orchestrator for exam %s, submission %s (student_upload)", exam_id, sub_id)
-            try:
-                result = await run_grading_orchestrator(exam_id, sub_id)
-                await update_submission_with_results(sub_id, result)
-            except Exception as e:
-                logger.error(f"Student review grade failed for {sub_id}: {e}")
-
-    asyncio.create_task(run_batch_grade())
 
     return {
         "job_id": job_id,
-        "status": "processing",
+        "exam_id": exam_id,
+        "submissions": submissions,
         "message": f"Grading started for {len(submissions)} submissions",
         "total_papers": len(submissions)
     }
+
+def run_simple_grading_pipeline_sync(qp_bytes: bytes, ans_bytes: bytes, question_meta: Dict[str, Any]) -> List[Dict[str, Any]]:
+    # Placeholder for sync version if needed
+    return []
 
 async def run_simple_grading_pipeline(qp_bytes: bytes, ans_bytes: bytes, question_meta: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
@@ -290,33 +287,21 @@ async def run_simple_grading_pipeline(qp_bytes: bytes, ans_bytes: bytes, questio
     from app.services.pipelines.ai_structured_engine import grade_images_with_locked_blueprint
     from app.services.answer_sheet_pipeline import pdf_to_clean_images
 
-    logger.info("🚀 SIMPLE_GRADE_TRIGGER: Calling Orchestrator logic via temporary state")
+    logger.info("🚀 SIMPLE_GRADE_TRIGGER: Enqueueing Orchestrator logic via worker queue")
     
     # 1. Prepare images
     qp_images = await asyncio.to_thread(pdf_to_clean_images, qp_bytes, normalize=True)
     ans_images = await asyncio.to_thread(pdf_to_clean_images, ans_bytes, normalize=True)
-    
-    # 2. Mock exam doc for locked blueprint engine
-    exam_doc = {
+
+    job_data = {
         "exam_id": "simple_" + uuid.uuid4().hex[:6],
         "questions": question_meta.get("questions") or [],
         "total_marks": question_meta.get("total_marks", 100),
-        "blueprint_status": "ready_locked",
-        "blueprint_locked": True,
-        "blueprint_version": 0,
+        "qp_images": qp_images,
+        "ans_images": ans_images
     }
 
-    # 3. Call core engine (which orchestrator calls)
-    # Since orchestrator needs exam_id/submission_id to fetch from DB, we use the engine directly if needed,
-    # OR we could insert temporary records. 
-    # To be "strict SSOT", we should ideally insert, but for 'simple/grade' we'll use the core engine directly.
+    logger.info("JOB_ENQUEUED simple_grade")
+    await enqueue_grading_job("simple_grading", job_data)
     
-    scores, meta = await grade_images_with_locked_blueprint(
-        exam=exam_doc,
-        images=ans_images,
-        model_answer_images=[], # Simple grade often doesn't have model answer images yet
-        question_paper_images=qp_images,
-        grading_mode="balanced",
-    )
-    
-    return [s.model_dump() for s in scores]
+    return []

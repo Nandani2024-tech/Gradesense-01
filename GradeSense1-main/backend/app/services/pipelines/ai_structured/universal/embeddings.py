@@ -48,20 +48,12 @@ class LocalLexicalEmbeddingProvider:
 
 @dataclass
 class GeminiEmbeddingProvider:
-    model: str = "text-embedding-004"
-
     def embed(self, texts: List[str]) -> List[List[float]]:
+        """Use centralized LLM service for embeddings."""
         try:
-            from google import genai
-
-            client = genai.Client()
-            vectors: List[List[float]] = []
-            for text in texts:
-                resp = client.models.embed_content(model=self.model, contents=[text or ""])
-                emb = (resp.embeddings or [None])[0]
-                values = list(getattr(emb, "values", []) or [])
-                vectors.append([float(v) for v in values])
-            return vectors
+            from app.services.llm_provider import get_llm_service
+            llm_service = get_llm_service()
+            return llm_service.embed_batch_sync(texts)
         except Exception as exc:
             raise RuntimeError(f"gemini_embedding_failed:{exc}") from exc
 

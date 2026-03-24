@@ -21,7 +21,7 @@ from app.services.grading import (
     build_grading_contract,
 )
 
-from app.services.llm.prompts.ai_structured_prompts import (
+from app.prompts.ai_structured_prompts import (
     PROMPT_VERSION,
     build_objective_key_prompt,
     build_student_option_prompt,

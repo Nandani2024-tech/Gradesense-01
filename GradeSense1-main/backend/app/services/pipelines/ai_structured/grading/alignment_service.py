@@ -22,7 +22,7 @@ from app.constants.layers import (
 )
 
 from app.infrastructure.cache import get_alignment_cache, set_alignment_cache
-from app.services.llm.prompts.ai_structured_prompts import build_alignment_prompt
+from app.prompts.ai_structured_prompts import build_alignment_prompt
 from app.infrastructure.serialization.json_helpers import parse_tolerant_json
 from app.infrastructure.serialization.safe_numeric import safe_float
 
@@ -216,12 +216,15 @@ async def _llm_align_answers(
             len(answer_images)
         )
 
+    kwargs.setdefault("max_tokens", 8192)
     try:
         raw = await llm_service.predict(prompt, images=images_to_send, **kwargs)
+        logger.info("ALIGNMENT_TRACE: raw_llm_response_start=%s", raw[:500])
+        logger.info("ALIGNMENT_TRACE: raw_llm_response_end=%s", raw[-500:])
         return parse_tolerant_json(raw)
     except Exception as e:
         logger.error(f"Alignment LLM failed: {e}")
-        return {"answers": []}
+        raise e
 
 
 
@@ -245,6 +248,7 @@ async def align_answers(
             if str(q.get("number", "")).isdigit()
         }
     )
+    logger.info("ALIGNMENT_TRACE: expected_numbers=%s", expected_numbers)
 
     if use_cache:
         cached = get_alignment_cache(submission_id, blueprint_signature)
@@ -279,7 +283,15 @@ async def align_answers(
                 for ans in (payload.get("answers") or []):
                     if isinstance(ans, dict) and str(ans.get("page_index", "")).isdigit():
                         ans["page_index"] = int(ans["page_index"]) + start_idx
-                return _normalize_alignment_answers(payload, expected_numbers)
+                
+                normalized = _normalize_alignment_answers(payload, expected_numbers)
+                logger.info("ALIGNMENT_TRACE: batch=%d payload_answers_count=%d normalized_answers_count=%d", 
+                            start_idx // batch_size + 1, len(payload.get("answers") or []), len(normalized))
+                if not normalized and payload.get("answers"):
+                    logger.warning("ALIGNMENT_TRACE: all answers filtered out for batch %d. raw_first_qn=%s", 
+                                   start_idx // batch_size + 1, (payload.get("answers")[0].get("question_number") if payload.get("answers") else "N/A"))
+                
+                return normalized
             except Exception as exc:
                 # SSOT ENFORCEMENT: No OCR fallback allowed
                 logger.error("[STEP FAILED] BATCH_ALIGNMENT | submission_id=%s | error=%s", submission_id, exc)

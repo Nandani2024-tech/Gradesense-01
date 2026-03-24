@@ -8,7 +8,7 @@ from app.core.database import db
 from app.core.exceptions import CustomServiceException
 from app.models.submission import QuestionScore, SubQuestionScore
 import uuid
-from app.adapters.llm_adapter import GeminiLLMService
+from app.services.llm_provider import get_llm_service
 from app.infrastructure.ocr.provider import get_ocr_provider
 from app.services.pipelines.ai_structured.grading.alignment_service import align_answers
 
@@ -25,7 +25,7 @@ from app.services.pipelines.ai_structured.blueprint.snapshot import create_bluep
 from app.services.pipelines.ai_structured.blueprint.structure_to_legacy import question_structure_to_legacy_questions
 from app.services.pipelines.ai_structured.alignment.alignment_service import perform_alignment_and_update
 
-from app.services.llm.prompts.ai_structured_prompts import PROMPT_VERSION
+from app.prompts.ai_structured_prompts import PROMPT_VERSION
 from app.services.storage.gridfs_helpers import get_exam_question_paper_images
 
 logger = pipeline_logger(__name__)
@@ -322,7 +322,7 @@ async def grade_images_with_locked_blueprint(
     session_id = f"session_{uuid.uuid4()}"
     
     # Initialize services
-    llm_service = GeminiLLMService()
+    llm_service = get_llm_service()
     ocr_service = get_ocr_provider()
     
     # 1. Run Alignment

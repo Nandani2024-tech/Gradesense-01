@@ -227,7 +227,7 @@ class UploadService:
 
     async def upload_more_papers(self, exam_id: str, user_id: str, files: List[UploadFile]) -> Dict[str, Any]:
         """Upload and grade papers."""
-        from app.services.grading import grade_with_ai
+        from app.services import blueprint_service
         from app.services import blueprint_service
         from app.services.pipelines.ai_extraction_service import extract_question_structure
         from app.services.storage.gridfs_helpers import get_exam_model_answer_images, get_exam_question_paper_images
@@ -289,67 +289,33 @@ class UploadService:
                     errors.append({"filename": filename, "error": "Failed to extract images"})
                     continue
 
-                user_id_resolved, stu_id, stu_name = await student_service.orchestrate_student_id(
-                    images=images, filename=filename, batch_id=exam.get("batch_id"), teacher_id=user_id
-                )
-
-                scores = await grade_with_ai(
-                    images=images,
-                    model_answer_images=model_answer_imgs,
-                    questions=exam.get("questions", []),
-                    grading_mode=exam.get("grading_mode", "balanced"),
-                    total_marks=exam.get("total_marks", 100),
-                    model_answer_text=model_answer_text,
-                    model_answer_map=model_answer_map,
-                    subject_name=subject_name,
-                    exam_id=exam_id,
-                    exam_name=exam.get("exam_name"),
-                    exam_type=exam.get("exam_type"),
-                )
+                from app.services.grading.grading_service import create_initial_submission, update_submission_with_results, enqueue_grading_job
                 
-                packet_meta = getattr(grade_with_ai, "last_packet_meta", {}) or {}
-                grading_reference_mode = getattr(grade_with_ai, "last_grading_reference_mode", "rubric_only")
-                
-                total_score = sum(s.obtained_marks for s in scores)
-                percentage = (total_score / exam["total_marks"]) * 100 if exam["total_marks"] > 0 else 0
-
-                _hex = uuid.uuid4().hex
-                submission_id = f"sub_{_hex[:8]}"
-                from app.services.score_normalization import normalize_submission_scores
-                normalized = normalize_submission_scores(
-                    {
-                        "submission_id": submission_id,
-                        "question_scores": [s.model_dump() for s in scores],
-                        "total_score": total_score,
-                        "percentage": round(float(percentage), 2),
-                    },
-                    exam,
-                    source="upload_more_papers",
-                )
-
-                await submission_service.create_submission(
-                    submission_id=submission_id,
+                # 1. Create initial submission (pre-grading)
+                submission_id = await create_initial_submission(
                     exam_id=exam_id,
-                    student_id=user_id_resolved,
-                    student_name=stu_name,
-                    total_score=normalized["total_score"],
-                    percentage=normalized["percentage"],
-                    question_scores=normalized["question_scores"],
+                    job_id="upload_more_papers",
+                    student_info={"student_id": None, "student_name": None},
                     pdf_bytes=pdf_bytes,
-                    filename=filename,
-                    images=images,
-                    packet_meta=packet_meta,
-                    grading_reference_mode=grading_reference_mode
+                    filename=filename
                 )
-
+                
+                # 🚀 Phase 4: REPLACE direct orchestrator call with ENQUEUE
+                logger.info("🚀 SERVICE_TRIGGER: Enqueueing grading for submission %s", submission_id)
+                await enqueue_grading_job("single_submission_grading", {
+                    "exam_id": exam_id,
+                    "submission_id": submission_id
+                })
+                
+                # 4. Prepare return data for the legacy response format (mocked since it's now async)
                 submissions.append({
                     "submission_id": submission_id,
-                    "student_id": stu_id,
-                    "student_name": stu_name,
-                    "total_score": normalized["total_score"],
-                    "percentage": normalized["percentage"],
+                    "student_id": "pending",
+                    "student_name": "pending",
+                    "total_score": 0,
+                    "percentage": 0,
                 })
-                logger.info("SUBMISSION_CREATED exam_id=%s submission_id=%s student_id=%s score=%s", exam_id, submission_id, stu_id, normalized["total_score"])
+                logger.info("SUBMISSION_ENQUEUED (Unified) exam_id=%s submission_id=%s", exam_id, submission_id)
 
             except Exception as e:
                 logger.error("PAPER_PROCESSING_FAILED exam_id=%s filename=%s error=%s", exam_id, filename, str(e))
