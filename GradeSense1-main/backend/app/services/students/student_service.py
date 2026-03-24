@@ -359,10 +359,12 @@ class StudentService:
         # Instantiate LLM service for student info extraction
         llm_service = GeminiLLMService()
         
-        # Call extraction utility (returns a dict in Phase 3)
-        info = await extract_student_info_from_paper(images, llm_service)
-        student_id = info.get("student_id")
-        student_name = info.get("student_name")
+        # Call extraction utility - DISABLED FOR LEGACY, handled by Orchestrator
+        # info = await extract_student_info_from_paper(images, llm_service)
+        # student_id = info.get("student_id")
+        # student_name = info.get("student_name")
+        student_id = None
+        student_name = None
 
         if not student_id or not student_name:
             filename_id, filename_name = parse_student_from_filename(filename)
@@ -401,7 +403,8 @@ class StudentService:
                 images = await asyncio.to_thread(pdf_to_clean_images, file_content, normalize=True)
             
             if images and filename:
-                student_id, student_name = await self.identify_student(images, filename)
+                logger.info("Phase 3 orchestrator will handle student identification for this submission")
+                # student_id, student_name = await self.identify_student(images, filename)
         except Exception as e:
             logger.warning(f"Student identification failed for {filename}: {e}")
 

@@ -10,14 +10,16 @@ def question_structure_to_legacy_questions(structure: Dict[str, Any]) -> List[Di
                 "question_uuid": str(q.get("question_uuid") or f"qv2_{int(q.get('number'))}"),
                 "max_marks": _to_float(q.get("marks"), 0.0),
                 "question_text": str(q.get("question_text") or "").strip(),
-                "rubric": str(q.get("question_text") or "").strip(),
+                "model_answer": str(q.get("model_answer") or "").strip(),
+                "rubric": str(q.get("rubric") or "").strip(),
                 "question_type": str(q.get("question_type") or "descriptive"),
                 "or_group_id": q.get("or_group_id"),
                 "sub_questions": [
                     {
                         "sub_id": str(sq.get("label") or "").strip(),
                         "max_marks": _to_float(sq.get("marks"), 0.0),
-                        "rubric": str(sq.get("text") or "").strip(),
+                        "model_answer": str(sq.get("model_answer") or "").strip(),
+                        "rubric": str(sq.get("rubric") or "").strip(),
                     }
                     for sq in (q.get("subquestions") or [])
                 ],

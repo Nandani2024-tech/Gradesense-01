@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from app.core.exceptions import CustomServiceException
 from app.repositories import SubmissionRepo
 from app.services.pipelines.ai_structured.grading.alignment_service import align_answers
@@ -21,8 +21,9 @@ async def perform_alignment_and_update(
     force: bool,
     PIPELINE_VERSION: str,
     PROMPT_VERSION: str,
+    llm_service: Optional["AbstractLLMService"] = None,
 ) -> Dict[str, Any]:
-    llm_service = GeminiLLMService()
+    llm_service = llm_service or GeminiLLMService()
     ocr_service = get_ocr_provider()
 
     # OCR Preprocessing Step
@@ -45,11 +46,11 @@ async def perform_alignment_and_update(
             ocr_text = ocr_service.extract_text_from_pdf(submission.pdf_path)
         else:
             # Fallback inline OCR over images
-            parts = []
+            parts: List[str] = []
             for img in images:
                 res = await ocr_service.detect_async(img)
                 lines = res.get("lines") or []
-                parts.append(" ".join(ln.get("text", "") for ln in lines).strip())
+                parts.append(" ".join(str(ln.get("text", "")) for ln in lines).strip())
             ocr_text = "\n".join(parts)
             
         submission.raw_ocr_text = ocr_text
@@ -69,6 +70,7 @@ async def perform_alignment_and_update(
         blueprint_signature=blueprint_signature,
         llm_service=llm_service,
         ocr_service=ocr_service,
+        ocr_text=submission.raw_ocr_text,
         use_cache=not force,
         model_name=model_name,
     )
@@ -118,9 +120,9 @@ async def perform_alignment_and_update(
         "submission_id": submission_id,
         "exam_id": exam.get("exam_id"),
         "mapping_status": alignment_status,
-        "mapped_question_ratio": round(coverage_ratio, 4),
-        "mapping_coverage": round(coverage, 4),
-        "alignment_confidence_score": round(alignment_conf, 4),
+        "mapped_question_ratio": round(float(coverage_ratio), 4), # type: ignore
+        "mapping_coverage": round(float(coverage), 4), # type: ignore
+        "alignment_confidence_score": round(float(alignment_conf), 4), # type: ignore
         "expected_questions": sorted(
             int(q.get("number"))
             for q in (structure.get("questions") or [])

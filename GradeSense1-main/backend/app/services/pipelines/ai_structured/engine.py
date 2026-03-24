@@ -218,6 +218,7 @@ async def align_submission_for_grading(
     lock_owner: Optional[str] = None,
     force: bool = False,
     model_name: str = DEFAULT_MODEL_NAME,
+    llm_service: Optional["AbstractLLMService"] = None,
 ) -> Dict[str, Any]:
     if not structure or not isinstance(structure, dict):
         exam, submission = await _load_exam_and_submission(submission_id)
@@ -249,6 +250,15 @@ async def align_submission_for_grading(
         if not images:
             raise CustomServiceException("missing_submission_images", 500)
 
+        # Safety defaults for logging
+        images = images or []
+        ocr_text = submission.get("raw_ocr_text") or ""
+        logger.info(
+            "ALIGNMENT INPUT TYPE: images=%s, ocr_present=%s",
+            bool(images),
+            bool(ocr_text)
+        )
+
         result = await perform_alignment_and_update(
             submission_id=submission_id,
             structure=structure,
@@ -259,7 +269,14 @@ async def align_submission_for_grading(
             force=force,
             PIPELINE_VERSION=PIPELINE_VERSION,
             PROMPT_VERSION=PROMPT_VERSION,
+            llm_service=llm_service,
         )
+
+        # Output logging: detect keys and answer count
+        vision_answers = result.get("answers") or []
+        logger.info("Aligned submission keys: %s", [a.get("question_number") for a in vision_answers])
+        logger.info("Number of answers: %d", len(vision_answers))
+
         return result
     finally:
         # EXCLUSIVE LOCK REMOVED: No release needed as no lock was acquired.
