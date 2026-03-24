@@ -21,6 +21,7 @@ def _normalize_subquestion(sub: Dict[str, Any]) -> Dict[str, Any]:
         "mark_source": str(sub.get("mark_source") or "inferred").strip().lower(),
         "mark_confidence": round(to_float(sub.get("mark_confidence"), 0.0), 4),
         "confidence": round(to_float(sub.get("confidence"), 0.0), 4),
+        "image_evidence": list(sub.get("image_evidence") or []),
     }
 
 

@@ -805,6 +805,11 @@ def _normalize_batch_payload(payload: Dict[str, Any], page_offset: int) -> Dict[
 
 
 def _merge_questions(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str, Any]:
+    logger.warning(
+        "MERGE_FUNC_INPUT existing=%s incoming=%s",
+        json.dumps(existing, indent=2)[:1000],
+        json.dumps(incoming, indent=2)[:1000]
+    )
     merged = dict(existing)
     if len(str(incoming.get("question_text") or "")) > len(str(merged.get("question_text") or "")):
         merged["question_text"] = incoming.get("question_text")
@@ -873,6 +878,10 @@ def _merge_questions(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Dict
     merged["confidence"] = max(
         _to_float(merged.get("confidence"), ex_conf),
         _to_float(incoming.get("confidence"), in_conf),
+    )
+    logger.warning(
+        "MERGE_FUNC_OUTPUT result=%s",
+        json.dumps(merged, indent=2)[:1000]
     )
     return merged
 
@@ -1303,15 +1312,27 @@ def _merge_semantic_with_visual_entities(stage2_structure: Dict[str, Any], visua
             return False
 
         options = list(question.get("options") or [])
+        preserved_subquestions = []
+        demoted_any = False
+
         for sq in subparts:
             opt = str(sq.get("text") or "").strip()
-            if opt and opt not in options:
-                options.append(opt)
+            sq_marks = _to_float(sq.get("marks"), 0.0)
+            
+            # Preserve valid semantic subquestions that have distinct text and positive marks
+            if qtype != "mcq" and opt and sq_marks > 0:
+                preserved_subquestions.append(sq)
+            else:
+                if opt and opt not in options:
+                    options.append(opt)
+                demoted_any = True
+
         if options:
             question["options"] = options
-        # Drop subquestions to avoid splitting marks for choice-only prompts.
-        question["subquestions"] = []
-        return True
+            
+        # Retain subquestions that were not demoted
+        question["subquestions"] = preserved_subquestions
+        return demoted_any
 
     def _allows_visual_subparts(question: Dict[str, Any]) -> bool:
         qtype = str((question or {}).get("question_type") or "").strip().lower()
@@ -1340,20 +1361,14 @@ def _merge_semantic_with_visual_entities(stage2_structure: Dict[str, Any], visua
             continue
         visual_labels_by_q[qn].add(label.lower())
 
-    # Visual entities are source-of-truth when labels are available for a question.
-    if visual_subparts_exist:
-        for qn, q in list(q_by_num.items()):
-            if not _allows_visual_subparts(q):
-                continue
-            keep_labels = visual_labels_by_q.get(qn) or set()
-            if keep_labels:
-                filtered = []
-                for sq in (q.get("subquestions") or []):
-                    lbl = str(sq.get("label") or "").strip().lower()
-                    if lbl and keep_labels and lbl in keep_labels:
-                        filtered.append(sq)
-                q["subquestions"] = filtered
-            q_by_num[qn] = q
+    # Phase 1: Semantic Preservation and Visual Gap Detection
+    for qn, q in q_by_num.items():
+        if not _allows_visual_subparts(q):
+            continue
+        semantic_subs = q.get("subquestions") or []
+        visual_labels = visual_labels_by_q.get(qn) or set()
+        if semantic_subs and not visual_labels:
+            logger.warning("VISUAL_SUBPARTS_MISSING qn=%s preserving semantic structure", qn)
 
     # Ensure every visual question exists.
     for row in (visual_entities or {}).get("questions") or []:
@@ -1391,39 +1406,68 @@ def _merge_semantic_with_visual_entities(stage2_structure: Dict[str, Any], visua
         q["image_evidence"] = existing
         q_by_num[qn] = q
 
-    # Ensure every visual subpart exists.
-    for row in (visual_entities or {}).get("subparts") or []:
-        if not isinstance(row, dict):
-            continue
-        qn = _to_int(row.get("q"), 0)
-        label = str(row.get("label") or "").strip()
-        if qn <= 0 or not label:
-            continue
-        q = q_by_num.get(qn)
-        if not q:
-            continue
+    # Phase 2: Ensure every visual subpart exists and enrich existing ones.
+    for qn, q in q_by_num.items():
         if not _allows_visual_subparts(q):
             continue
-        subparts = list(q.get("subquestions") or [])
-        if not any(str(sq.get("label") or "").strip().lower() == label.lower() for sq in subparts):
-            subparts.append(
-                {
-                    "label": label,
-                    "text": "",
-                    "marks": 0.0,
-                    "mark_source": "inferred",
-                    "mark_confidence": 0.0,
-                    "confidence": _to_float(row.get("confidence"), 0.0),
-                    "image_evidence": [
-                        {
-                            "page_index": _to_int(row.get("page"), 0),
-                            "bbox": row.get("bbox"),
-                            "visual_confidence": _to_float(row.get("confidence"), 0.0),
-                        }
-                    ],
-                }
+
+        original_subs = list(q.get("subquestions") or [])
+        visual_rows = [
+            row for row in (visual_entities or {}).get("subparts") or []
+            if isinstance(row, dict) and _to_int(row.get("q"), 0) == qn
+        ]
+
+        if not visual_rows:
+            continue
+
+        new_subquestions = list(original_subs)
+        semantic_labels = {str(sq.get("label") or "").strip().lower() for sq in original_subs}
+
+        for row in visual_rows:
+            label = str(row.get("label") or "").strip()
+            if not label:
+                continue
+            norm_label = label.lower()
+            ev = {
+                "page_index": _to_int(row.get("page"), 0),
+                "bbox": row.get("bbox"),
+                "visual_confidence": _to_float(row.get("confidence"), 0.0),
+            }
+
+            if norm_label in semantic_labels:
+                # Enrichment Rule: Only update image_evidence and visual_confidence.
+                # Do NOT overwrite text or marks.
+                found_sq = next(sq for sq in new_subquestions if str(sq.get("label") or "").strip().lower() == norm_label)
+                existing_ev = list(found_sq.get("image_evidence") or [])
+                if ev not in existing_ev:
+                    existing_ev.append(ev)
+                found_sq["image_evidence"] = existing_ev
+                # Note: confidence field in structure is overall confidence; visual_confidence is for this evidence chunk.
+                found_sq["confidence"] = max(_to_float(found_sq.get("confidence"), 0.0), _to_float(row.get("confidence"), 0.0))
+            else:
+                # Add missing one
+                new_subquestions.append(
+                    {
+                        "label": label,
+                        "text": "",
+                        "marks": 0.0,
+                        "mark_source": "inferred",
+                        "mark_confidence": 0.0,
+                        "confidence": _to_float(row.get("confidence"), 0.0),
+                        "image_evidence": [ev],
+                    }
+                )
+
+        # Invariant Safety: No reduction in subquestion count allowed.
+        if len(new_subquestions) < len(original_subs):
+            logger.error(
+                "INVARIANT_VIOLATION qn=%s: subquestion count decreased (%s -> %s). Reverting.",
+                qn, len(original_subs), len(new_subquestions)
             )
-        q["subquestions"] = sorted(subparts, key=lambda sq: str(sq.get("label") or ""))
+            q["subquestions"] = original_subs
+        else:
+            q["subquestions"] = sorted(new_subquestions, key=lambda sq: str(sq.get("label") or ""))
+        
         q_by_num[qn] = q
 
     # Apply OR groups from visual connectors with safety checks.
@@ -1985,7 +2029,22 @@ async def extract_question_structure(
                 model_name=model_name, 
                 llm_service=llm_service
             )
-            return _normalize_batch_payload(payload, page_offset=start_idx)
+            logger.warning(
+                "RAW_LLM_OUTPUT batch=%s/%s\n%s\n",
+                idx,
+                total,
+                json.dumps(payload, indent=2)[:2000]  # truncate to avoid huge logs
+            )
+            normalized = _normalize_batch_payload(payload, page_offset=start_idx)
+
+            logger.warning(
+                "NORMALIZED_CHUNK batch=%s/%s questions=%s",
+                idx,
+                total,
+                json.dumps(normalized.get("questions"), indent=2)[:2000]
+            )
+
+            return normalized
         except Exception as exc:
             logger.warning("SEMANTIC_CHUNK_FAILED batch=%s/%s error=%s", idx, total, exc)
             return {
@@ -2013,9 +2072,22 @@ async def extract_question_structure(
                 qn = _parse_question_number(q.get("number"))
                 if not qn:
                     continue
+
+                logger.warning(
+                    "BEFORE_MERGE qn=%s data=%s",
+                    q.get("number"),
+                    json.dumps(q, indent=2)[:1000]
+                )
+
                 if qn not in merged:
                     merged[qn] = dict(q)
                 else:
+                    logger.warning(
+                        "MERGING qn=%s existing=%s incoming=%s",
+                        qn,
+                        json.dumps(merged[qn], indent=2)[:1000],
+                        json.dumps(q, indent=2)[:1000]
+                    )
                     merged[qn] = _merge_questions(merged[qn], q)
 
         # Final validation pass: ensure each question has at least some content
@@ -2033,8 +2105,40 @@ async def extract_question_structure(
             "total_questions": len(merged),
             "total_marks": 0.0,
             "effective_total_marks": 0.0,
+            "bottom_total_marks": 0.0,
             "numbering_contiguous": True,
         }
+
+        logger.warning(
+            "FINAL_CONSOLIDATED_QUESTIONS=%s",
+            json.dumps([q.get("number") for q in consolidated["questions"]])
+        )
+
+        for q in consolidated["questions"]:
+            if q.get("number") == 1:
+                logger.warning(
+                    "FINAL_Q1_STATE=%s",
+                    json.dumps(q, indent=2)[:2000]
+                )
+
+        # Step 6: Generate debug extraction trace file.
+        try:
+            debug_path = "debug_extraction_trace.txt"
+            with open(debug_path, "w", encoding="utf-8") as f:
+                f.write("=== EXTRACTION DEBUG TRACE ===\n\n")
+
+                for p_idx, payload in enumerate(batch_payloads):
+                    f.write(f"RAW BATCH {p_idx+1}/{len(batch_payloads)}:\n")
+                    f.write(json.dumps(payload, indent=2))
+                    f.write("\n\n")
+
+                f.write("FINAL CONSOLIDATED OUTPUT:\n")
+                f.write(json.dumps(consolidated, indent=2))
+            
+            logger.warning("DEBUG_FILE_GENERATED at %s", debug_path)
+        except Exception as deb_exc:
+            logger.warning("DEBUG_FILE_GENERATION_FAILED error=%s", deb_exc)
+
         return normalize_structure_payload(consolidated)
 
     retry_count = 0
@@ -2061,6 +2165,11 @@ async def extract_question_structure(
         raise ValueError("SEMANTIC_EXTRACTION_FAILED: No questions extracted from semantic layer.")
 
     stage2_structure = _merge_semantic_with_visual_entities(stage2_structure, visual_entities)
+    
+    for q in stage2_structure.get("questions") or []:
+        if q.get("number") == 1:
+            logger.warning("POST_VISUAL_MERGE_Q1_STATE=%s", json.dumps(q, indent=2)[:2000])
+    
     stage2_structure, visual_entities = _clip_to_expected_question_count(
         stage2_structure,
         visual_entities,

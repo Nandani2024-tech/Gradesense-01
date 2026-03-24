@@ -619,14 +619,27 @@ def merge_semantic_with_visual_entities(stage2_structure: Dict[str, Any], visual
             return False
 
         options = list(question.get("options") or [])
+        preserved_subquestions = []
+        demoted_any = False
+
         for sq in subparts:
             opt = str(sq.get("text") or "").strip()
-            if opt and opt not in options:
-                options.append(opt)
+            sq_marks = _to_float(sq.get("marks"), 0.0)
+            
+            # Preserve valid semantic subquestions that have distinct text and positive marks
+            if qtype != "mcq" and opt and sq_marks > 0:
+                preserved_subquestions.append(sq)
+            else:
+                if opt and opt not in options:
+                    options.append(opt)
+                demoted_any = True
+
         if options:
             question["options"] = options
-        question["subquestions"] = []
-        return True
+            
+        # Retain subquestions that were not demoted
+        question["subquestions"] = preserved_subquestions
+        return demoted_any
 
     def _allows_visual_subparts(question: Dict[str, Any]) -> bool:
         qtype = str((question or {}).get("question_type") or "").strip().lower()
