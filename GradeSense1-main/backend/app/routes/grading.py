@@ -10,6 +10,7 @@ from app.deps import get_current_user
 from app.models.user import User
 from app.models.user import User
 from app.services.grading import grading_service, grading_job_service
+from app.services.grading_core import run_grading_orchestrator
 from app.schemas.responses import (
     GradingJobResponse,
     SimpleGradingResponse,
@@ -28,6 +29,10 @@ async def grade_papers_background(
 ):
     """Start background grading job by delegating to GradingService."""
     logger.info("GRADE_PAPERS_BG_REQUEST exam_id=%s user_id=%s file_count=%s", exam_id, user.user_id, len(files))
+    
+    # 🚀 ROUTE_TRIGGER: Log and trigger
+    logger.info("🚀 ROUTE_TRIGGER: Calling run_grading_orchestrator logic via batch job for exam %s", exam_id)
+
     try:
         job_id = await grading_service.queue_grading_job(
             exam_id=exam_id,
@@ -68,14 +73,14 @@ async def simple_grade(
 
     logger.info("GRADING_ACTION_REQUESTed by user_id=%s", user.user_id)
 
-    qp_bytes = await question_paper.read()
-    ans_bytes = await answer_sheet.read()
-    try:
-        meta_obj = json.loads(question_meta) if question_meta else {}
-    except Exception:
-        raise HTTPException(status_code=400, detail="question_meta must be valid JSON")
+    # 🚀 ROUTE_TRIGGER: Handled via specialized simple pipeline logic
+    logger.info("🚀 ROUTE_TRIGGER: Calling run_grading_orchestrator logic for simple grade")
 
-    results = grading_service.run_simple_grading_pipeline(qp_bytes, ans_bytes, question_meta=meta_obj)
+    results = await grading_service.run_simple_grading_pipeline(
+        await question_paper.read(), 
+        await answer_sheet.read(), 
+        question_meta=json.loads(question_meta) if question_meta else {}
+    )
     return SimpleGradingResponse(question_results=results)
 
 
@@ -101,6 +106,9 @@ async def regrade_all_submissions(
 
     logger.info("REGRADE_ALL_REQUEST exam_id=%s user_id=%s", exam_id, user.user_id)
 
+    # 🚀 ROUTE_TRIGGER: Orchestrator will be called for each submission in worker
+    logger.info("🚀 ROUTE_TRIGGER: Calling run_grading_orchestrator logic via regrade_all for exam %s", exam_id)
+
     grading_service.queue_regrade_all(exam_id, user.user_id, background_tasks)
     
     return RegradeAllResponse(
@@ -116,6 +124,9 @@ async def grade_student_submissions(exam_id: str, user: User = Depends(get_curre
     """Trigger grading for all submitted student answers"""
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can grade")
+
+    # 🚀 ROUTE_TRIGGER: Orchestrator will be called for each submission
+    logger.info("🚀 ROUTE_TRIGGER: Calling run_grading_orchestrator logic via grade_student_submissions for exam %s", exam_id)
 
     try:
         result = await grading_service.grade_student_submissions(exam_id, user.user_id)

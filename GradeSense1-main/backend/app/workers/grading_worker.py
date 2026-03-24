@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from typing import List, Dict, Any
 
 from app.core.logging_config import logger
-from app.services.students import student_service
 from app.services.grading import grading_job_service, grading_service
 from app.services import blueprint_service
 from app.repositories import AnalyticsRepo
@@ -57,14 +56,15 @@ async def run_grading_pipeline(job_id: str, exam_id: str, files_data: List[dict]
                     except Exception:
                         pass
 
-                    # 🚀 Phase 3 Integration: Orchestrate Student ID and Create Submission first
+                    # 🚀 Phase 3 Integration: Orchestrate Student ID Bypassed (Moved to Orchestrator)
                     try:
-                        user_id, stu_id, stu_name = await student_service.orchestrate_student_id(
-                            file_content=file_entry["content"],
-                            filename=file_entry["filename"],
-                            batch_id=blueprint.get("batch_id"),
-                            teacher_id=teacher_id
-                        )
+                        # user_id, stu_id, stu_name = await student_service.orchestrate_student_id(
+                        #     file_content=file_entry["content"],
+                        #     filename=file_entry["filename"],
+                        #     batch_id=blueprint.get("batch_id"),
+                        #     teacher_id=teacher_id
+                        # )
+                        user_id, stu_name = None, None
                         
                         submission_id = await grading_service.create_initial_submission(
                             exam_id=exam_id,
@@ -74,12 +74,14 @@ async def run_grading_pipeline(job_id: str, exam_id: str, files_data: List[dict]
                             filename=file_entry["filename"]
                         )
                     except Exception as e:
-                        logger.error("❌ STUDENT_RESOLUTION/SUBMISSION_CREATION FAILED: %s", str(e))
+                        logger.error("❌ SUBMISSION_CREATION FAILED: %s", str(e))
                         await grading_job_service.update_job_progress(job_id, failed_inc=1, progress_inc=progress_increment)
                         return
 
                     # A. Run grading pipeline (Orchestrator now takes submission_id)
-                    logger.info("🚀 WORKER USING NEW ORCHESTRATOR for job %s, submission %s", job_id, submission_id)
+                    logger.info("✅ Worker confirmed: using orchestrator only")
+                    logger.info("LEGACY STUDENT INFO EXTRACTION DISABLED: Orchestrator-only path for job %s, submission %s", 
+                                job_id, submission_id)
                     try:
                         result = await run_grading_orchestrator(
                             exam_id=exam_id,
@@ -97,7 +99,7 @@ async def run_grading_pipeline(job_id: str, exam_id: str, files_data: List[dict]
                     # 🚨 CRITICAL: Prevent storing invalid grading results
                     if result.get("status") == "failed":
                         logger.error(
-                            "❌ Grading blocked due to legacy pipeline isolation",
+                            f"❌ NEW ORCHESTRATION FAILED: {result.get('error')}",
                             extra={"job_id": job_id, "exam_id": exam_id}
                         )
 

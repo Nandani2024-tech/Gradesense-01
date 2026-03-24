@@ -22,8 +22,10 @@ EXTRACTION_SCHEMA = {
             "mark_confidence": 0.0,
             "confidence": 0.0,
             "options": ["string"] or None,
-            "subquestions": [{"label": "a|b|i|ii", "text": "string", "marks": 0, "mark_source": "margin|section_math|instruction|inferred", "mark_confidence": 0.0}],
+            "subquestions": [{"label": "a|b|i|ii", "text": "string", "marks": 0, "mark_source": "margin|section_math|instruction|inferred", "mark_confidence": 0.0, "model_answer": "string", "rubric": "string"}],
             "or_group_id": "string|null",
+            "model_answer": "string",
+            "rubric": "string",
             "image_evidence": [{"page_index": 0, "bbox": [0, 0, 0, 0], "visual_confidence": 0.0}],
             "ai_confidence": 0.0,
         }
@@ -163,6 +165,8 @@ STRUCTURE RULES:
 7) Preserve layout intent; do not merge distinct questions.
 8) If the paper shows left-margin section math like n×m=x, it means the next n questions are m marks each. Do not create extra questions; do not assign marks.
 9) If the paper says "any one/any of the following/alternative question", keep choices in question_text or options; do not create subquestions.
+10) Extract the ideal answer for each question and subquestion into 'model_answer'.
+11) Extract marking criteria or guidelines into 'rubric'.
 """
 
 
@@ -231,10 +235,12 @@ def build_extraction_prompt(
         "Do not include raw newlines inside string values; use \n for line breaks.",
         "Do not include unescaped quotes inside strings; JSON must be valid.",
         "Include image_evidence with page_index and approximate bbox for each question.",
+        "Extract ideal answer into 'model_answer'.",
+        "Extract marking criteria or guidelines into 'rubric'.",
     ]
     rules.extend(extra_rules or [])
 
-    ocr_chunk = (raw_ocr_text or "")[:40000]
+    ocr_chunk = str(raw_ocr_text or "")
     return (
         "You are extracting exam structure for GradeSense.\n"
         f"Batch {batch_index}/{total_batches}.\n"
@@ -279,7 +285,7 @@ def build_reconstruction_prompt(
     validation_errors: List[str],
     raw_ocr_text: str,
 ) -> str:
-    ocr_chunk = (raw_ocr_text or "")[:40000]
+    ocr_chunk = str(raw_ocr_text or "")
     prev_struct_chunk = (json.dumps(previous_structure, ensure_ascii=True)[:30000])
     return (
         "Reconstruct the same exam structure and fix only validation errors.\n"
@@ -314,11 +320,23 @@ def build_reconstruction_prompt(
     )
 
 
-def build_alignment_prompt(*, question_structure: Dict[str, Any]) -> str:
-    return (
+def build_alignment_prompt(*, question_structure: Dict[str, Any], ocr_text: str = "") -> str:
+    prompt = (
         "You are an exam answer extractor and grader.\n"
         "Your task is to identify and match student answers with the correct question numbers and subparts from the question paper.\n"
         "Use answer images as the absolute source of truth.\n"
+    )
+
+    if ocr_text:
+        prompt += (
+            "\n"
+            "OCR_TEXT:\n"
+            f"{ocr_text}\n"
+            "\n"
+            "Use OCR text as PRIMARY source. Use images ONLY if OCR is unclear.\n"
+        )
+
+    prompt += (
         "\n"
         "IMPORTANT RULES:\n"
         "1. Do NOT assume answers appear in order.\n"
@@ -361,6 +379,7 @@ def build_alignment_prompt(*, question_structure: Dict[str, Any]) -> str:
         "Required schema:\n"
         + _json_schema_block(ALIGNMENT_SCHEMA)
     )
+    return prompt
 
 
 def build_quality_prompt(

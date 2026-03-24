@@ -3,8 +3,8 @@ from typing import List, Optional, Any, Dict
 
 class SubmissionBriefResponse(BaseModel):
     submission_id: str
-    student_id: str
-    student_name: str
+    student_id: Optional[str] = "Unknown"
+    student_name: Optional[str] = "Unknown"
     exam_id: str
     exam_name: Optional[str] = None
     subject_name: Optional[str] = None
@@ -17,13 +17,13 @@ class SubmissionBriefResponse(BaseModel):
 
 class SubmissionDetailResponse(BaseModel):
     submission_id: str
-    student_id: str
-    student_name: str
+    student_id: Optional[str] = "Unknown"
+    student_name: Optional[str] = "Unknown"
     exam_id: str
-    exam_name: str
-    subject_name: str
+    exam_name: Optional[str] = "Unknown"
+    subject_name: Optional[str] = "Unknown"
     status: str
-    answers: List[Dict[str, Any]]
+    answers: List[Dict[str, Any]] = []
     total_score: float
     percentage: float
     feedback: Optional[str] = None

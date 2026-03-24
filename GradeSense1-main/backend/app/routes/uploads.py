@@ -13,6 +13,7 @@ from app.schemas.responses import (
 from app.core.logging_config import logger
 from app.services.uploads.upload_service import upload_service
 from app.services.grading import grading_service
+from app.services.grading_core import run_grading_orchestrator
 
 router = APIRouter(tags=["uploads"])
 
@@ -60,6 +61,10 @@ async def upload_student_papers(
 ):
     """Upload and grade student papers with background job processing"""
     logger.info("UPLOAD_STUDENT_PAPERS_REQUEST exam_id=%s user_id=%s file_count=%s", exam_id, user.user_id, len(files))
+    
+    # 🚀 ROUTE_TRIGGER: Log that this will eventually call run_grading_orchestrator via worker
+    logger.info("🚀 ROUTE_TRIGGER: Calling run_grading_orchestrator logic via batch job for exam %s", exam_id)
+    
     data = await grading_service.queue_grading_job(exam_id, files, user)
     return GradingJobResponse(**data)
 

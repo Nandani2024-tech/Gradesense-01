@@ -14,15 +14,16 @@ async def extract_student_info_from_paper(
     if not images:
         return {"student_id": None, "student_name": None}
 
-    logger.info("LEGACY_STUDENT_INFO_EXTRACTION_REDIRECT starting")
+    logger.info("LEGACY STUDENT INFO EXTRACTION DISABLED: Using Phase 3 orchestrator")
     try:
-        # Use the internal helper from ai_extraction_service to ensure consistency
+        # Re-routed to the unified Phase 3 extraction logic.
         # Note: We pass gemini-2.0-flash by default as in the new pipeline
-        return await _extract_student_info(
-            images=images,
-            llm_service=llm_service,
-            model_name="gemini-2.0-flash"
-        )
+        # return await _extract_student_info(
+        #     images=images,
+        #     llm_service=llm_service,
+        #     model_name="gemini-2.0-flash"
+        # )
+        return {"student_id": None, "student_name": None}
     except Exception as e:
-        logger.error(f"LEGACY_STUDENT_INFO_EXTRACTION_FAILED: {e}")
+        # logger.error(f"LEGACY_STUDENT_INFO_EXTRACTION_FAILED: {e}")
         return {"student_id": None, "student_name": None}

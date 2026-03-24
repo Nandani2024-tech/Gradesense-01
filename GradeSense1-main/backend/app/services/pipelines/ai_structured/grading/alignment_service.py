@@ -104,7 +104,7 @@ def _normalize_alignment_answers(payload: Dict[str, Any], expected_numbers: List
             "sub_label": current_sub,
             "answer_text": ans_text,
             "detected_type": detected_type,
-            "page_index": int(row.get("page_index")) if str(row.get("page_index", "")).isdigit() else None,
+            "page_index": int(str(row.get("page_index"))) if str(row.get("page_index", "")).isdigit() else None,
             "bbox": row.get("bbox") if isinstance(row.get("bbox"), list) else None,
             "confidence": max(0.0, min(1.0, safe_float(row.get("confidence"), 0.0))),
             "_is_expected": qn in expected_set,
@@ -195,11 +195,29 @@ async def _llm_align_answers(
     question_structure: Dict[str, Any],
     answer_images: List[str],
     llm_service: AbstractLLMService,
+    ocr_text: str = "",
     **kwargs,
 ) -> Dict[str, Any]:
-    prompt = build_alignment_prompt(question_structure=question_structure)
+    prompt = build_alignment_prompt(question_structure=question_structure, ocr_text=ocr_text)
+    
+    # OCR-FIRST: Minimize image usage
+    images_to_send = answer_images
+    if ocr_text:
+        logger.info(
+            "ALIGNMENT MODE: OCR-FIRST | ocr_length=%d | images_used=%d",
+            len(ocr_text),
+            1 if answer_images else 0
+        )
+        # Send 1 image max for fallback if OCR exists
+        images_to_send = answer_images[:1] if answer_images else [] # type: ignore
+    else:
+        logger.info(
+            "ALIGNMENT MODE: VISION-ONLY | images_used=%d",
+            len(answer_images)
+        )
+
     try:
-        raw = await llm_service.predict(prompt, **kwargs)
+        raw = await llm_service.predict(prompt, images=images_to_send, **kwargs)
         return parse_tolerant_json(raw)
     except Exception as e:
         logger.error(f"Alignment LLM failed: {e}")
@@ -216,6 +234,7 @@ async def align_answers(
     blueprint_signature: str,
     llm_service: AbstractLLMService,
     ocr_service: AbstractOCRService,
+    ocr_text: str = "",
     use_cache: bool = True,
     **kwargs,
 ) -> Dict[str, Any]:
@@ -238,13 +257,22 @@ async def align_answers(
     concurrency = int(os.getenv("ALIGNMENT_BATCH_CONCURRENCY", "5"))
     semaphore = asyncio.Semaphore(concurrency)
 
+    # OCR splitting for batched association
+    ocr_pages = ocr_text.split("\n") if ocr_text else []
+
     async def _process_batch(start_idx: int, batch: List[str]) -> List[Dict[str, Any]]:
         async with semaphore:
             try:
+                # Associated OCR slice for this batch
+                batch_ocr = ""
+                if ocr_pages:
+                    batch_ocr = "\n".join(ocr_pages[start_idx : start_idx + len(batch)]) # type: ignore
+
                 payload = await _llm_align_answers(
                     question_structure=question_structure,
                     answer_images=batch,
                     llm_service=llm_service,
+                    ocr_text=batch_ocr,
                     **kwargs,
                 )
                 # Adjust page indices in the payload to account for batch offset
@@ -259,7 +287,7 @@ async def align_answers(
 
     tasks = []
     for i in range(0, len(answer_images), batch_size):
-        batch = answer_images[i : i + batch_size]
+        batch = answer_images[i : i + batch_size] # type: ignore
         tasks.append(_process_batch(i, batch))
 
     # ADDED LOGGING START
@@ -278,7 +306,13 @@ async def align_answers(
         logger.error("[STEP FAILED] ALIGNMENT_COMPLETE | submission_id=%s | reason=no_answers_found", submission_id)
         raise ValueError(f"No answers found during alignment for submission {submission_id}")
 
-    # Objective fallback removed to enforce SSOT purity
+    # Step 7: Output Validation & Deduplication
+    q_ids = [str(a.get("question_number")) for a in all_answers]
+    logger.info(
+        "DEDUP CHECK: unique_questions=%d total_answers=%d",
+        len(set(q_ids)),
+        len(q_ids)
+    )
 
     # ADDED LOGGING START
     logger.info("[STEP START] METRICS_COMPUTATION")

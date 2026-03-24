@@ -877,29 +877,30 @@ def _merge_questions(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Dict
     return merged
 
 
-async def _build_raw_ocr_text(images: List[str]) -> str:
+async def _build_raw_ocr_text_pages(images: List[str]) -> List[str]:
+    """Build OCR text per page to support chunking of large documents."""
     ocr = get_ocr_provider()
     
-    async def _process_page(idx: int, img: str) -> Optional[List[str]]:
+    async def _process_page(idx: int, img: str) -> Optional[str]:
         try:
             res = ocr.detect(img)
             page_lines = [str(row.get("text") or "").strip() for row in (res.get("lines") or [])]
             page_lines = [ln for ln in page_lines if ln]
             if page_lines:
-                return [f"[PAGE {idx + 1}]"] + page_lines
-            return None
+                return "\n".join([f"[PAGE {idx + 1}]"] + page_lines)
+            return ""
         except Exception as exc:
             logger.warning("AI structured OCR pre-pass failed on page %s: %s", idx + 1, exc)
-            return None
+            return ""
 
     tasks = [asyncio.create_task(_process_page(idx, img)) for idx, img in enumerate(images)]
     results = await asyncio.gather(*tasks)
-    
-    all_lines = []
-    for res in results:
-        if res:
-            all_lines.extend(res)
-    return "\n".join(all_lines)
+    return [res or "" for res in results]
+
+async def _build_raw_ocr_text(images: List[str]) -> str:
+    """Legacy helper returning a single joined OCR string."""
+    pages = await _build_raw_ocr_text_pages(images)
+    return "\n".join([p for p in pages if p])
 
 
 def _extract_ocr_question_anchors(images: List[str]) -> List[Dict[str, Any]]:
@@ -1641,33 +1642,54 @@ async def _extract_student_info(
     llm_service: "AbstractLLMService",
     model_name: str = "gemini-2.0-flash",
 ) -> Dict[str, Any]:
-    """Extract student ID and Name from the first page of answer images."""
+    """Extract student ID and Name from the first page using OCR (non-LLM)."""
     if not images:
         return {}
 
-    logger.info("STUDENT_INFO_EXTRACTION starting on 1 page")
-    prompt = """You are an expert at reading student information from handwritten or printed exam papers.
-Extract the student's Roll Number (or Student ID) and Full Name.
-Look for fields like 'Roll No', 'Name', 'Student ID', etc.
-Return ONLY valid JSON:
-{
-  "student_id": "string or null",
-  "student_name": "string or null"
-}"""
+    logger.info("PHASE3_STUDENT_INFO_EXTRACTION (OCR-ONLY) starting on page 1")
     try:
-        raw = await llm_service.predict(
-            prompt=prompt,
-            images=[images[0]],
-            model_name=model_name,
-            temperature=0,
-        )
-        payload = _parse_json_object(raw)
+        from app.infrastructure.ocr.provider import get_ocr_provider
+        ocr = get_ocr_provider()
+        
+        # Detect text on the first page
+        res = ocr.detect(images[0])
+        lines = [str(row.get("text") or "").strip() for row in (res.get("lines") or [])]
+        full_text = " ".join(lines)
+        
+        logger.info("OCR_TEXT_FOR_STUDENT_INFO: %s", full_text[:200])
+
+        # Regex patterns for Student ID and Name
+        id_patterns = [
+            r"(?:Roll\s*No|Student\s*ID|ID|Enrollment\s*No|UID)[:\s]*([A-Z0-9\-]+)",
+            r"(?:Roll|ID)[:\s]*([A-Z0-9\-]+)"
+        ]
+        name_patterns = [
+            r"(?:Name|Student\s*Name|Candidate\s*Name)[:\s]*([A-Z\s\.]+)(?:\s|$)",
+        ]
+
+        student_id = None
+        for p in id_patterns:
+            m = re.search(p, full_text, re.IGNORECASE)
+            if m:
+                student_id = m.group(1).strip()
+                break
+
+        student_name = None
+        for p in name_patterns:
+            m = re.search(p, full_text, re.IGNORECASE)
+            if m:
+                student_name = m.group(1).strip()
+                # Basic cleaning for name
+                if student_name.lower() in ["roll", "id", "no", "date", "class"]:
+                    student_name = None
+                break
+
         return {
-            "student_id": str(payload.get("student_id") or "").strip() or None,
-            "student_name": str(payload.get("student_name") or "").strip() or None,
+            "student_id": student_id,
+            "student_name": student_name,
         }
     except Exception as exc:
-        logger.warning("STUDENT_INFO_EXTRACTION_FAILED error=%s", exc)
+        logger.warning("PHASE3_STUDENT_INFO_EXTRACTION_OCR_FAILED error=%s", exc)
         return {}
 
 
@@ -1895,8 +1917,36 @@ async def extract_question_structure(
         _avg_conf((visual_entities or {}).get("headers") or []),
     )
 
-    if raw_ocr_text is None:
-        raw_ocr_text = await _build_raw_ocr_text(question_paper_images)
+    page_ocr_texts: List[str]
+    if isinstance(raw_ocr_text, list):
+        page_ocr_texts = raw_ocr_text
+    elif isinstance(raw_ocr_text, str) and raw_ocr_text:
+        # Split legacy combined text by [PAGE n] markers if they exist
+        parts = re.split(r"(\[PAGE \d+\])", raw_ocr_text)
+        merged_pages = []
+        current_page = ""
+        for part in parts:
+            if re.match(r"\[PAGE \d+\]", part):
+                if current_page:
+                    merged_pages.append(current_page.strip())
+                current_page = part
+            else:
+                current_page += part
+        if current_page:
+            merged_pages.append(current_page.strip())
+        
+        # If no page markers were found, we have to treat it as one giant chunk
+        # or distribute it naively. For safety, we treat it as one chunk for now.
+        if not merged_pages and raw_ocr_text:
+            page_ocr_texts = [raw_ocr_text]
+        else:
+            page_ocr_texts = merged_pages
+    else:
+        page_ocr_texts = await _build_raw_ocr_text_pages(question_paper_images)
+
+    # Reconstruct raw_ocr_text as joined string for any other diagnostic usage
+    # but use page_ocr_texts for chunked extraction.
+    abs_raw_ocr_text = "\n".join([p for p in page_ocr_texts if p])
 
     # Layer 2: Gemini semantic extraction only (marks ignored).
 
@@ -1919,8 +1969,11 @@ async def extract_question_structure(
         )
 
     async def _extract_chunk(start_idx: int, chunk_images: List[str], idx: int, total: int) -> Dict[str, Any]:
+        # Provide only the OCR text relevant to the current page batch
+        chunk_ocr_text = "\n".join(page_ocr_texts[start_idx : start_idx + len(chunk_images)])
+        
         prompt = build_extraction_prompt(
-            raw_ocr_text=raw_ocr_text,
+            raw_ocr_text=chunk_ocr_text,
             batch_index=idx,
             total_batches=total,
             extra_rules=prompt_extra_rules,
@@ -1965,6 +2018,15 @@ async def extract_question_structure(
                 else:
                     merged[qn] = _merge_questions(merged[qn], q)
 
+        # Final validation pass: ensure each question has at least some content
+        for qn, q in merged.items():
+            if not q.get("question_text") and not q.get("subquestions"):
+                logger.warning("SEMANTIC_CHUNK_VALIDATION_WARNING qn=%s reason=no_text_or_subparts", qn)
+            elif q.get("subquestions"):
+                for sq in q["subquestions"]:
+                    if not sq.get("text"):
+                         logger.warning("SEMANTIC_CHUNK_VALIDATION_WARNING qn=%s sub=%s reason=no_text", qn, sq.get("label"))
+
         consolidated = {
             "questions": [merged[k] for k in sorted(merged.keys())],
             "section_math_blocks": [],
@@ -1990,9 +2052,13 @@ async def extract_question_structure(
         stage2_structure = {"questions": [], "section_math_blocks": [], "total_questions": 0, "total_marks": 0.0}
         retry_count = max_retries
 
-    # If semantic extraction yields nothing, fallback to visual anchors.
+    # If semantic extraction yields nothing, STOP and log failure instead of silent fallback.
     if not (stage2_structure.get("questions") or []):
-        stage2_structure = _semantic_structure_from_visual_entities(visual_entities)
+        logger.error(
+            "SEMANTIC_EXTRACTION_FAILED reason=empty_semantic_output pages_processed=%s",
+            len(question_paper_images)
+        )
+        raise ValueError("SEMANTIC_EXTRACTION_FAILED: No questions extracted from semantic layer.")
 
     stage2_structure = _merge_semantic_with_visual_entities(stage2_structure, visual_entities)
     stage2_structure, visual_entities = _clip_to_expected_question_count(

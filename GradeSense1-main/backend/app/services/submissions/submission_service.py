@@ -55,7 +55,7 @@ class SubmissionService:
         # Exam and Visibility
         exam = await self.exam_repo.find_one_exam(
             {"exam_id": submission["exam_id"]},
-            projection={"questions": 1, "results_published": 1, "student_visibility": 1, "total_marks": 1}
+            projection={"questions": 1, "results_published": 1, "student_visibility": 1, "total_marks": 1, "exam_name": 1, "subject_id": 1}
         )
 
         if exam:
@@ -63,8 +63,12 @@ class SubmissionService:
             submission.update({
                 "question_scores": normalized["question_scores"],
                 "total_score": normalized["total_score"],
-                "percentage": normalized["percentage"]
+                "percentage": normalized["percentage"],
+                "exam_name": exam.get("exam_name", "Unknown"),
+                "answers": normalized["question_scores"]
             })
+            subject = await self.analytics_repo.find_one_subject({"subject_id": exam.get("subject_id")}, projection={"name": 1})
+            submission["subject_name"] = subject.get("name", "Unknown") if subject else "Unknown"
             if normalized["changed"]:
                 await self.submission_repo.update_submission(
                     submission_id,

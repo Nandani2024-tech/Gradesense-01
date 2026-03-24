@@ -166,6 +166,9 @@ class GradingEngine:
                 # Find matching student answer
                 matched_sa = mapped_subanswers.get(sq_id.lower())
                 sq_raw_text = matched_sa.get("combined_text", "") if matched_sa else ""
+                
+                if matched_sa:
+                    logger.info(f"GRADING_INPUT_TEXT sub_id={matched_sa.get('sub_id')} len={len(sq_raw_text)}")
 
                 fallback_used = False
 
