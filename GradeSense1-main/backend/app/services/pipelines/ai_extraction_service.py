@@ -58,8 +58,45 @@ def _to_float(value: Any, default: float = 0.0) -> float:
     return safe_float(value, default)
 
 
+def _parse_question_number(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    
+    val_str = str(value)
+    s = val_str.strip()
+    if not s:
+        return None
+
+    # Strict full-string matching to reject subparts (1a, 1(a), 3(b))
+    patterns = [
+        r"^\s*(\d+)\s*$",               # "1", " 5 "
+        r"^\s*(\d+)[.)]\s*$",           # "1.", "1)"
+        r"^\s*Q\.?\s*(\d+)\s*$",         # "Q1", "Q.3"
+        r"^\s*Question\s*(\d+)\s*$",     # "Question 2"
+    ]
+
+    for pat in patterns:
+        m = re.match(pat, s, flags=re.IGNORECASE)
+        if m:
+            return int(m.group(1))
+
+    logger.warning("NUMBER_REJECTED raw=%s", val_str)
+    return None
+
+
 def _to_int(value: Any, default: int = 0) -> int:
     return safe_int(value, default)
+
+
+def _clean_llm_json(text: str) -> str:
+    if not text:
+        return text
+    text = text.strip()
+    if text.startswith("```"):
+        import re
+        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text)
+    return text.strip()
 
 
 def _as_payload_dict(parsed: Any) -> Optional[Dict[str, Any]]:
@@ -234,7 +271,8 @@ def _parse_any_json_value(candidate: str) -> Any:
             continue
         seen.add(probe)
         try:
-            return json.loads(probe)
+            cleaned = _clean_llm_json(probe)
+            return json.loads(cleaned)
         except Exception:
             pass
         try:
@@ -312,6 +350,7 @@ def _normalize_visual_payload(payload: Dict[str, Any], page_offset: int, page_co
         out["questions"].append(
             {
                 "number": qn,
+                "raw_number": str(row.get("number")),
                 "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
                 "page": _norm_page(row.get("page_index")),
                 "confidence": round(_to_float(row.get("confidence"), 0.0), 4),
@@ -438,7 +477,7 @@ def _extract_partial_payload(raw_text: str) -> Optional[Dict[str, Any]]:
                 if not isinstance(q, dict):
                     continue
                 qn = _to_int(q.get("number"), 0)
-                if qn <= 0:
+                if not qn:
                     continue
                 if qn not in questions_by_number:
                     questions_by_number[qn] = dict(q)
@@ -620,17 +659,54 @@ def _normalize_type(value: Any) -> str:
     return alias.get(t, "descriptive")
 
 
+def _parse_subpart_candidate(q: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    import re
+
+    raw = str(q.get("number") or "").strip()
+    text = str(q.get("question_text") or "").strip()
+
+    patterns = [
+        r"^\s*(\d+)\s*\(\s*([a-z])\s*\)\s*$",   # 1(a)
+        r"^\s*(\d+)\s*[-]\s*([a-z])\s*$",       # 1-a
+        r"^\s*(\d+)\s+([a-z])\s*$",             # 1 a
+        r"^\s*(\d+)([a-z])\s*$",                # 1a
+    ]
+
+    for pat in patterns:
+        m = re.match(pat, raw, flags=re.IGNORECASE)
+        if m:
+            parent = int(m.group(1))
+            label = m.group(2).lower()
+
+            return {
+                "parent": parent,
+                "label": label,
+                "text": text,
+                "raw": raw,
+                "confidence": _to_float(q.get("confidence"), 0.0),
+            }
+
+    return None
+
+
 def _normalize_batch_payload(payload: Dict[str, Any], page_offset: int) -> Dict[str, Any]:
     payload = payload or {}
     questions = payload.get("questions") or []
     normalized_questions: List[Dict[str, Any]] = []
     section_math_blocks: List[Dict[str, Any]] = []
+    orphan_subparts = []
+    q_by_num = {}
 
     for q in questions:
         if not isinstance(q, dict):
             continue
-        qn = _to_int(q.get("number"), 0)
-        if qn <= 0:
+        qn = _parse_question_number(q.get("number"))
+        if not qn:
+            orphan = _parse_subpart_candidate(q)
+            if orphan:
+                orphan_subparts.append(orphan)
+            else:
+                logger.warning("QUESTION_DROPPED raw=%s", q.get("number"))
             continue
 
         subquestions: List[Dict[str, Any]] = []
@@ -669,26 +745,53 @@ def _normalize_batch_payload(payload: Dict[str, Any], page_offset: int) -> Dict[
                 }
             )
 
-        normalized_questions.append(
-            {
-                "number": qn,
-                "section": (str(q.get("section") or "").strip() or None),
-                "instruction": (str(q.get("instruction") or "").strip() or None),
-                "question_text": str(q.get("question_text") or "").strip(),
-                "question_type": _normalize_type(q.get("question_type")),
-                # Layer-2 semantic extraction must not assign marks.
+        question_obj = {
+            "number": qn,
+            "raw_number": str(q.get("number")),
+            "section": (str(q.get("section") or "").strip() or None),
+            "instruction": (str(q.get("instruction") or "").strip() or None),
+            "question_text": str(q.get("question_text") or "").strip(),
+            "question_type": _normalize_type(q.get("question_type")),
+            # Layer-2 semantic extraction must not assign marks.
+            "marks": 0.0,
+            "mark_source": "inferred",
+            "mark_confidence": 0.0,
+            "options": list(q.get("options") or []) or None,
+            "subquestions": subquestions,
+            # OR groups are resolved from visual layer.
+            "or_group_id": None,
+            "image_evidence": evidence,
+            "ai_confidence": _to_float(q.get("ai_confidence", q.get("confidence")), 0.0),
+            "confidence": _to_float(q.get("confidence", q.get("ai_confidence")), 0.0),
+        }
+        normalized_questions.append(question_obj)
+        q_by_num[qn] = question_obj
+
+    # Attach orphan subparts to their parents.
+    for orphan in orphan_subparts:
+        parent_q = q_by_num.get(orphan["parent"])
+        if not parent_q:
+            continue
+
+        subparts = list(parent_q.get("subquestions") or [])
+
+        if not any(str(sq.get("label") or "").strip().lower() == orphan["label"] for sq in subparts):
+            subparts.append({
+                "label": orphan["label"],
+                "text": orphan["text"],
                 "marks": 0.0,
                 "mark_source": "inferred",
-                "mark_confidence": 0.0,
-                "options": list(q.get("options") or []) or None,
-                "subquestions": subquestions,
-                # OR groups are resolved from visual layer.
-                "or_group_id": None,
-                "image_evidence": evidence,
-                "ai_confidence": _to_float(q.get("ai_confidence", q.get("confidence")), 0.0),
-                "confidence": _to_float(q.get("confidence", q.get("ai_confidence")), 0.0),
-            }
-        )
+                "confidence": orphan["confidence"],
+                "source": "semantic_orphan_recovery"
+            })
+            logger.info(
+                "SUBPART_RECOVERED parent=%s label=%s text_len=%s",
+                orphan["parent"],
+                orphan["label"],
+                len(orphan["text"])
+            )
+
+        parent_q["subquestions"] = sorted(subparts, key=lambda s: str(s.get("label") or "").strip().lower())
 
     return {
         "questions": normalized_questions,
@@ -840,7 +943,7 @@ def _extract_structured_question_anchors(structure: Dict[str, Any]) -> List[Dict
     anchors: List[Dict[str, Any]] = []
     for q in (structure or {}).get("questions") or []:
         qn = _to_int(q.get("number"), 0)
-        if qn <= 0:
+        if not qn:
             continue
         best: Optional[Dict[str, Any]] = None
         for ev in (q.get("image_evidence") or []):
@@ -880,6 +983,7 @@ def _merge_question_anchors(
         candidates.append(
             {
                 "number": qn,
+                "raw_number": str(row.get("number")),
                 "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
                 "page": _to_int(row.get("page"), -1),
                 "confidence": _to_float(row.get("confidence"), 0.0),
@@ -1124,6 +1228,7 @@ def _semantic_structure_from_visual_entities(visual_entities: Dict[str, Any]) ->
         questions.append(
             {
                 "number": qn,
+                "raw_number": str(row.get("number")),
                 "section": None,
                 "instruction": None,
                 "question_text": "",
@@ -1219,9 +1324,9 @@ def _merge_semantic_with_visual_entities(stage2_structure: Dict[str, Any], visua
 
     normalized = normalize_structure_payload(stage2_structure or {})
     q_by_num: Dict[int, Dict[str, Any]] = {
-        _to_int(q.get("number"), 0): dict(q)
+        _parse_question_number(q.get("number")): dict(q)
         for q in (normalized.get("questions") or [])
-        if _to_int(q.get("number"), 0) > 0
+        if _parse_question_number(q.get("number"))
     }
     visual_subparts_exist = bool((visual_entities or {}).get("subparts") or [])
     visual_labels_by_q: Dict[int, set[str]] = defaultdict(set)
@@ -1253,7 +1358,7 @@ def _merge_semantic_with_visual_entities(stage2_structure: Dict[str, Any], visua
     for row in (visual_entities or {}).get("questions") or []:
         if not isinstance(row, dict):
             continue
-        qn = _to_int(row.get("number"), 0)
+        qn = _parse_question_number(row.get("number"))
         if qn <= 0:
             continue
         if qn not in q_by_num:
@@ -1320,16 +1425,45 @@ def _merge_semantic_with_visual_entities(stage2_structure: Dict[str, Any], visua
         q["subquestions"] = sorted(subparts, key=lambda sq: str(sq.get("label") or ""))
         q_by_num[qn] = q
 
-    # Apply OR groups from visual connectors.
-    or_map = _build_or_groups_from_visual(visual_entities)
+    # Apply OR groups from visual connectors with safety checks.
+    or_map_raw = _build_or_groups_from_visual(visual_entities)
+
+    # 1. Drop broken visual links (references to missing questions).
+    or_map = {qn: gid for qn, gid in or_map_raw.items() if qn in q_by_num}
+
     for qn, gid in or_map.items():
-        if qn in q_by_num:
-            q_by_num[qn]["or_group_id"] = gid
+        q_by_num[qn]["or_group_id"] = gid
 
     # Demote choice-style subparts (e.g., "any one", alternatives, MCQ options).
     for qn, q in list(q_by_num.items()):
         if _demote_choice_subparts(q):
             q_by_num[qn] = q
+
+    # 2. Cleanup Orphans and Nested ORs.
+    group_counts = defaultdict(int)
+    for q in q_by_num.values():
+        gid = q.get("or_group_id")
+        if gid:
+            group_counts[gid] += 1
+
+    for qn, q in list(q_by_num.items()):
+        gid = q.get("or_group_id")
+        if not gid:
+            continue
+
+        # Nested OR: Question has internal options AND external or_group_id.
+        if q.get("options"):
+            logger.warning("OR_CONFLICT_NESTED qn=%s gid=%s", qn, gid)
+            q["or_group_id"] = None
+            group_counts[gid] -= 1
+            continue
+
+    # Second pass for orphans (after nested removals).
+    for qn, q in list(q_by_num.items()):
+        gid = q.get("or_group_id")
+        if gid and group_counts[gid] < 2:
+            logger.info("OR_REMOVED_ORPHAN qn=%s gid=%s", qn, gid)
+            q["or_group_id"] = None
 
     # Section math from visual layer.
     section_math_blocks: List[Dict[str, Any]] = []
@@ -1387,7 +1521,7 @@ def _clip_to_expected_question_count(
     by_num: Dict[int, Dict[str, Any]] = {}
     for q in kept_questions:
         qn = _to_int(q.get("number"), 0)
-        if qn <= 0:
+        if not qn:
             continue
         if qn not in by_num:
             by_num[qn] = q
@@ -1823,8 +1957,8 @@ async def extract_question_structure(
         merged: Dict[int, Dict[str, Any]] = {}
         for payload in batch_payloads:
             for q in (payload.get("questions") or []):
-                qn = _to_int(q.get("number"), 0)
-                if qn <= 0:
+                qn = _parse_question_number(q.get("number"))
+                if not qn:
                     continue
                 if qn not in merged:
                     merged[qn] = dict(q)

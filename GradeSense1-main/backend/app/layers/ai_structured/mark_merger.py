@@ -16,20 +16,35 @@ from .mark_sources import (
 )
 
 
-def _build_or_groups(questions: List[Dict[str, Any]], visual_entities: Optional[Dict[str, Any]]) -> Dict[str, List[int]]:
-    # Merge existing OR ids with visual connectors.
+def clean_or_groups_robust(questions: List[Dict[str, Any]], visual_entities: Optional[Dict[str, Any]]) -> Dict[str, List[int]]:
+    """
+    Robust OR-group construction and cleaning for GradeSense pipeline.
+    
+    1. Membership Discovery (Transitive Union-Find)
+    2. Presence Check (Validates qn exists in current set)
+    3. Nested OR Prevention (Skips questions with internal options)
+    4. Orphan Sweep (Ensures groups have >= 2 members)
+    """
+    q_by_num = {to_int(q.get("number"), 0): q for q in questions if to_int(q.get("number"), 0) > 0}
+    valid_qnums = set(q_by_num.keys())
+
+    # --- PASS 1: Membership Discovery ---
     edges: List[Tuple[int, int]] = []
+    
+    # Existing OR IDs from semantic extraction
     ai_groups: Dict[str, List[int]] = defaultdict(list)
     for q in questions:
         qn = to_int(q.get("number"), 0)
         gid = str(q.get("or_group_id") or "").strip()
         if qn > 0 and gid:
             ai_groups[gid].append(qn)
+            
     for members in ai_groups.values():
         uniq = sorted(set(int(n) for n in members if int(n) > 0))
         for i in range(len(uniq) - 1):
             edges.append((uniq[i], uniq[i + 1]))
 
+    # Visual connectors from OCR layer
     for row in (visual_entities or {}).get("or_connectors") or []:
         if not isinstance(row, dict):
             continue
@@ -38,11 +53,11 @@ def _build_or_groups(questions: List[Dict[str, Any]], visual_entities: Optional[
         if q1 > 0 and q2 > 0 and q1 != q2:
             edges.append((min(q1, q2), max(q1, q2)))
 
-    if not edges:
+    if not edges and not ai_groups:
         return {}
 
+    # Standard Union-Find
     parent: Dict[int, int] = {}
-
     def find(x: int) -> int:
         parent.setdefault(x, x)
         while parent[x] != x:
@@ -59,20 +74,57 @@ def _build_or_groups(questions: List[Dict[str, Any]], visual_entities: Optional[
     for a, b in edges:
         union(int(a), int(b))
 
-    comps: Dict[int, List[int]] = defaultdict(list)
+    # Identify initial components
+    groups_raw: Dict[int, List[int]] = defaultdict(list)
     for node in list(parent.keys()):
-        comps[find(node)].append(node)
+        groups_raw[find(node)].append(node)
 
-    out: Dict[str, List[int]] = {}
+    # --- PASS 2: Safety Filtering ---
+    refined_map: Dict[str, List[int]] = {}
     gid_seq = 1
-    for _, members in sorted(comps.items(), key=lambda kv: min(kv[1])):
-        uniq = sorted(set(int(n) for n in members if int(n) > 0))
-        if len(uniq) < 2:
+
+    # Clear existing IDs first to ensure state belongs only to this pass
+    for q in questions:
+        q["or_group_id"] = None
+
+    for _, members in sorted(groups_raw.items(), key=lambda kv: min(kv[1])):
+        safe_members: List[int] = []
+        for qn in members:
+            # A) Presence Check
+            if qn not in valid_qnums:
+                logger.warning("OR_MISSING_QUESTION qn=%s", qn)
+                continue
+            
+            q = q_by_num[qn]
+            
+            # B) Nested OR Prevention (Internal Options)
+            if q.get("options"):
+                logger.info("OR_SKIPPED_INTERNAL qn=%s", qn)
+                continue
+            
+            safe_members.append(qn)
+            
+        # C) Orphan Sweep
+        if len(safe_members) < 2:
+            for qn in safe_members:
+                logger.info("OR_REMOVED_ORPHAN qn=%s (reason: partner excluded)", qn)
+                # Assignment to None was done above, no extra action needed.
             continue
+            
         gid = f"visual_or_{gid_seq}"
         gid_seq += 1
-        out[gid] = uniq
-    return out
+        uniq_safe = sorted(set(safe_members))
+        
+        # Final Assignment to Question Objects
+        for qn in uniq_safe:
+            q_by_num[qn]["or_group_id"] = gid
+            
+        refined_map[gid] = uniq_safe
+        
+    return refined_map
+
+# Alias for backward compatibility if needed, though clean_or_groups_robust is preferred.
+_build_or_groups = clean_or_groups_robust
 
 
 def _mode_positive(values: List[float]) -> Optional[float]:
@@ -81,6 +133,33 @@ def _mode_positive(values: List[float]) -> Optional[float]:
         return None
     cnt = Counter(vals)
     return float(sorted(cnt.items(), key=lambda kv: (-kv[1], kv[0]))[0][0])
+
+
+def _flatten_subquestions(subquestions: List[Dict[str, Any]], parent_qn: int) -> List[Dict[str, Any]]:
+    """Flatten nested subparts into a single list and ensure rubrics exist."""
+    flat = []
+    
+    def _recurse(subs, prefix=""):
+        for i, s in enumerate(subs):
+            # Extract current info
+            label = _norm_label(s.get("label")) or str(s.get("label") or f"s{i+1}")
+            text = str(s.get("question_text") or s.get("text") or "")
+            
+            # Flatten logic: if this subquestion has its own subquestions, recurse
+            children = s.get("subquestions") or []
+            if children:
+                _recurse(children, prefix=f"{label}.")
+            else:
+                # Leaf node
+                new_s = dict(s)
+                new_s["label"] = f"{prefix}{label}" if prefix else label
+                # Ensure rubric exists
+                if not new_s.get("rubric"):
+                    new_s["rubric"] = text[:200] if text else f"Rubric for {new_s['label']}"
+                flat.append(new_s)
+                
+    _recurse(subquestions)
+    return flat
 
 
 def _initial_mark_pass(
@@ -106,13 +185,13 @@ def _initial_mark_pass(
             total = max(0.0, to_float(q_margin[qn]["marks"], 0.0))
             source = "margin"
             evidence_refs[qn].append(dict(q_margin[qn]["evidence"]))
-            logger.info("MARK_REASON_APPLIED q=%s reason=margin marks=%s", qn, round(total, 4))
+            logger.info("MARK_APPLIED q=%s reason=margin marks=%s", qn, round(total, 4))
         elif qn in section_assignments:
             total = max(0.0, to_float(section_assignments[qn]["marks"], 0.0))
             source = "section_math"
             evidence_refs[qn].append(dict(section_assignments[qn]["evidence"]))
             logger.info(
-                "MARK_REASON_APPLIED q=%s reason=section_math marks=%s expression=%s",
+                "MARK_APPLIED q=%s reason=section_math marks=%s expression=%s",
                 qn,
                 round(total, 4),
                 section_assignments[qn].get("expr"),
@@ -122,9 +201,13 @@ def _initial_mark_pass(
             if instr is not None:
                 total = instr
                 source = "instruction"
-                logger.info("MARK_REASON_APPLIED q=%s reason=instruction marks=%s", qn, round(total, 4))
+                logger.info("MARK_APPLIED q=%s reason=instruction marks=%s", qn, round(total, 4))
 
-        subparts = [dict(sq) for sq in (q.get("subquestions") or [])]
+        # Flatten nested subparts and normalize rubrics
+        raw_subs = q.get("subquestions") or []
+        subparts = _flatten_subquestions(raw_subs, qn)
+        if len(subparts) != len(raw_subs):
+            logger.info("SUBQUESTION_NORMALIZED q=%s reason=flattened_nested count_old=%s count_new=%s", qn, len(raw_subs), len(subparts))
         sub_audit: List[Dict[str, Any]] = []
         if subparts:
             explicit_sum = 0.0
@@ -183,7 +266,7 @@ def _initial_mark_pass(
                 sub_values = [even for _ in subparts]
                 sub_sources = [source for _ in subparts]
                 mode = "shared"
-                logger.info("MARK_REASON_RECONCILED q=%s reason=subpart_shared marks=%s", qn, round(total, 4))
+                logger.info("MARK_RECONCILED q=%s reason=subpart_shared marks=%s", qn, round(total, 4))
                 if source == "section_math":
                     logger.info(
                         "SUBPART_AUTO_SPLIT q=%s total=%s per_subpart=%s",
@@ -432,7 +515,7 @@ def _reconcile_subpart_marks(question: Dict[str, Any], model_answer_marks: Optio
 
     # Priority 2: Standard Reconciliation
     logger.info(
-        "MARK_REASON_RECONCILED q=%s reason=gap_fill marks=%s",
+        "MARK_RECONCILED q=%s reason=gap_fill marks=%s",
         qn, round(parent_marks, 4)
     )
     

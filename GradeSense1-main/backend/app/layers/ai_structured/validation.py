@@ -16,10 +16,11 @@ def _normalize_subquestion(sub: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "label": str(sub.get("label") or "").strip(),
         "text": str(sub.get("text") or "").strip(),
-        "marks": round(to_float(sub.get("marks"), 0.0), 2),
+        "rubric": str(sub.get("rubric") or "").strip() or None,
+        "marks": round(to_float(sub.get("marks"), 0.0), 4),
         "mark_source": str(sub.get("mark_source") or "inferred").strip().lower(),
-        "mark_confidence": round(to_float(sub.get("mark_confidence"), 0.0), 2),
-        "confidence": round(to_float(sub.get("confidence"), 0.0), 2),
+        "mark_confidence": round(to_float(sub.get("mark_confidence"), 0.0), 4),
+        "confidence": round(to_float(sub.get("confidence"), 0.0), 4),
     }
 
 
@@ -41,15 +42,15 @@ def normalize_structure_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "instruction": (str(q.get("instruction") or "").strip() or None),
                 "question_text": str(q.get("question_text") or "").strip(),
                 "question_type": str(q.get("question_type") or "descriptive").strip().lower(),
-                "marks": round(to_float(q.get("marks"), 0.0), 2),
+                "marks": round(to_float(q.get("marks"), 0.0), 4),
                 "options": list(q.get("options") or []) or None,
                 "subquestions": subquestions,
                 "or_group_id": (str(q.get("or_group_id") or "").strip() or None),
                 "image_evidence": list(q.get("image_evidence") or []),
-                "ai_confidence": round(to_float(q.get("ai_confidence"), 0.0), 2),
+                "ai_confidence": round(to_float(q.get("ai_confidence"), 0.0), 4),
                 "mark_source": str(q.get("mark_source") or "inferred").strip().lower(),
-                "mark_confidence": round(to_float(q.get("mark_confidence"), 0.0), 2),
-                "confidence": round(to_float(q.get("confidence"), to_float(q.get("ai_confidence"), 0.0)), 2),
+                "mark_confidence": round(to_float(q.get("mark_confidence"), 0.0), 4),
+                "confidence": round(to_float(q.get("confidence"), to_float(q.get("ai_confidence"), 0.0)), 4),
             }
         )
 

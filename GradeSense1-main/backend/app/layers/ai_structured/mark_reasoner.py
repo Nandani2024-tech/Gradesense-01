@@ -30,6 +30,7 @@ from .mark_merger import (
     _redistribute_subparts_only,
     _sync_audit_for_question,
     _reconcile_subpart_marks,
+    _flatten_subquestions,
 )
 
 
@@ -48,6 +49,13 @@ def resolve_marks(
     3) header totals (if reliable)
     4) pattern inference
     """
+
+    # Pre-normalization: Flatten nested subparts and normalize rubrics
+    # This ensures normalize_structure_payload doesn't strip nested data.
+    raw_questions = [dict(q) for q in (question_structure or {}).get("questions") or []]
+    for q in raw_questions:
+        q["subquestions"] = _flatten_subquestions(q.get("subquestions") or [], to_int(q.get("number"), 0))
+    question_structure["questions"] = raw_questions
 
     normalized = normalize_structure_payload(question_structure or {})
     questions = [dict(q) for q in (normalized.get("questions") or [])]
@@ -127,7 +135,7 @@ def resolve_marks(
         by_num[qn] = q
         changed_questions.add(qn)
         logger.info(
-            "MARK_REASON_APPLIED q=%s reason=pattern_inference marks=%s qtype=%s",
+            "MARK_APPLIED q=%s reason=pattern_inference marks=%s qtype=%s",
             qn,
             round(q["marks"], 4),
             qtype or "unknown",
@@ -136,22 +144,21 @@ def resolve_marks(
 
     # OR integrity.
     for gid, members in sorted(or_groups_map.items(), key=lambda kv: kv[0]):
-        if len(members) < 2:
-            continue
+        # Note: clean_or_groups_robust (aliased as _build_or_groups) already enforced 
+        # presence, Nested OR prevention, and orphan removal.
         shared = max(max(0.0, to_float((by_num.get(qn) or {}).get("marks"), 0.0)) for qn in members)
         for qn in members:
             q = by_num.get(qn)
             if not q:
                 continue
             old = max(0.0, to_float(q.get("marks"), 0.0))
-            q["or_group_id"] = gid
             if abs(old - shared) > 1e-6:
                 q["marks"] = round(shared, 4)
                 q["mark_source"] = _norm_source(q.get("mark_source") or "inferred")
                 q["distribution_mode"] = str(q.get("distribution_mode") or "direct")
                 by_num[qn] = q
                 changed_questions.add(qn)
-                logger.info("MARK_OVERRIDE_APPLIED q=%s sub=- ai=%s visual=%s reason=or_group", qn, round(old, 4), round(shared, 4))
+                logger.info("MARK_RECONCILED q=%s sub=- ai=%s visual=%s reason=or_group", qn, round(old, 4), round(shared, 4))
                 _sync_audit_for_question(qn, question_audit_tree, by_num)
         logger.info("OR_GROUP_RESOLVED group=%s members=%s effective_marks=%s", gid, members, round(shared, 4))
 
@@ -179,11 +186,11 @@ def resolve_marks(
                 q["distribution_mode"] = "model_answer"
                 by_num[qn] = q
                 changed_questions.add(qn)
-                logger.info("MARK_REASON_RECONCILED q=%s reason=model_answer marks=%s", qn, round(ma_marks, 4))
+                logger.info("MARK_RECONCILED q=%s reason=model_answer marks=%s", qn, round(ma_marks, 4))
 
         if _reconcile_subpart_marks(q, ma_sub_marks):
             by_num[qn] = q
-            logger.info("SUBPART_RECONCILED q=%s total=%s", qn, round(to_float(q.get("marks"), 0.0), 4))
+            logger.info("MARK_RECONCILED q=%s subparts=true reason=model_answer", qn)
             _sync_audit_for_question(qn, question_audit_tree, by_num)
 
     resolved_questions = [by_num[qn] for qn in qnums]
