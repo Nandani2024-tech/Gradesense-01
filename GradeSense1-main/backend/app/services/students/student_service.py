@@ -354,10 +354,10 @@ class StudentService:
     async def identify_student(self, images: List[Any], filename: str) -> Tuple[Optional[str], Optional[str]]:
         """Identify student from paper images and filename."""
         from app.student import extract_student_info_from_paper, parse_student_from_filename
-        from app.adapters.llm_adapter import GeminiLLMService
+        from app.services.llm_provider import get_llm_service
         
         # Instantiate LLM service for student info extraction
-        llm_service = GeminiLLMService()
+        llm_service = get_llm_service()
         
         # Call extraction utility - DISABLED FOR LEGACY, handled by Orchestrator
         # info = await extract_student_info_from_paper(images, llm_service)

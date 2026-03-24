@@ -21,7 +21,7 @@ from app.adapters.llm_adapter import GeminiLLMService
 from app.infrastructure.ocr.provider.core import get_ocr_provider
 
 from app.layers.ai_structured.mark_reasoner import resolve_marks
-from app.services.llm.prompts.ai_structured_prompts import (
+from app.prompts.ai_structured_prompts import (
     build_extraction_prompt,
     build_reconstruction_prompt,
     get_extraction_system_prompt,
@@ -1424,13 +1424,6 @@ async def _call_extraction_llm(images: List[str], prompt: str, model_name: str, 
     if max_output_tokens <= 0:
         max_output_tokens = 32768
 
-    logger.info(
-        "LLM_CALL provider=%s model=%s images=%s prompt_len=%s",
-        getattr(llm_service, "provider", "gemini"),
-        model_name,
-        len(images or []),
-        len(prompt or "")
-    )
 
     raw = await llm_service.predict(
         prompt=prompt,
@@ -1440,10 +1433,6 @@ async def _call_extraction_llm(images: List[str], prompt: str, model_name: str, 
         max_output_tokens=max_output_tokens
     )
 
-    logger.info(
-        "LLM_RESPONSE received len=%s",
-        len(raw or "")
-    )
 
     try:
         return _parse_json_object(raw)
@@ -1476,7 +1465,6 @@ async def _call_visual_extraction_llm(
     if max_output_tokens <= 0:
         max_output_tokens = 32768
 
-    logger.info("LLM_CALL provider=%s model=%s prompt_len=%s", provider, actual_model, len(prompt))
 
     raw = await llm_service.predict(
         prompt=prompt,

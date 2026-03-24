@@ -8,9 +8,9 @@ from app.core.exceptions import CustomServiceException
 
 from app.deps import get_current_user
 from app.models.user import User
-from app.models.user import User
+import asyncio
 from app.services.grading import grading_service, grading_job_service
-from app.services.grading_core import run_grading_orchestrator
+from app.workers import grading_worker
 from app.schemas.responses import (
     GradingJobResponse,
     SimpleGradingResponse,
@@ -34,11 +34,16 @@ async def grade_papers_background(
     logger.info("🚀 ROUTE_TRIGGER: Calling run_grading_orchestrator logic via batch job for exam %s", exam_id)
 
     try:
-        job_id = await grading_service.queue_grading_job(
+        job_data = await grading_service.queue_grading_job(
             exam_id=exam_id,
             files=files,
             user=user
         )
+        
+        # 🚀 REPLACE: Use centralized enqueue instead of asyncio.create_task
+        await grading_service.enqueue_grading_job("batch_grading", job_data)
+        
+        job_id = job_data["job_id"]
     except CustomServiceException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
 
@@ -106,10 +111,10 @@ async def regrade_all_submissions(
 
     logger.info("REGRADE_ALL_REQUEST exam_id=%s user_id=%s", exam_id, user.user_id)
 
-    # 🚀 ROUTE_TRIGGER: Orchestrator will be called for each submission in worker
-    logger.info("🚀 ROUTE_TRIGGER: Calling run_grading_orchestrator logic via regrade_all for exam %s", exam_id)
+    # 🚀 REPLACE: Orchestrator will be called via Worker Queue
+    logger.info("🚀 ROUTE_TRIGGER: Enqueueing regrade_all for exam %s", exam_id)
 
-    grading_service.queue_regrade_all(exam_id, user.user_id, background_tasks)
+    await grading_service.regrade_all_submissions(exam_id, user.user_id)
     
     return RegradeAllResponse(
         message="Regrading has been queued and is running in the background.", 
@@ -129,7 +134,20 @@ async def grade_student_submissions(exam_id: str, user: User = Depends(get_curre
     logger.info("🚀 ROUTE_TRIGGER: Calling run_grading_orchestrator logic via grade_student_submissions for exam %s", exam_id)
 
     try:
-        result = await grading_service.grade_student_submissions(exam_id, user.user_id)
-        return GradingJobResponse(**result)
+        job_data = await grading_service.get_grade_student_submissions_data(exam_id, user.user_id)
+        
+        # 🚀 REPLACE: Use centralized enqueue instead of legacy local task
+        await grading_service.enqueue_grading_job("batch_review_grade", {
+            "submissions": job_data["submissions"],
+            "exam_id": exam_id,
+            "job_id": job_data["job_id"]
+        })
+        
+        return GradingJobResponse(
+            job_id=job_data["job_id"],
+            status="processing",
+            total_papers=job_data["total_papers"],
+            message=job_data["message"]
+        )
     except CustomServiceException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)

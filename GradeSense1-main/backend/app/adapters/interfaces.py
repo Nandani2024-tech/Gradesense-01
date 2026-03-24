@@ -15,6 +15,26 @@ class AbstractLLMService(ABC):
         """Structured data extraction (JSON/Pydantic)."""
         pass
 
+    @abstractmethod
+    async def embed(self, text: str) -> List[float]:
+        """Generate embedding for a single text."""
+        pass
+
+    @abstractmethod
+    async def embed_batch(self, texts: List[str]) -> List[List[float]]:
+        """Generate embeddings for a batch of texts."""
+        pass
+
+    @abstractmethod
+    def embed_sync(self, text: str) -> List[float]:
+        """Synchronous version of embed."""
+        pass
+
+    @abstractmethod
+    def embed_batch_sync(self, texts: List[str]) -> List[List[float]]:
+        """Synchronous version of embed_batch."""
+        pass
+
 
 class AbstractOCRService(ABC):
     """Abstract interface for OCR services (text extraction, region OCR, vision OCR)."""

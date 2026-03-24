@@ -7,6 +7,13 @@ from app.services.llm.config import get_llm_api_key
 from app.adapters.interfaces import AbstractLLMService
 from app.core.logging_config import logger
 
+from app.prompts.llm_prompts import (
+    CATEGORIZE_ERRORS_SYSTEM_PROMPT_v1,
+    CATEGORIZE_ERRORS_USER_PROMPT_TEMPLATE_v1,
+    ANALYTICS_SYSTEM_PROMPT_v1,
+    ANALYTICS_USER_PROMPT_TEMPLATE_v1
+)
+
 class GradingLLMService:
     """Service for handling LLM interactions related to student portal analytics and error categorization."""
 
@@ -20,51 +27,22 @@ class GradingLLMService:
     ) -> Optional[Dict[str, Any]]:
         """
         Categorizes student errors for a specific question based on AI feedback samples.
-        
-        Args:
-            question_number: The number of the question.
-            question_rubric: The rubric/text of the question.
-            max_marks: Maximum marks for the question.
-            feedback_samples: A list of feedback strings to analyze.
-            
-        Returns:
-            A dictionary containing the error categories, or None if extraction fails.
         """
-        prompt = f"""
-Analyze these student errors for Question {question_number}:
-
-Question: {question_rubric}
-Max Marks: {max_marks}
-
-Failed Student Feedbacks:
-{chr(10).join(feedback_samples)}
-
-Task: Identify 3-4 common error patterns/categories. For each category, provide:
-1. Error type name (e.g., "Calculation Error", "Conceptual Misunderstanding", "Incomplete Answer")
-2. Brief description
-3. Which students fall into this category (by name)
-
-Respond in JSON format:
-{{
-    "error_categories": [
-        {{
-            "type": "Calculation Error",
-            "description": "Made arithmetic mistakes",
-            "student_names": ["Alice", "Bob"]
-        }}
-    ]
-}}
-"""
-        logger.info("LLM_CALL provider=%s model=gemini-2.5-flash images=0 prompt_len=%s", getattr(llm_service, "provider", "gemini"), len(prompt))
+        prompt = CATEGORIZE_ERRORS_USER_PROMPT_TEMPLATE_v1.format(
+            question_number=question_number,
+            question_rubric=question_rubric,
+            max_marks=max_marks,
+            feedback_samples=chr(10).join(feedback_samples)
+        )
         
         try:
             response_text = await llm_service.predict(
                 prompt=prompt,
+                system_message=CATEGORIZE_ERRORS_SYSTEM_PROMPT_v1,
                 images=[],
                 model_name="gemini-2.5-flash",
                 temperature=0
             )
-            logger.info("LLM_RESPONSE received len=%s", len(response_text or ""))
             response_text = (response_text or "").strip()
             json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
 
@@ -78,33 +56,20 @@ Respond in JSON format:
     async def ask_ai_analytics(self, data_summary: str, query: str, llm_service: "AbstractLLMService") -> str:
         """
         Answers a teacher's analytics query based on the provided data summary.
-        
-        Args:
-            data_summary: A text summary of the available data.
-            query: The specific question asked by the teacher.
-            
-        Returns:
-            The AI-generated response text.
         """
-        prompt = f"""You are an AI analytics assistant for a teacher. Answer this question based on the data:
+        prompt = ANALYTICS_USER_PROMPT_TEMPLATE_v1.format(
+            data_summary=data_summary,
+            query=query
+        )
 
-{data_summary}
-
-Question: {query}
-
-Provide a clear, concise answer. If you need specific data that isn't available, say so."""
-
-        full_prompt = f"You are a helpful educational analytics assistant.\n\n{prompt}"
-        logger.info("LLM_CALL provider=%s model=gemini-2.5-flash images=0 prompt_len=%s", getattr(llm_service, "provider", "gemini"), len(full_prompt))
-        
         try:
             response = await llm_service.predict(
-                prompt=full_prompt,
+                prompt=prompt,
+                system_message=ANALYTICS_SYSTEM_PROMPT_v1,
                 images=[],
                 model_name="gemini-2.5-flash",
                 temperature=0
             )
-            logger.info("LLM_RESPONSE received len=%s", len(response or ""))
             return response or ""
         except Exception as e:
             logger.error(f"Error in LLM answering AI analytics query: {e}")

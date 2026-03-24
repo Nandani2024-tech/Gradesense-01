@@ -149,117 +149,41 @@ async def _process_grading_job_core(job_id: str, exam_id: str, files_data: List[
             
             logger.info(f"[File {idx + 1}/{len(files_data)}] START processing: {filename}")
             try:
-                # PDF to Images
-                async with conversion_semaphore:
-                    try:
-                        if GRADING_USE_CLEAN_CONVERSION:
-                            images = await asyncio.to_thread(
-                                pdf_to_clean_images, pdf_bytes, GRADING_PDF_DPI, GRADING_PDF_NORMALIZE
-                            )
-                        else:
-                            images = await asyncio.to_thread(pdf_to_images, pdf_bytes)
-                    except Exception as e:
-                        logger.warning(f"Initial PDF conversion failed: {e}. Trying fallback.")
-                        images = await asyncio.to_thread(pdf_to_images, pdf_bytes)
-
-                if not images:
-                    errors.append({"filename": filename, "error": "Failed to extract images from PDF"})
-                    continue
-                
-                # Student extraction & Resolution
-                user_id, student_id, student_name = await student_service.orchestrate_student_id(
-                    images=images,
-                    filename=filename,
-                    batch_id=exam.get("batch_id"),
-                    teacher_id=teacher_id
+                from app.services.grading.grading_service import (
+                    create_initial_submission, 
+                    update_submission_with_results
                 )
-
-                exam = await _wait_for_question_paper_extraction(await _refresh_exam_state())
+                from app.services.grading.grading_service import enqueue_grading_job
                 
-                # Grading logic
-                model_answer_imgs = await get_exam_model_answer_images(exam_id)
-                questions_from_db = await exam_repo.find_questions({"exam_id": exam_id}, limit=1000)
-                questions_to_grade = questions_from_db if questions_from_db else exam.get("questions", [])
-
-                paper_images = await get_exam_question_paper_images(exam_id)
-                llm_service = get_llm_service()
-                
-                # Unified Phase 3 pipeline extraction
-                question_structure = await extract_question_structure(
-                    question_paper_images=paper_images,
-                    model_answer_images=model_answer_imgs,
-                    extract_student_info=True,
-                    infer_topics=True,
-                    llm_service=llm_service
-                )
-                model_answer_text = question_structure['model_answers']['text']
-                model_answer_map = question_structure['model_answers']['map']
-                
-                # Subject name for context
-                subject_name = None
-                if exam.get("subject_id"):
-                    subject_doc = await analytics_repo.find_one_subject({"subject_id": exam["subject_id"]})
-                    subject_name = subject_doc.get("name") if subject_doc else None
-
-                scores = await grade_with_ai(
-                    images=images,
-                    model_answer_images=model_answer_imgs,
-                    questions=questions_to_grade,
-                    grading_mode=exam.get("grading_mode", "balanced"),
-                    total_marks=float(exam.get("total_marks", 100)),
-                    model_answer_text=model_answer_text,
-                    model_answer_map=model_answer_map,
-                    subject_name=subject_name,
+                # 1. Create initial submission record (SSOT)
+                # This handles PDF to Images conversion and initial storage
+                submission_id = await create_initial_submission(
                     exam_id=exam_id,
-                    exam_name=exam.get("exam_name"),
-                    exam_type=exam.get("exam_type"),
                     job_id=job_id,
+                    student_info={"student_id": None, "student_name": None},
+                    pdf_bytes=pdf_bytes,
+                    filename=filename
                 )
                 
-                packet_meta = getattr(grade_with_ai, "last_packet_meta", {})
-                
-                if getattr(grade_with_ai, "last_grading_failed", False):
-                    raise Exception("AI Grading Pipeline failed (e.g. low alignment coverage or token limit).")
-                
-                # Normalize and compute totals
-                total_awarded = sum(s.obtained_marks for s in scores)
-                total_possible = float(exam.get("total_marks", 100))
-                
-                submission_id = f"sub_{uuid.uuid4().hex[:8]}"
-                
-                # Store images in GridFS
-                pdf_gridfs_id = file_repo.put(pdf_bytes, filename=f"{submission_id}.pdf")
-                images_gridfs_id = file_repo.put(pickle.dumps(images), filename=f"{submission_id}_images.pkl")
-                
-                # Annotations (optional)
-                annotated_images_gridfs_id = None
-                if not DISABLE_ANNOTATIONS:
-                    try:
-                        from app.services.annotation import generate_annotated_images_with_vision_ocr
-                        annotated_images = await generate_annotated_images_with_vision_ocr(images, scores)
-                        annotated_images_gridfs_id = file_repo.put(pickle.dumps(annotated_images), filename=f"{submission_id}_annotated.pkl")
-                    except Exception as e:
-                        logger.warning(f"Annotation failed: {e}")
-
-                # Insert submission
-                submission_doc = {
-                    "submission_id": submission_id,
+                # 2. Enqueue Grading execution explicitly preventing bypass
+                logger.info("JOB_ENQUEUED mapped into background loop for %s", submission_id)
+                await enqueue_grading_job("single_submission_grading", {
                     "exam_id": exam_id,
-                    "student_id": user_id,
-                    "student_name": student_name,
-                    "pdf_gridfs_id": str(pdf_gridfs_id),
-                    "images_gridfs_id": str(images_gridfs_id),
-                    "annotated_images_gridfs_id": str(annotated_images_gridfs_id) if annotated_images_gridfs_id else None,
-                    "total_score": total_awarded,
-                    "percentage": round((total_awarded / total_possible) * 100, 2) if total_possible > 0 else 0,
-                    "question_scores": [s.model_dump() for s in scores],
-                    "status": "ai_graded",
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                    "packet_meta": packet_meta
-                }
+                    "submission_id": submission_id
+                })
                 
-                await submission_repo.insert_submission(submission_doc)
-                submissions.append({"submission_id": submission_id, "student_name": student_name})
+                result = {"status": "ai_graded", "student_name": "pending"}
+                
+                if result.get("status") == "failed":
+                    raise Exception(f"Orchestrator failed: {result.get('error')}")
+
+                # 3. Update submission record with results
+                await update_submission_with_results(submission_id, result)
+                
+                submissions.append({
+                    "submission_id": submission_id, 
+                    "student_name": result.get("student_name")
+                })
                 
                 # Update progress
                 await analytics_repo.update_grading_job(

@@ -38,7 +38,21 @@ def parse_tolerant_json(raw_text: str) -> Dict[str, Any]:
         except Exception:
             pass
 
-    # 3. Final attempt: direct load
+    # 3. Handle Truncated JSON: Attempt to close open braces/brackets
+    start = text.find("{")
+    if start != -1:
+        candidate = text[start:]
+        # Greedy repair: try appending common closing sequences
+        # This handles the case where the LLM cuts off mid-list or mid-object
+        for suffix in ["}", "]}", "]]}", "}]}", '"}]}', '"}]}']:
+            try:
+                parsed = json.loads(candidate + suffix)
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                continue
+
+    # 4. Final attempt: direct load
     try:
         parsed = json.loads(text)
         if isinstance(parsed, dict):

@@ -42,11 +42,10 @@ class GeminiOCRService(BaseOCR):
         start = time.time()
         try:
             from app.services.llm.config import get_llm_api_key
-            from app.adapters.llm_adapter import GeminiLLMService
+            from app.services.llm_provider import get_llm_service
             
-            llm_service = GeminiLLMService(api_key=api_key)
+            llm_service = get_llm_service()
             prompt = hint or DEFAULT_OCR_HINT
-            logger.info("LLM_CALL provider=gemini model=%s prompt_len=%s", self._model_name, len(prompt))
             
             res = await llm_service.predict_structured(
                 prompt=prompt,

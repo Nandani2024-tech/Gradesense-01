@@ -3,7 +3,6 @@ from app.models.submission import QuestionScore
 from app.core.logging_config import logger
 
 # Import the core logic and storage abstractions
-from .grading_core import run_grading_orchestrator
 from .cache_storage import get_cached_grading, save_grading_to_cache
 from .constants import DISABLE_GRADING_CACHE
 
@@ -44,32 +43,32 @@ async def grade_with_ai(
     grade_with_ai.last_grading_failed = False
     # FIX END
 
-    # Run Orchestrator
+    # Run Orchestrator (Unified Flow)
+    from app.services.adapters.grading_adapter import adapt_images_to_submission
+    from app.services.grading.grading_service import enqueue_grading_job
+    
     try:
-        scores, packet_meta = await run_grading_orchestrator(
+        # Step 1: Adapt images to submission
+        submission_id = await adapt_images_to_submission(
             images=images,
             model_answer_images=model_answer_images,
-            questions=questions,
-            grading_mode=grading_mode,
-            total_marks=total_marks,
-            model_answer_text=model_answer_text,
-            model_answer_map=model_answer_map,
-            teacher_id=teacher_id,
-            subject_id=subject_id,
             exam_id=exam_id,
-            subject_name=subject_name,
-            exam_name=exam_name,
-            exam_type=exam_type,
-            job_id=job_id
+            user_id=teacher_id
         )
         
-        # Update legacy state attributes
-        grade_with_ai.last_packet_meta = packet_meta
-        # Note: grading_reference_mode and answer_segments should ideally be part of packet_meta
-        grade_with_ai.last_grading_reference_mode = packet_meta.get("grading_reference_mode")
-        grade_with_ai.last_answer_segments = packet_meta.get("answer_segments", {})
+        # Step 2: Enqueue instead of running directly
+        logger.info("JOB_ENQUEUED legacy grade_with_ai for submission %s", submission_id)
+        await enqueue_grading_job("single_submission_grading", {
+            "exam_id": exam_id,
+            "submission_id": submission_id
+        })
         
-        return scores
+        # Update legacy state attributes for compatibility
+        grade_with_ai.last_packet_meta = {}
+        grade_with_ai.last_grading_reference_mode = "rubric_only"
+        grade_with_ai.last_answer_segments = {}
+        
+        return []
 
     except Exception as e:
         # FIX START

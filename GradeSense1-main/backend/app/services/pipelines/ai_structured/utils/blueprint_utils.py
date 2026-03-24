@@ -7,7 +7,7 @@ from app.layers.ai_structured.validation import (
     compute_attempt_rules,
     structure_hash,
 )
-from app.services.llm.prompts.ai_structured_prompts import PROMPT_VERSION
+from app.prompts.ai_structured_prompts import PROMPT_VERSION
 from .common_utils import _to_float, _iso_now
 from .structure_utils import _structure_confidence
 

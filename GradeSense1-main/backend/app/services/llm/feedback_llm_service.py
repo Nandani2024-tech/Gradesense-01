@@ -42,7 +42,6 @@ class FeedbackLLMService:
             model_answer_text=model_answer_text[:5000] if model_answer_text else "No model answer available"
         )
         full_prompt = f"{REGRADE_SYSTEM_PROMPT_v1}\n\n{enhanced_prompt}"
-        logger.info("LLM_CALL provider=%s model=gemini-2.5-flash images=%s prompt_len=%s", getattr(llm_service, "provider", "gemini"), len(student_images[:10]), len(full_prompt))
         
         try:
             response = await llm_service.predict(
@@ -51,7 +50,6 @@ class FeedbackLLMService:
                 model_name=GEMINI_MODEL_NAME,
                 temperature=TEMPERATURE
             )
-            logger.info("LLM_RESPONSE received len=%s", len(response or ""))
             
             resp_text = response.strip()
             if resp_text.startswith("```"):

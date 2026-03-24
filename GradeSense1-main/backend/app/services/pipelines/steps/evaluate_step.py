@@ -4,7 +4,7 @@ from collections import defaultdict
 
 from app.core.logging_config import logger
 from app.layers.ai_structured.validation import normalize_structure_payload
-from app.services.llm.prompts.ai_structured_prompts import build_reconstruction_prompt
+from app.prompts.ai_structured_prompts import build_reconstruction_prompt
 from app.infrastructure.serialization.safe_numeric import safe_float as _to_float, safe_int as _to_int
 from app.services.pipelines.steps import llm_step, parse_step
 from app.services.pipelines.steps import scoring_step, validation_step, repair_step

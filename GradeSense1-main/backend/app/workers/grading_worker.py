@@ -14,13 +14,53 @@ from app.services.grading_core import run_grading_orchestrator
 
 analytics_repo = AnalyticsRepo()
 
+async def grading_worker_loop():
+    """
+    Infinite loop that consumes tasks from grading_service.grading_queue.
+    """
+    logger.info("🚀 Grading worker loop started, waiting for tasks...")
+    while True:
+        try:
+            task = await grading_service.grading_queue.get()
+            job_type = task.get("job_type")
+            data = task.get("data")
+            
+            logger.info(f"📦 Worker dequeued task: {job_type}")
+            
+            if job_type == "batch_grading":
+                await run_grading_pipeline(
+                    job_id=data["job_id"],
+                    exam_id=data["exam_id"],
+                    files_data=data["files_data"],
+                    teacher_id=data["teacher_id"],
+                    blueprint=data["blueprint"]
+                )
+            elif job_type == "regrade_all":
+                await run_regrade_all_submissions(
+                    exam_id=data["exam_id"],
+                    user_id=data["user_id"]
+                )
+            elif job_type == "single_submission_grading":
+                await run_single_submission_grading(
+                    exam_id=data["exam_id"],
+                    submission_id=data["submission_id"]
+                )
+            else:
+                logger.error(f"Unknown job_type: {job_type}")
+                
+            grading_service.grading_queue.task_done()
+            
+        except Exception as e:
+            logger.error(f"Error in grading_worker_loop: {e}", exc_info=True)
+            await asyncio.sleep(1) # Prevent tight error loop
+
 
 async def run_grading_pipeline(job_id: str, exam_id: str, files_data: List[dict], teacher_id: str, blueprint: dict):
     """
     Background worker task to process all papers in a job.
     """
     
-    from app.adapters.llm_adapter import GeminiLLMService
+    from app.services.llm_provider import get_llm_service
     from app.adapters.ocr_adapter import GoogleOCRService
 
     # Enable debug context
@@ -34,7 +74,7 @@ async def run_grading_pipeline(job_id: str, exam_id: str, files_data: List[dict]
         blueprint = await blueprint_service.ensure_blueprint_locked(exam_id, context="grading")
 
         # Instantiate services
-        llm_service = GeminiLLMService()
+        llm_service = get_llm_service()
         ocr_service = GoogleOCRService()
 
         total_papers = len(files_data)
@@ -82,6 +122,10 @@ async def run_grading_pipeline(job_id: str, exam_id: str, files_data: List[dict]
                     logger.info("✅ Worker confirmed: using orchestrator only")
                     logger.info("LEGACY STUDENT INFO EXTRACTION DISABLED: Orchestrator-only path for job %s, submission %s", 
                                 job_id, submission_id)
+                    
+                    # 🚀 Phase 4: ADD MANDATORY LOGGING
+                    logger.info("WORKER_PROCESSING", extra={"submission_id": submission_id})
+
                     try:
                         result = await run_grading_orchestrator(
                             exam_id=exam_id,
@@ -96,19 +140,8 @@ async def run_grading_pipeline(job_id: str, exam_id: str, files_data: List[dict]
                         )
                         return
 
-                    # 🚨 CRITICAL: Prevent storing invalid grading results
-                    if result.get("status") == "failed":
-                        logger.error(
-                            f"❌ NEW ORCHESTRATION FAILED: {result.get('error')}",
-                            extra={"job_id": job_id, "exam_id": exam_id}
-                        )
-
-                        await grading_job_service.update_job_progress(
-                            job_id,
-                            failed_inc=1,
-                            progress_inc=progress_increment
-                        )
-                        return  # Skip this file completely
+                    # Orchestrator now returns a safe fallback (NEEDS_REVIEW) even on failure.
+                    # We always proceed to persist this result for observability.
 
                     # Safe logging only for valid results
                     logger.info(
@@ -178,15 +211,73 @@ async def run_grading_pipeline(job_id: str, exam_id: str, files_data: List[dict]
 
 async def run_regrade_all_submissions(exam_id: str, user_id: str) -> None:
     """
-    Background worker task to regrade all submissions for an exam.
+    Worker task to regrade all submissions for an exam.
+    Ensures SSOT path via run_grading_orchestrator.
     """
+    from app.services.grading.grading_service import update_submission_with_results
+    from app.repositories import SubmissionRepo
+    submission_repo = SubmissionRepo()
+
     try:
         logger.info(f"Worker: Starting regrade all submissions for exam {exam_id}")
-        await grading_service.regrade_all_submissions(exam_id, user_id)
+        
+        submissions = await submission_repo.find_submissions({"exam_id": exam_id})
+        
+        # Concurrency control inside regrade as well
+        grading_semaphore = asyncio.Semaphore(2)
+
+        async def process_regrade(sub):
+            async with grading_semaphore:
+                sub_id = sub["submission_id"]
+                logger.info("WORKER_PROCESSING", extra={"submission_id": sub_id})
+                try:
+                    result = await run_grading_orchestrator(exam_id, sub_id)
+                    await update_submission_with_results(sub_id, result)
+                except Exception as e:
+                    logger.error(f"Regrade failed for {sub_id}: {e}")
+
+        tasks = [process_regrade(sub) for sub in submissions]
+        await asyncio.gather(*tasks)
+        
         logger.info(f"Worker: Finished regrade all submissions for exam {exam_id}")
     except Exception as e:
         logger.error(
             f"Worker: Regrade all submissions failed for exam {exam_id}: {e}",
             exc_info=True
         )
+
+async def run_batch_review_grade(submissions: List[dict], exam_id: str, job_id: str):
+    """
+    Worker task to grade multiple student submissions.
+    """
+    from app.services.grading.grading_service import update_submission_with_results
+    
+    grading_semaphore = asyncio.Semaphore(2)
+
+    async def process_student_sub(sub):
+        async with grading_semaphore:
+            sub_id = sub["submission_id"]
+            logger.info("WORKER_PROCESSING", extra={"submission_id": sub_id})
+            try:
+                result = await run_grading_orchestrator(exam_id, sub_id)
+                await update_submission_with_results(sub_id, result)
+            except Exception as e:
+                logger.error(f"Student review grade failed for {sub_id}: {e}")
+
+    tasks = [process_student_sub(sub) for sub in submissions]
+    await asyncio.gather(*tasks)
+    logger.info(f"Worker: Finished batch review grade for exam {exam_id}")
+
+async def run_single_submission_grading(exam_id: str, submission_id: str):
+    """
+    Worker task to grade a single submission.
+    """
+    from app.services.grading.grading_service import update_submission_with_results
+    
+    logger.info("WORKER_PROCESSING", extra={"submission_id": submission_id})
+    try:
+        result = await run_grading_orchestrator(exam_id, submission_id)
+        await update_submission_with_results(submission_id, result)
+    except Exception as e:
+        logger.error(f"Single submission grading failed for {submission_id}: {e}")
 

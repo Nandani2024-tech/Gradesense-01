@@ -5,31 +5,11 @@ from app.services.grading.score_validator import ScoreValidator
 from app.adapters.interfaces import AbstractLLMService
 from app.core.logging_config import logger
 from app.utils.debug_logger import add_llm_response
-from app.services.grading.constants import (
-    LLM_PROMPT_TEMPLATE,
-    JSON_EXTRACTOR_PATTERN
-)
+from app.services.grading.constants import JSON_EXTRACTOR_PATTERN
+from app.prompts.llm_prompts import LEGACY_GRADING_PROMPT_v1
+from app.infrastructure.serialization.json_helpers import parse_tolerant_json
 
-def _extract_json_block(raw_response: str) -> dict:
-    """
-    Safely extract first valid JSON object from LLM response.
-    """
-
-    if not raw_response:
-        raise ValueError("Empty LLM response")
-
-    start = raw_response.find("{")
-    end = raw_response.rfind("}")
-
-    if start == -1 or end == -1 or end <= start:
-        raise ValueError("No valid JSON boundaries found")
-
-    candidate = raw_response[start:end + 1]
-
-    try:
-        return json.loads(candidate)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Invalid JSON format: {str(e)}")
+# _extract_json_block removed in favor of app.infrastructure.serialization.json_helpers.parse_tolerant_json
 
 class LlmEvaluator:
     """
@@ -50,7 +30,7 @@ class LlmEvaluator:
                       matched_concepts: list,
                       missing_concepts: list) -> str:
         
-        return LLM_PROMPT_TEMPLATE.format(
+        return LEGACY_GRADING_PROMPT_v1.format(
             question_number=question_number,
             question_text=question_text,
             model_answer=model_answer,
@@ -92,9 +72,7 @@ class LlmEvaluator:
         try:
             if self.llm_service:
                 # Actual LLM call using the base adapter interface
-                logger.info(f"[LLM] Question {question_number}: Sending prompt to AI (len={len(prompt)})")
                 raw_response = await self.llm_service.predict(prompt)
-                logger.info(f"[LLM] Question {question_number}: Received raw response (len={len(raw_response)})")
                 logger.info(f"[LLM_RAW] Response for {question_number}: {raw_response}")
             else:
                 # Mock response for standalone testing
@@ -116,7 +94,9 @@ class LlmEvaluator:
                 pass
             
             try:
-                parsed = _extract_json_block(raw_response)
+                parsed = parse_tolerant_json(raw_response)
+                if not parsed:
+                    raise ValueError("No valid JSON found in response")
             except Exception as e:
                 logger.error(
                     "LLM JSON parsing failed",
