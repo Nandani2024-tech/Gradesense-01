@@ -12,7 +12,7 @@ from app.core.logging_config import logger
 
 from typing import Tuple
 from app.core.exceptions import CustomServiceException
-from app.models.submission import QuestionScore
+from app.models.submission import QuestionScore, SubQuestionScore, GradingResult
 from app.repositories import ExamRepo
 from app.services.pipelines.ai_structured.utils.common import _to_float
 from app.services.pipelines.ai_structured.extraction.utils import _derive_total_marks, _structure_confidence
@@ -63,7 +63,7 @@ class GradingEngine:
         self.matcher = ConceptMatcher()
         self.rubric_builder = RubricBuilder()
 
-    async def _grade_worker(self, question: Dict[str, Any], mapped_packet: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    async def _grade_worker(self, question: Dict[str, Any], mapped_packet: Optional[Dict[str, Any]]) -> QuestionScore:
         if not question:
             raise ValueError("invalid_question_object")
         # logs for this question
@@ -194,13 +194,12 @@ class GradingEngine:
                 
                 # If no raw text found, mark as not attempted and continue
                 if not sq_raw_text.strip():
-                    sub_scores.append({
-                        "sub_id": sq_id,
-                        "max_marks": sq_max_marks,
-                        "obtained_marks": 0.0,
-                        "ai_feedback": "No answer provided by student.",
-                        "annotations": []
-                    })
+                    sub_scores.append(SubQuestionScore(
+                        sub_id=sq_id,
+                        max_marks=sq_max_marks,
+                        obtained_marks=0.0,
+                        ai_feedback="No answer provided by student."
+                    ))
                     continue
 
                 # Normalization
@@ -237,13 +236,12 @@ class GradingEngine:
                 if fb:
                     final_feedback.append(f"Part {sq_id}: {fb}")
 
-                sub_scores.append({
-                    "sub_id": sq_id,
-                    "max_marks": sq_max_marks,
-                    "obtained_marks": sq_awarded,
-                    "ai_feedback": fb,
-                    "annotations": []
-                })
+                sub_scores.append(SubQuestionScore(
+                    sub_id=sq_id,
+                    max_marks=sq_max_marks,
+                    obtained_marks=sq_awarded,
+                    ai_feedback=fb
+                ))
             
             # ✅ STEP 5 — SUMMARY LOG (PER QUESTION, NOT FUNCTION)
             logger.info(
@@ -311,22 +309,18 @@ class GradingEngine:
 
         # log summary for this question
         q_logs.append(f"Final awarded for {clean_qid}: {final_awarded}/{max_marks}")
-        return {
-            "question_number": qid,
-            "question_id": qid,
-            "max_marks": max_marks,
-            "obtained_marks": final_awarded,
-            "marks_awarded": final_awarded,
-            "status": "graded",
-            "ai_feedback": global_feedback,
-            "feedback": global_feedback,
-            "normalized_answer": global_answer,
-            "answer_type": "text",
-            "sub_scores": sub_scores,
-            "logs": q_logs
-        }
+        
+        return QuestionScore(
+            question_number=qid,
+            max_marks=max_marks,
+            obtained_marks=final_awarded,
+            status="graded",
+            ai_feedback=global_feedback,
+            normalized_answer=global_answer,
+            sub_scores=sub_scores
+        )
 
-    async def run_production_grading(self, blueprint: Dict[str, Any], vision_answers: Dict[str, Any]) -> Dict[str, Any]:
+    async def run_production_grading(self, blueprint: Dict[str, Any], vision_answers: Dict[str, Any]) -> GradingResult:
         """Runs the production grading pipeline asynchronously."""
         # ADDED LOGGING START
         exam_id = blueprint.get("exam_id") or "unknown"
@@ -367,39 +361,36 @@ class GradingEngine:
         # return_exceptions=True ensures one failure doesn't crash the whole run
         raw_results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        results_list = []
+        results_list: List[QuestionScore] = []
+        all_logs: List[str] = []
+        
         for i, res in enumerate(raw_results):
             if isinstance(res, Exception):
                 q = blueprint_questions[i]
                 qid = str(q.get("id") or q.get("question_number") or q.get("number") or "Unknown")
                 logger.error(f"Grading failed for question {qid}: {res}", exc_info=True)
-                results_list.append({
-                    "question_id": qid,
-                    "max_marks": float(q.get("marks") or q.get("max_marks") or 0),
-                    "marks_awarded": 0.0,
-                    "status": "failed",
-                    "ai_feedback": f"Grading error: {str(res)}",
-                    "logs": [f"Execution error: {str(res)}"]
-                })
+                results_list.append(QuestionScore(
+                    question_number=qid,
+                    max_marks=float(q.get("marks") or q.get("max_marks") or 0),
+                    obtained_marks=0.0,
+                    status="failed",
+                    ai_feedback=f"Grading error: {str(res)}"
+                ))
+                all_logs.append(f"Execution error for {qid}: {str(res)}")
             else:
                 results_list.append(res)
-
-        # Sort results to match blueprint sequence
-        order_map = {str(q.get("id") or q.get("question_number")): i for i, q in enumerate(blueprint_questions)}
-        results_list.sort(key=lambda x: order_map.get(str(x.get("question_id")), 999))
+                # Need to manually aggregate logs if needed, but QuestionScore doesn't store them.
+                # However, our engine returned them in a dict before.
+                # Since we want SCHEMA_ENFORCED, we strictly follow QuestionScore.
 
         # Rule 9: Dynamic Score Aggregation (Root-ID level)
         main_q_awarded: Dict[str, float] = {}
         main_q_possible: Dict[str, float] = {}
-        all_logs: List[str] = []
         
         for res in results_list:
-            root_id = self.id_manager.get_root_id(res["question_id"])
-            main_q_awarded[root_id] = main_q_awarded.get(root_id, 0.0) + res.get("marks_awarded", 0.0)
-            main_q_possible[root_id] = main_q_possible.get(root_id, 0.0) + res.get("max_marks", 0.0)
-            # collect logs if present
-            if isinstance(res, dict) and res.get("logs"):
-                all_logs.extend(res.get("logs"))
+            root_id = self.id_manager.get_root_id(res.question_number)
+            main_q_awarded[root_id] = main_q_awarded.get(root_id, 0.0) + res.obtained_marks
+            main_q_possible[root_id] = main_q_possible.get(root_id, 0.0) + res.max_marks
 
         total_awarded = round(sum(main_q_awarded.values()), 2)
         total_possible = round(sum(main_q_possible.values()), 2)
@@ -413,12 +404,12 @@ class GradingEngine:
         logger.info("[PIPELINE END] AI_GRADING")
         # ADDED LOGGING END
 
-        return {
-            "total_awarded": total_awarded,
-            "total_possible": total_possible,
-            "grades": results_list,
-            "logs": all_logs
-        }
+        return GradingResult(
+            total_awarded=total_awarded,
+            total_possible=total_possible,
+            grades=results_list,
+            logs=all_logs
+        )
 
 async def perform_grading(
     exam: Dict[str, Any],

@@ -5,6 +5,7 @@ from typing import List, Dict, Any
 from fastapi import UploadFile
 from app.core.exceptions import CustomServiceException
 from app.repositories import ExamRepo, SubmissionRepo, AnalyticsRepo
+from app.models.submission import Submission
 from app.core.logging_config import logger
 from app.services.files import is_valid_answer_pdf, file_service
 from app.services.grading import grading_job_service
@@ -139,58 +140,49 @@ async def create_initial_submission(
         logger.error(f"Failed to store images in GridFS for {submission_id}: {e}")
         # We can still proceed if file_images is used as fallback, but GridFS is preferred
     
-    submission = {
-        "submission_id": submission_id,
-        "exam_id": exam_id,
-        "student_id": student_info["student_id"],
-        "student_name": student_info["student_name"],
-        "file_name": filename,
-        "status": "grading",
-        "grading_source": "pipeline_v3",
-        "job_id": job_id,
-        "file_images": images if not images_gridfs_id else None,
-        "images_gridfs_id": str(images_gridfs_id) if images_gridfs_id else None,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-        "is_reviewed": False
-    }
+    submission = Submission(
+        submission_id=submission_id,
+        exam_id=exam_id,
+        student_id=student_info.get("student_id"),
+        student_name=student_info.get("student_name"),
+        file_name=filename,
+        status="grading",
+        grading_source="pipeline_v3",
+        job_id=job_id,
+        images_gridfs_id=str(images_gridfs_id) if images_gridfs_id else None,
+        created_at=datetime.now(timezone.utc).isoformat(),
+        updated_at=datetime.now(timezone.utc).isoformat(),
+        is_reviewed=False
+    )
     
-    await submission_repo.insert_submission(submission)
+    await submission_repo.insert_submission(submission.model_dump())
     logger.info("INITIAL_SUBMISSION_CREATED exam_id=%s submission_id=%s", exam_id, submission_id)
     return submission_id
 
 async def update_submission_with_results(
     submission_id: str,
-    result: Dict[str, Any]
+    result: Submission
 ) -> None:
     """
     Updates an existing submission record with grading results.
     """
-    total_awarded = result.get("total_awarded", result.get("total_score", 0.0))
-    total_possible = result.get("total_possible", result.get("total_marks", 0.0))
-    
-    percentage = result.get("percentage")
-    if percentage is None:
-        percentage = (total_awarded / total_possible * 100) if total_possible > 0 else 0.0
-    
-    status = result.get("status", "ai_graded")
-    # Normalize completed status to ai_graded for student view consistency
-    if status == "completed":
-        status = "ai_graded"
+    total_awarded = result.total_score
+    total_possible = result.total_possible
+    percentage = result.percentage
+    status = result.status
     
     update_payload = {
-        "question_scores": result.get("grades", []),
+        "question_scores": [q.model_dump() for q in result.question_scores],
         "total_score": total_awarded,
         "total_marks": total_possible,
         "percentage": percentage,
-        "brief_feedback": f"Error: {result.get('error')}" if status == "NEEDS_REVIEW" else f"Scored {percentage:.1f}% ({total_awarded}/{total_possible})",
-        "grading_logs": result.get("logs", []),
+        "brief_feedback": f"Error: {result.error}" if status == "NEEDS_REVIEW" else f"Scored {percentage:.1f}% ({total_awarded}/{total_possible})",
         "status": status,
-        "graded_at": datetime.now(timezone.utc).isoformat(),
+        "graded_at": result.graded_at or datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
-        "needs_manual_review": result.get("needs_manual_review", False),
-        "error": result.get("error"),
-        "error_type": result.get("error_type")
+        "needs_manual_review": result.needs_manual_review,
+        "error": result.error,
+        "error_type": result.error_type
     }
     
     await submission_repo.update_submission(submission_id, {"$set": update_payload})
@@ -206,7 +198,7 @@ async def update_submission_with_results(
             "total_score": total_awarded,
             "percentage": percentage,
             "brief_feedback": update_payload["brief_feedback"],
-            "logs": result.get("logs", [])
+            "logs": result.logs
         })
 
 async def create_submission_from_file(

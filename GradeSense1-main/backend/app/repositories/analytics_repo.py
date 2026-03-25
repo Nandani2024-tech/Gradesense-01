@@ -62,9 +62,12 @@ class AnalyticsRepo:
         """Update a re-evaluation record."""
         return await self.re_evaluations_collection.update_one(query, update_doc)
 
-    async def find_notifications(self, query: Dict[str, Any], limit: int = 100) -> List[Dict[str, Any]]:
+    async def find_notifications(self, query: Dict[str, Any], limit: int = 100, sort: Optional[List[tuple]] = None) -> List[Dict[str, Any]]:
         """Find notifications based on query."""
-        return await self.notifications_collection.find(query, {"_id": 0}).to_list(limit)
+        cursor = self.notifications_collection.find(query, {"_id": 0})
+        if sort:
+            cursor = cursor.sort(sort)
+        return await cursor.to_list(limit)
 
     async def count_notifications(self, query: Dict[str, Any]) -> int:
         """Count notifications."""
