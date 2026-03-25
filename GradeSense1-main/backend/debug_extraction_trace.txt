@@ -1,0 +1,4137 @@
+=== EXTRACTION DEBUG TRACE ===
+
+RAW BATCH 1/4:
+{
+  "questions": [
+    {
+      "number": 1,
+      "raw_number": "1",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "The metals obtained from their molten chlorides by the process of electrolytic reduction are:",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "Gold and silver",
+        "Calcium and magnesium",
+        "Aluminium and silver",
+        "Sodium and iron"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 2,
+          "bbox": [
+            250,
+            118,
+            330,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 2,
+      "raw_number": "2",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "The formation of magnesium oxide is correctly shown in option :",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "Mg:O: -> Mg\u00b2\u207a[:O:\u00b2\u207b]",
+        "Mg\u00b7O\u00b7 -> Mg\u207a[:O:]\u207b",
+        "Mg: -> Mg\u00b2\u207a[:O:]\u00b2\u207b\u2082",
+        "2Mg\u00b7 + :O: -> [Mg\u00b2\u207a]\u2082[:O:\u00b2\u207b]"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 4,
+          "bbox": [
+            70,
+            118,
+            290,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 3,
+      "raw_number": "3",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "Reaction between two elements A and B, forms a compound C. A loses electrons and B gains electrons. Which one of the following properties will not be shown by compound C?",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "It has high melting point.",
+        "It is highly soluble in water.",
+        "It has weak electrostatic forces of attraction between its oppositely charged ions.",
+        "It conducts electricity in its molten state or aqueous solution."
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 4,
+          "bbox": [
+            300,
+            118,
+            490,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 4,
+      "raw_number": "4",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "Consider the following reactions:\n(i) Dilute hydrochloric acid reacts with sodium hydroxide.\n(ii) Magnesium oxide reacts with dilute hydrochloric acid.\n(iii) Carbon dioxide reacts with sodium hydroxide.\nIt is found that in each case:",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "Salt and water is formed.",
+        "Neutral salts are formed.",
+        "Hydrogen gas is formed.",
+        "Acidic salts are formed."
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 4,
+          "bbox": [
+            500,
+            118,
+            720,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 5,
+      "raw_number": "5",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "Tooth enamel is made up of calcium hydroxyapatite (a crystalline form of calcium phosphate). This chemical starts corroding in the mouth when the pH is:",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "7",
+        "5",
+        "10",
+        "14"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 4,
+          "bbox": [
+            730,
+            118,
+            860,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 6,
+      "raw_number": "6",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "The products formed when Aluminium and Magnesium are burnt in the presence of air respectively are:",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "Al\u2082O\u2084 and MgO\u2082",
+        "Al\u2082O\u2083 and MgO",
+        "Al\u2083O\u2084 and MgO",
+        "Al\u2082O\u2083 and MgO\u2082"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 6,
+          "bbox": [
+            60,
+            118,
+            190,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 7,
+      "raw_number": "7",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "Electrolysis of water is a decomposition reaction. The mass ratio (M_H : M_O) of hydrogen and oxygen gases liberated at the electrodes during electrolysis of water is:",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "8:1",
+        "2:1",
+        "1:2",
+        "1:8"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 6,
+          "bbox": [
+            200,
+            118,
+            350,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 8,
+      "raw_number": "8",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "The breakdown of glucose has taken the following pathway:\nGlucose --(a)--> Pyruvate + Energy --(b)--> Lactic acid + Energy\nThe sites 'a' and 'b' respectively are :",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "Mitochondria and Oxygen deficient muscle cells",
+        "Cytoplasm and Oxygen rich muscle cells",
+        "Cytoplasm and Yeast cells",
+        "Cytoplasm and Oxygen deficient muscle cells"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 6,
+          "bbox": [
+            360,
+            118,
+            560,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 9,
+      "raw_number": "9",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "If pea plants with round and green seeds (RRyy) are crossed with pea plants having wrinkled and yellow seeds (rrYY), the seeds developed by the plants of F\u2081 generation will be :",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "50% round and green",
+        "75% wrinkled and green",
+        "100% round and yellow",
+        "75% wrinkled and yellow"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 6,
+          "bbox": [
+            570,
+            118,
+            720,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 10,
+      "raw_number": "10",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "The correct/true statement(s) for a bisexual flower is/are:\n(i) They possess both stamen and pistil.\n(ii) They possess either stamen or pistil.\n(iii) They exhibit either self-pollination or cross-pollination.\n(iv) They cannot produce fruits on their own.",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "(i) only",
+        "(iv) only",
+        "(i) and (iii)",
+        "(i) and (iv)"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 6,
+          "bbox": [
+            730,
+            118,
+            910,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 11,
+      "raw_number": "11",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "\u0935\u0939 \u0915\u094c\u0928-\u0938\u093e \u092a\u093e\u0926\u092a \u0939\u093e\u0930\u094d\u092e\u094b\u0928 \u0939\u0948 \u091c\u093f\u0938\u0915\u0940 \u0938\u093e\u0902\u0926\u094d\u0930\u0924\u093e, \u092a\u094d\u0930\u0930\u094b\u0939 \u0915\u0947 \u092a\u094d\u0930\u0915\u093e\u0936 \u0938\u0947 \u0926\u0942\u0930 \u0935\u093e\u0932\u0947 \u092d\u093e\u0917 \u0915\u0940 \u0915\u094b\u0936\u093f\u0915\u093e\u0913\u0902 \u0915\u094b \u0932\u092e\u094d\u092c\u093e\u0908 \u092e\u0947\u0902 \u0935\u0943\u0926\u094d\u0927\u093f \u0915\u0947 \u0932\u093f\u090f \u0909\u0926\u094d\u0926\u0940\u092a\u093f\u0924 \u0915\u0930\u0924\u0940 \u0939\u0948?",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "\u0938\u093e\u0907\u091f\u094b\u0915\u093e\u0907\u0928\u093f\u0928",
+        "\u091c\u093f\u092c\u094d\u092c\u0947\u0930\u0947\u0932\u093f\u0928",
+        "\u0910\u092c\u094d\u0938\u093f\u0938\u093f\u0915 \u0905\u092e\u094d\u0932",
+        "\u0911\u0915\u094d\u0938\u093f\u0928"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 7,
+          "bbox": [
+            110,
+            118,
+            290,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 12,
+      "raw_number": "12",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "\u092e\u0941\u0901\u0939 \u092e\u0947\u0902 \u0932\u093e\u0930 \u0915\u093e \u0915\u092e \u092e\u093e\u0924\u094d\u0930\u093e \u092e\u0947\u0902 \u0938\u094d\u0930\u093e\u0935\u093f\u0924 \u0939\u094b\u0928\u093e \u0915\u093f\u0938 \u092a\u0930\u093f\u0935\u0930\u094d\u0924\u0928 \u0915\u094b \u092a\u094d\u0930\u092d\u093e\u0935\u093f\u0924 \u0915\u0930\u0924\u093e \u0939\u0948?",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "\u092a\u094d\u0930\u094b\u091f\u0940\u0928\u094b\u0902 \u0938\u0947 \u0910\u092e\u0940\u0928\u094b \u0905\u092e\u094d\u0932",
+        "\u0935\u0938\u093e \u0938\u0947 \u0935\u0938\u0940\u092f \u0905\u092e\u094d\u0932 \u0914\u0930 \u0917\u094d\u0932\u093f\u0938\u0930\u0949\u0932",
+        "\u0938\u094d\u091f\u093e\u0930\u094d\u091a \u0938\u0947 \u0938\u0930\u0932 \u0936\u0930\u094d\u0915\u0930\u093e",
+        "\u0936\u0930\u094d\u0915\u0930\u093e \u0938\u0947 \u0910\u0932\u094d\u0915\u094b\u0939\u0949\u0932"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 7,
+          "bbox": [
+            300,
+            118,
+            480,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 13,
+      "raw_number": "13",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "\u0915\u093f\u0938\u0940 \u0938\u094d\u0925\u0932\u0940\u092f \u092a\u093e\u0930\u093f\u0924\u0902\u0924\u094d\u0930 \u092e\u0947\u0902 \u0939\u0930\u0947 \u092a\u093e\u0926\u092a\u094b\u0902 \u0915\u0940 \u092a\u0924\u094d\u0924\u093f\u092f\u094b\u0902 \u0926\u094d\u0935\u093e\u0930\u093e \u092a\u094d\u0930\u093e\u092a\u094d\u0924 \u0938\u094c\u0930 \u090a\u0930\u094d\u091c\u093e \u0915\u093e \u0932\u0917\u092d\u0917 \u0915\u093f\u0924\u0928\u0947 \u092a\u094d\u0930\u0924\u093f\u0936\u0924 \u092d\u093e\u0917 \u0916\u093e\u0926\u094d\u092f \u090a\u0930\u094d\u091c\u093e \u092e\u0947\u0902 \u092a\u0930\u093f\u0935\u0930\u094d\u0924\u093f\u0924 \u0928\u0939\u0940\u0902 \u0939\u094b\u0924\u093e \u0939\u0948?",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "1%",
+        "10%",
+        "90%",
+        "99%"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 7,
+          "bbox": [
+            490,
+            118,
+            630,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 14,
+      "raw_number": "14",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "\u0928\u093f\u092e\u094d\u0928\u0932\u093f\u0916\u093f\u0924 \u092e\u0947\u0902 \u0938\u0947 \u0915\u094c\u0928-\u0915\u094c\u0928 \u0938\u0947 \u0938\u092e\u0942\u0939 \u0906\u0939\u093e\u0930 \u0936\u094d\u0930\u0943\u0902\u0916\u0932\u093e \u0928\u0939\u0940\u0902 \u092c\u0928\u093e\u0924\u0947 \u0939\u0948\u0902?\n(i) \u092d\u0947\u0921\u093c\u093f\u092f\u093e, \u0916\u0930\u0917\u094b\u0936, \u0918\u093e\u0938, \u0936\u0947\u0930\n(ii) \u092a\u094d\u0932\u0935\u0915, \u092e\u093e\u0928\u0935, \u091f\u093f\u0921\u094d\u0921\u093e, \u092e\u091b\u0932\u0940\n(iii) \u092c\u093e\u091c, \u0918\u093e\u0938, \u0938\u0930\u094d\u092a, \u091f\u093f\u0921\u094d\u0921\u093e, \u092e\u0947\u0902\u0922\u0915\n(iv) \u0918\u093e\u0938, \u0938\u0930\u094d\u092a, \u092d\u0947\u0921\u093c\u093f\u092f\u093e, \u092c\u093e\u0918",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "(i) \u0914\u0930 (iv)",
+        "(i) \u0914\u0930 (iii)",
+        "(ii) \u0914\u0930 (iii)",
+        "(ii) \u0914\u0930 (iv)"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 7,
+          "bbox": [
+            640,
+            118,
+            840,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 15,
+      "raw_number": "15",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "\u0935\u0939 \u0915\u094c\u0928-\u0938\u0940 \u092a\u0930\u093f\u0918\u091f\u0928\u093e \u0939\u0948 \u091c\u094b \u0927\u0941\u090f\u0901 \u0938\u0947 \u092d\u0930\u0947 \u0915\u092e\u0930\u0947 \u092e\u0947\u0902 \u0915\u093f\u0938\u0940 \u092a\u0924\u0932\u0947 \u091b\u093f\u0926\u094d\u0930 \u0938\u0947 \u0938\u0942\u0930\u094d\u092f \u0915\u0947 \u092a\u094d\u0930\u0915\u093e\u0936 \u092a\u0941\u0902\u091c \u0915\u0947 \u092a\u094d\u0930\u0935\u0947\u0936 \u0915\u0930\u0928\u0947 \u092a\u0930 \u0927\u0941\u090f\u0901 \u0915\u0947 \u0915\u0923\u094b\u0902 \u0915\u094b \u0926\u0943\u0937\u094d\u091f\u093f\u0917\u094b\u091a\u0930 \u092c\u0928\u093e\u0928\u0947 \u0915\u0947 \u0932\u093f\u090f \u0909\u0924\u094d\u0924\u0930\u0926\u093e\u092f\u0940 \u0939\u094b\u0924\u0940 \u0939\u0948?",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "\u092a\u094d\u0930\u0915\u093e\u0936 \u0915\u093e \u092a\u094d\u0930\u0915\u0940\u0930\u094d\u0923\u0928",
+        "\u092a\u094d\u0930\u0915\u093e\u0936 \u0915\u093e \u092a\u0930\u093f\u0915\u094d\u0937\u0947\u092a\u0923",
+        "\u092a\u094d\u0930\u0915\u093e\u0936 \u0915\u093e \u092a\u0930\u093e\u0935\u0930\u094d\u0924\u0928",
+        "\u092a\u094d\u0930\u0915\u093e\u0936 \u0915\u093e \u0906\u0928\u094d\u0924\u0930\u093f\u0915 \u092a\u0930\u093e\u0935\u0930\u094d\u0924\u0928"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 7,
+          "bbox": [
+            850,
+            118,
+            910,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    }
+  ],
+  "section_math_blocks": [],
+  "total_questions": 39,
+  "total_marks": 0.0,
+  "effective_total_marks": 0.0,
+  "numbering_contiguous": true
+}
+
+RAW BATCH 2/4:
+{
+  "questions": [
+    {
+      "number": 11,
+      "raw_number": "11",
+      "section": null,
+      "instruction": null,
+      "question_text": "The plant hormone whose concentration stimulates the cells to grow longer on the side of the shoot which is away from light is:",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "Cytokinins",
+        "Gibberellins",
+        "Adrenaline",
+        "Auxins"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 8,
+          "bbox": [
+            109,
+            83,
+            180,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 12,
+      "raw_number": "12",
+      "section": null,
+      "instruction": null,
+      "question_text": "Secretion of less saliva in mouth will effect the conversion of:",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "proteins into amino acids",
+        "fats into fatty acids and glycerol",
+        "starch into simple sugars",
+        "sugars into alcohol"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 8,
+          "bbox": [
+            219,
+            83,
+            290,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 13,
+      "raw_number": "13",
+      "section": null,
+      "instruction": null,
+      "question_text": "The percentage of solar energy which is not converted into food energy by the leaves of green plants in a terrestrial ecosystem is about :",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "1%",
+        "10%",
+        "90%",
+        "99%"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 8,
+          "bbox": [
+            329,
+            83,
+            400,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 14,
+      "raw_number": "14",
+      "section": null,
+      "instruction": null,
+      "question_text": "Which of the following groups do not constitute a food chain?\n(i) Wolf, rabbit, grass, lion\n(ii) Plankton, man, grasshopper, fish\n(iii) Hawk, grass, snake, grasshopper, frog\n(iv) Grass, snake, wolf, tiger",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "(i) and (ii)",
+        "(i) and (iii)",
+        "(ii) and (iii)",
+        "(ii) and (iv)"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 8,
+          "bbox": [
+            439,
+            83,
+            550,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 15,
+      "raw_number": "15",
+      "section": null,
+      "instruction": null,
+      "question_text": "The phenomenon responsible for making the smoke particles visible when a beam of sunlight enters a smoke filled room through a narrow hole is:",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "scattering of light",
+        "dispersion of light",
+        "reflection of light",
+        "internal reflection of light"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 8,
+          "bbox": [
+            589,
+            83,
+            660,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 16,
+      "raw_number": "16",
+      "section": null,
+      "instruction": null,
+      "question_text": "Mirror 'X' is used to concentrate sunlight in solar furnace and Mirror 'Y' is fitted on the side of the vehicle to see the traffic behind the driver. Which of the following statements are true for the two mirrors?\n(i) The image formed by mirror 'X' is real, diminished and at its focus.\n(ii) The image formed by mirror 'Y' is virtual, diminished and erect.\n(iii) The image formed by mirror 'X' is virtual, diminished and erect.\n(iv) The image formed by mirror 'Y' is real, diminished and at its focus.",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "(i) and (ii)",
+        "(i) and (iii)",
+        "(ii) and (iv)",
+        "(i) and (iv)"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 10,
+          "bbox": [
+            109,
+            83,
+            220,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 17,
+      "raw_number": "17",
+      "section": null,
+      "instruction": "For Questions number 17 to 20, two statements are given \u2014 one labelled as Assertion (A) and the other labelled as Reason (R). Select the correct answer to these questions from the codes (A), (B), (C) and (D) as given below.",
+      "question_text": "Assertion (A): The amount of ozone in the atmosphere began to drop sharply in the 1980s.\nReason (R): The oxygen atoms combine with molecular oxygen to form ozone.",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "Both Assertion (A) and Reason (R) are true and Reason (R) is the correct explanation of Assertion (A).",
+        "Both Assertion (A) and Reason (R) are true, but Reason (R) is not the correct explanation of Assertion (A).",
+        "Assertion (A) is true, but Reason (R) is false.",
+        "Assertion (A) is false, but Reason (R) is true."
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 10,
+          "bbox": [
+            349,
+            83,
+            410,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 18,
+      "raw_number": "18",
+      "section": null,
+      "instruction": "For Questions number 17 to 20, two statements are given \u2014 one labelled as Assertion (A) and the other labelled as Reason (R). Select the correct answer to these questions from the codes (A), (B), (C) and (D) as given below.",
+      "question_text": "Assertion (A): No two magnetic field lines are found to cross each other.\nReason (R): The compass needle cannot point towards two directions at the point of intersection of two magnetic field lines.",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "Both Assertion (A) and Reason (R) are true and Reason (R) is the correct explanation of Assertion (A).",
+        "Both Assertion (A) and Reason (R) are true, but Reason (R) is not the correct explanation of Assertion (A).",
+        "Assertion (A) is true, but Reason (R) is false.",
+        "Assertion (A) is false, but Reason (R) is true."
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 10,
+          "bbox": [
+            449,
+            83,
+            510,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 19,
+      "raw_number": "19",
+      "section": null,
+      "instruction": "For Questions number 17 to 20, two statements are given \u2014 one labelled as Assertion (A) and the other labelled as Reason (R). Select the correct answer to these questions from the codes (A), (B), (C) and (D) as given below.",
+      "question_text": "Assertion (A): A human child bears all the basic features of human beings.\nReason (R): It looks exactly like its parents, showing very little variations.",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "Both Assertion (A) and Reason (R) are true and Reason (R) is the correct explanation of Assertion (A).",
+        "Both Assertion (A) and Reason (R) are true, but Reason (R) is not the correct explanation of Assertion (A).",
+        "Assertion (A) is true, but Reason (R) is false.",
+        "Assertion (A) is false, but Reason (R) is true."
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 10,
+          "bbox": [
+            549,
+            83,
+            610,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 20,
+      "raw_number": "20",
+      "section": null,
+      "instruction": "For Questions number 17 to 20, two statements are given \u2014 one labelled as Assertion (A) and the other labelled as Reason (R). Select the correct answer to these questions from the codes (A), (B), (C) and (D) as given below.",
+      "question_text": "Assertion (A): Decomposition reactions are generally endothermic reactions.\nReason (R): Decomposition of organic matter into compost is an exothermic process.",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "Both Assertion (A) and Reason (R) are true and Reason (R) is the correct explanation of Assertion (A).",
+        "Both Assertion (A) and Reason (R) are true, but Reason (R) is not the correct explanation of Assertion (A).",
+        "Assertion (A) is true, but Reason (R) is false.",
+        "Assertion (A) is false, but Reason (R) is true."
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 10,
+          "bbox": [
+            649,
+            83,
+            710,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 21,
+      "raw_number": "21",
+      "section": "SECTION B",
+      "instruction": "Questions no. 21 to 26 are Very Short Answer Type questions.",
+      "question_text": "An object is placed at a distance of 10 cm in front of a concave mirror of focal length 15 cm. Use mirror formula to determine the position of the image formed by this mirror.",
+      "question_text_source": "llm",
+      "question_type": "very_short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 12,
+          "bbox": [
+            109,
+            83,
+            160,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 22,
+      "raw_number": "22",
+      "section": "SECTION B",
+      "instruction": "Questions no. 21 to 26 are Very Short Answer Type questions.",
+      "question_text": "(a) Consider two lamps A and B of rating 50 W; 220 V and",
+      "question_text_source": "ocr_fallback",
+      "question_type": "very_short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "(a)",
+          "text": "Consider two lamps A and B of rating 50 W; 220 V and 25 W; 220 V respectively. Find the ratio of the resistances of the two lamps (i.e. RA : RB).",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "(b)",
+          "text": "Heat produced per second due to a current in a resistor of 4 \u03a9 is 400 joules. Calculate the potential difference across the resistor.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 12,
+          "bbox": [
+            199,
+            83,
+            340,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.5,
+      "confidence": 0.5
+    },
+    {
+      "number": 23,
+      "raw_number": "23",
+      "section": "SECTION B",
+      "instruction": "Questions no. 21 to 26 are Very Short Answer Type questions.",
+      "question_text": "Draw labelled diagrams to show different stages of budding in Hydra.",
+      "question_text_source": "llm",
+      "question_type": "very_short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 12,
+          "bbox": [
+            379,
+            83,
+            400,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 24,
+      "raw_number": "24",
+      "section": "SECTION B",
+      "instruction": "Questions no. 21 to 26 are Very Short Answer Type questions.",
+      "question_text": "(a) Besides minimising the loss of blood,why is it essential to plug any",
+      "question_text_source": "ocr_fallback",
+      "question_type": "very_short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "(a)",
+          "text": "Besides minimising the loss of blood, why is it essential to plug any leak in a blood vessel ? Name the component of blood which helps in this process and state how this component perform this function.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "(b)",
+          "text": "(i) The transport system in plants is relatively slower than in animals. Give reasons.\n(ii) State the role of phloem in the transport of materials in plants.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 12,
+          "bbox": [
+            439,
+            83,
+            590,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.5,
+      "confidence": 0.5
+    },
+    {
+      "number": 25,
+      "raw_number": "25",
+      "section": "SECTION B",
+      "instruction": "Questions no. 21 to 26 are Very Short Answer Type questions.",
+      "question_text": "A student performs the following experiment in his school laboratory.\n[Image of experiment]\nList two observations to justify that in this experiment a chemical change has taken place.",
+      "question_text_source": "llm",
+      "question_type": "very_short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 12,
+          "bbox": [
+            629,
+            83,
+            790,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 26,
+      "raw_number": "26",
+      "section": "SECTION B",
+      "instruction": "Questions no. 21 to 26 are Very Short Answer Type questions.",
+      "question_text": "Translate the following statements into chemical equations and then balance them:",
+      "question_text_source": "llm",
+      "question_type": "very_short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "(a)",
+          "text": "Nitric acid reacts with calcium hydroxide to form calcium nitrate and water.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "(b)",
+          "text": "Sodium chloride reacts with silver nitrate to form silver chloride and sodium nitrate.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 14,
+          "bbox": [
+            109,
+            83,
+            200,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 27,
+      "raw_number": "27",
+      "section": "SECTION C",
+      "instruction": "Questions no. 27 to 33 are Short Answer Type questions.",
+      "question_text": "a) Define one volt potential difference between two points in an",
+      "question_text_source": "ocr_fallback",
+      "question_type": "short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "(a)",
+          "text": "Define one volt potential difference between two points in an electric field.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "(b)",
+          "text": "Draw a schematic diagram of an electric circuit of a cell of 1.5 V, 5 \u03a9 and 10 \u03a9 resistor and a plug key, all connected in series. Calculate the current drawn from the cell when the key is closed.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 14,
+          "bbox": [
+            279,
+            83,
+            360,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.5,
+      "confidence": 0.5
+    },
+    {
+      "number": 28,
+      "raw_number": "28",
+      "section": "SECTION C",
+      "instruction": "Questions no. 27 to 33 are Short Answer Type questions.",
+      "question_text": "Consider the following electric circuit:\n[Image of circuit diagram]\nCalculate the values of the following:",
+      "question_text_source": "llm",
+      "question_type": "short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "(a)",
+          "text": "The total resistance of the circuit",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "(b)",
+          "text": "The total current drawn from the source",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "(c)",
+          "text": "Potential difference across the parallel combination of 10 \u03a9 and 15 \u03a9 resistors",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 14,
+          "bbox": [
+            399,
+            83,
+            620,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 29,
+      "raw_number": "29",
+      "section": "SECTION C",
+      "instruction": "Questions no. 27 to 33 are Short Answer Type questions.",
+      "question_text": "State the nature, position and relative size of the image formed by a convex mirror when the object is placed (i) at infinity (ii) between pole P and infinity.",
+      "question_text_source": "llm",
+      "question_type": "short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 15,
+          "bbox": [
+            109,
+            83,
+            160,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 30,
+      "raw_number": "30",
+      "section": "SECTION C",
+      "instruction": "Questions no. 27 to 33 are Short Answer Type questions.",
+      "question_text": "adaT ) 3 31.",
+      "question_text_source": "ocr_fallback",
+      "question_type": "short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "(a)",
+          "text": "How many chromosomes are present in humans? How many sex chromosomes are present in humans?",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "(b)",
+          "text": "Explain how the number of chromosomes in the progeny of sexually reproducing organisms is maintained.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 15,
+          "bbox": [
+            199,
+            83,
+            270,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.5,
+      "confidence": 0.5
+    },
+    {
+      "number": 31,
+      "raw_number": "31",
+      "section": "SECTION C",
+      "instruction": "Questions no. 27 to 33 are Short Answer Type questions.",
+      "question_text": "When a person is in adverse conditions, hormone 'X' is secreted in his blood.",
+      "question_text_source": "llm",
+      "question_type": "short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "(a)",
+          "text": "Identify hormone 'X' and state the gland which secretes it.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "(b)",
+          "text": "Explain its role in facing adverse/emergency situations.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 15,
+          "bbox": [
+            309,
+            83,
+            390,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 32,
+      "raw_number": "32",
+      "section": "SECTION C",
+      "instruction": "Questions no. 27 to 33 are Short Answer Type questions.",
+      "question_text": "With the help of an activity, explain the conditions under which iron articles rust.",
+      "question_text_source": "llm",
+      "question_type": "short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "(i)",
+          "text": "Name three metals that react with cold water at room temperature. Also, draw three observations that a student would note when these metals are put in a beaker of water.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "(ii)",
+          "text": "Name the gas (if any) evolved when these metals react with water and state any test to identify this gas.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 15,
+          "bbox": [
+            429,
+            83,
+            560,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 33,
+      "raw_number": "33",
+      "section": "SECTION C",
+      "instruction": "Questions no. 27 to 33 are Short Answer Type questions.",
+      "question_text": "(a IPhPRIK",
+      "question_text_source": "ocr_fallback",
+      "question_type": "short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "(a)",
+          "text": "'Displacement reactions play a main role in the extraction of metals in the middle of the reactivity series.' Justify this statement with two examples.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "(b)",
+          "text": "Why cannot metals at the top of the reactivity series be reduced from their oxides by carbon?",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 15,
+          "bbox": [
+            599,
+            83,
+            670,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.5,
+      "confidence": 0.5
+    }
+  ],
+  "section_math_blocks": [],
+  "total_questions": 23,
+  "total_marks": 0.0,
+  "effective_total_marks": 0.0,
+  "numbering_contiguous": true
+}
+
+RAW BATCH 3/4:
+{
+  "questions": [
+    {
+      "number": 29,
+      "raw_number": "29",
+      "section": null,
+      "instruction": null,
+      "question_text": "Draw ray diagrams to show the nature, position and relative size of the image formed by a convex mirror when the object is placed (i) at infinity and (ii) between infinity and pole P of the mirror.",
+      "question_text_source": "llm",
+      "question_type": "long",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 16,
+          "bbox": [
+            89,
+            111,
+            150,
+            938
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 0.95,
+      "confidence": 0.95
+    },
+    {
+      "number": 30,
+      "raw_number": "30",
+      "section": null,
+      "instruction": null,
+      "question_text": "How many chromosomes are present in human beings ? Out of",
+      "question_text_source": "ocr_fallback",
+      "question_type": "short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "a",
+          "text": "How many chromosomes are present in human beings ? Out of these how many are sex chromosomes ?",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "b",
+          "text": "Explain how, in sexually reproducing organisms, the number of chromosomes in the progeny is maintained.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 16,
+          "bbox": [
+            184,
+            111,
+            289,
+            938
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 0.5,
+      "confidence": 0.5
+    },
+    {
+      "number": 31,
+      "raw_number": "31",
+      "section": null,
+      "instruction": null,
+      "question_text": "A hormone 'X' is secreted in blood when a person is under scary situation.",
+      "question_text_source": "llm",
+      "question_type": "short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "a",
+          "text": "Identify the hormone 'X' and the gland that secretes it.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "b",
+          "text": "Explain its role in dealing with scary or emergency situations.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 16,
+          "bbox": [
+            344,
+            111,
+            439,
+            938
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 0.95,
+      "confidence": 0.95
+    },
+    {
+      "number": 32,
+      "raw_number": "32",
+      "section": null,
+      "instruction": null,
+      "question_text": "(a) 3 iron articles get rusted.",
+      "question_text_source": "ocr_fallback",
+      "question_type": "long",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "a",
+          "text": "With the help of an activity, explain the conditions under which iron articles get rusted.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "b",
+          "text": "",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 16,
+          "bbox": [
+            474,
+            111,
+            709,
+            938
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 0.5,
+      "confidence": 0.5
+    },
+    {
+      "number": 33,
+      "raw_number": "33",
+      "section": null,
+      "instruction": null,
+      "question_text": "in the middle of the reactivity series.\"Justify this statement with",
+      "question_text_source": "ocr_fallback",
+      "question_type": "short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "a",
+          "text": "\"Displacement reactions also play a key role in extracting metals in the middle of the reactivity series.\" Justify this statement with two examples.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "b",
+          "text": "Why can metals high up in the reactivity series not be obtained by reduction of their oxides by carbon?",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 16,
+          "bbox": [
+            773,
+            111,
+            919,
+            938
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 0.5,
+      "confidence": 0.5
+    },
+    {
+      "number": 34,
+      "raw_number": "34",
+      "section": "SECTION D",
+      "instruction": "Questions no. 34 to 36 are Long Answer Type questions.",
+      "question_text": "The power of a lens X is -25 D.Name the lens and",
+      "question_text_source": "ocr_fallback",
+      "question_type": "long",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "a",
+          "text": "",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "b",
+          "text": "",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 18,
+          "bbox": [
+            70,
+            100,
+            870,
+            938
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 0.5,
+      "confidence": 0.5
+    },
+    {
+      "number": 35,
+      "raw_number": "35",
+      "section": "SECTION D",
+      "instruction": "Questions no. 34 to 36 are Long Answer Type questions.",
+      "question_text": "(a) reproductive system:",
+      "question_text_source": "ocr_fallback",
+      "question_type": "long",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "a",
+          "text": "",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "b",
+          "text": "",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 20,
+          "bbox": [
+            70,
+            100,
+            700,
+            938
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 0.5,
+      "confidence": 0.5
+    },
+    {
+      "number": 36,
+      "raw_number": "36",
+      "section": "SECTION D",
+      "instruction": "Questions no. 34 to 36 are Long Answer Type questions.",
+      "question_text": "(a) (i) Atomic Number of Chlorine=17",
+      "question_text_source": "ocr_fallback",
+      "question_type": "long",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "a",
+          "text": "",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "b",
+          "text": "",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 20,
+          "bbox": [
+            773,
+            100,
+            870,
+            938
+          ],
+          "visual_confidence": 0.9
+        },
+        {
+          "page_index": 22,
+          "bbox": [
+            100,
+            100,
+            370,
+            938
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 0.5,
+      "confidence": 0.5
+    },
+    {
+      "number": 37,
+      "raw_number": "37",
+      "section": "SECTION E",
+      "instruction": "The following questions are Source-based/Case-based questions. Read the case carefully and answer the questions that follow.",
+      "question_text": "In our homes, we receive the supply of electric power through a main supply also called mains, either supported through overhead electric poles or by underground cables. In our country the potential difference between the two wires (live wire and neutral wire) of this supply is 220 V.",
+      "question_text_source": "llm",
+      "question_type": "passage",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "a",
+          "text": "Write the colours of the insulation covers of the line wires through which supply comes to our homes.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "b",
+          "text": "What should be the current rating of the electric circuit (220 V) so that an electric iron of 1 kW power rating can be operated?",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 22,
+          "bbox": [
+            440,
+            100,
+            870,
+            938
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 0.95,
+      "confidence": 0.95
+    },
+    {
+      "number": 38,
+      "raw_number": "38",
+      "section": "SECTION E",
+      "instruction": "The following questions are Source-based/Case-based questions. Read the case carefully and answer the questions that follow.",
+      "question_text": "\u0938\u092e\u0941\u0926\u094d\u0930\u0940 \u091c\u0932 \u092e\u0947\u0902 \u0915\u0908 \u092a\u094d\u0930\u0915\u093e\u0930 \u0915\u0947 \u0932\u0935\u0923 \u0918\u0941\u0932\u0947 \u0939\u094b\u0924\u0947 \u0939\u0948\u0902\u0964 \u0938\u093e\u0927\u093e\u0930\u0923 \u0928\u092e\u0915 \u0915\u094b \u0907\u0928 \u0932\u0935\u0923\u094b\u0902 \u0938\u0947 \u092a\u0943\u0925\u0915 \u0915\u093f\u092f\u093e \u091c\u093e\u0924\u093e \u0939\u0948\u0964 \u0935\u093f\u0936\u094d\u0935 \u0915\u0947 \u0915\u0908 \u092d\u093e\u0917\u094b\u0902 \u092e\u0947\u0902 \u092d\u0940 \u0920\u094b\u0938 \u0932\u0935\u0923 \u0915\u093e \u0928\u093f\u0915\u094d\u0937\u0947\u092a \u0939\u094b\u0924\u093e \u0939\u0948\u0964 \u092c\u0921\u093c\u0947 \u0906\u0915\u093e\u0930 \u0915\u0947 \u092f\u0939 \u0915\u094d\u0930\u093f\u0938\u094d\u091f\u0932 \u092a\u094d\u0930\u093e\u092f\u0903 \u0905\u092a\u0926\u094d\u0930\u0935\u094d\u092f\u094b\u0902 (\u0905\u0936\u0941\u0926\u094d\u0927\u093f\u092f\u094b\u0902) \u0915\u0947 \u0915\u093e\u0930\u0923 \u092d\u0942\u0930\u0947 \u0930\u0902\u0917 \u0915\u0947 \u0939\u094b\u0924\u0947 \u0939\u0948\u0902\u0964 \u0907\u0938\u0947 \u0916\u0928\u093f\u091c \u0928\u092e\u0915 \u0915\u0939\u0924\u0947 \u0939\u0948\u0902\u0964 \u0907\u0938\u0915\u093e \u0916\u0928\u0928 \u092d\u0940 \u0915\u094b\u092f\u0932\u0947 \u0915\u0940 \u092d\u093e\u0901\u0924\u093f \u0939\u094b\u0924\u093e \u0939\u0948\u0964 \u0938\u093e\u0927\u093e\u0930\u0923 \u0928\u092e\u0915 \u0926\u0948\u0928\u093f\u0915 \u091c\u0940\u0935\u0928 \u092e\u0947\u0902 \u0909\u092a\u092f\u094b\u0917 \u0939\u094b\u0928\u0947 \u0935\u093e\u0932\u0947 \u0930\u0938\u093e\u092f\u0928\u094b\u0902 \u0915\u0947 \u0932\u093f\u090f \u090f\u0915 \u092e\u0939\u0924\u094d\u0924\u094d\u0935\u092a\u0942\u0930\u094d\u0923 \u0915\u091a\u094d\u091a\u0940 \u0938\u093e\u092e\u0917\u094d\u0930\u0940 \u0939\u0948\u0964",
+      "question_text_source": "llm",
+      "question_type": "passage",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "a",
+          "text": "\u0932\u0935\u0923-\u091c\u0932 (\u092c\u094d\u0930\u093e\u0907\u0928) \u0915\u0947 \u0935\u093f\u0926\u094d\u092f\u0941\u0924\u094d-\u0905\u092a\u0918\u091f\u0928 \u0938\u0947 \u0909\u0924\u094d\u092a\u0928\u094d\u0928 \u0909\u0924\u094d\u092a\u093e\u0926\u094b\u0902 \u0915\u094b \u0926\u0930\u094d\u0936\u093e\u0928\u0947 \u0915\u0947 \u0932\u093f\u090f \u0938\u0902\u0924\u0941\u0932\u093f\u0924 \u0930\u093e\u0938\u093e\u092f\u0928\u093f\u0915 \u0938\u092e\u0940\u0915\u0930\u0923 \u0932\u093f\u0916\u093f\u090f\u0964",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "b",
+          "text": "",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 23,
+          "bbox": [
+            100,
+            100,
+            870,
+            938
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 0.95,
+      "confidence": 0.95
+    }
+  ],
+  "section_math_blocks": [],
+  "total_questions": 10,
+  "total_marks": 0.0,
+  "effective_total_marks": 0.0,
+  "numbering_contiguous": true
+}
+
+RAW BATCH 4/4:
+{
+  "questions": [
+    {
+      "number": 37,
+      "raw_number": "37",
+      "section": null,
+      "instruction": null,
+      "question_text": "",
+      "question_text_source": "llm",
+      "question_type": "short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "i",
+          "text": "(c) What is the function of the earth wire ? State the advantage of the earth wire in domestic electric appliances such as electric iron.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "ii",
+          "text": "(c) List two precautions to be taken to avoid electrical accidents. State how these precautions prevent possible damage to the circuit/appliance.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 24,
+          "bbox": [
+            77,
+            110,
+            149,
+            200
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 38,
+      "raw_number": "38",
+      "section": null,
+      "instruction": null,
+      "question_text": "Seawater contains many salts dissolved in it. Common salt is separated from these salts. Deposits of solid salt are also found in several parts of the world. These large crystals are often brown due to impurities.This is called rock salt and is mined like coal. The common salt is an important raw material for chemicals of daily use.",
+      "question_text_source": "llm",
+      "question_type": "passage",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "a",
+          "text": "Write balanced chemical equations to show the products formed during electrolysis of brine",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "b",
+          "text": "List two uses of any one product obtained during electrolysis of brine.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "c",
+          "text": "",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 24,
+          "bbox": [
+            38,
+            299,
+            810,
+            799
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 39,
+      "raw_number": "39",
+      "section": null,
+      "instruction": null,
+      "question_text": "The maintenance functions of all living organisms must go on even when they are not doing anything particular. Even when we are just sitting in a class or even asleep, this maintenance job has to go on. These maintenance processes require energy to prevent damage and break-down of cells and tissues, which is obtained by the individual organism from the food prepared by the autotrophs,called producers.",
+      "question_text_source": "llm",
+      "question_type": "passage",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "a",
+          "text": "Name and define the process by which green plants prepare food.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "b",
+          "text": "Write chemical equation involved in the above process.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "c",
+          "text": "",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 26,
+          "bbox": [
+            38,
+            90,
+            700,
+            670
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    }
+  ],
+  "section_math_blocks": [],
+  "total_questions": 3,
+  "total_marks": 0.0,
+  "effective_total_marks": 0.0,
+  "numbering_contiguous": true
+}
+
+FINAL CONSOLIDATED OUTPUT:
+{
+  "questions": [
+    {
+      "number": 11,
+      "raw_number": "11",
+      "section": null,
+      "instruction": null,
+      "question_text": "The plant hormone whose concentration stimulates the cells to grow longer on the side of the shoot which is away from light is:",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "Cytokinins",
+        "Gibberellins",
+        "Adrenaline",
+        "Auxins"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 8,
+          "bbox": [
+            109,
+            83,
+            180,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 12,
+      "raw_number": "12",
+      "section": null,
+      "instruction": null,
+      "question_text": "Secretion of less saliva in mouth will effect the conversion of:",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "proteins into amino acids",
+        "fats into fatty acids and glycerol",
+        "starch into simple sugars",
+        "sugars into alcohol"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 8,
+          "bbox": [
+            219,
+            83,
+            290,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 13,
+      "raw_number": "13",
+      "section": null,
+      "instruction": null,
+      "question_text": "The percentage of solar energy which is not converted into food energy by the leaves of green plants in a terrestrial ecosystem is about :",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "1%",
+        "10%",
+        "90%",
+        "99%"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 8,
+          "bbox": [
+            329,
+            83,
+            400,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 14,
+      "raw_number": "14",
+      "section": null,
+      "instruction": null,
+      "question_text": "Which of the following groups do not constitute a food chain?\n(i) Wolf, rabbit, grass, lion\n(ii) Plankton, man, grasshopper, fish\n(iii) Hawk, grass, snake, grasshopper, frog\n(iv) Grass, snake, wolf, tiger",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "(i) and (ii)",
+        "(i) and (iii)",
+        "(ii) and (iii)",
+        "(ii) and (iv)"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 8,
+          "bbox": [
+            439,
+            83,
+            550,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 15,
+      "raw_number": "15",
+      "section": null,
+      "instruction": null,
+      "question_text": "The phenomenon responsible for making the smoke particles visible when a beam of sunlight enters a smoke filled room through a narrow hole is:",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "scattering of light",
+        "dispersion of light",
+        "reflection of light",
+        "internal reflection of light"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 8,
+          "bbox": [
+            589,
+            83,
+            660,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 16,
+      "raw_number": "16",
+      "section": null,
+      "instruction": null,
+      "question_text": "Mirror 'X' is used to concentrate sunlight in solar furnace and Mirror 'Y' is fitted on the side of the vehicle to see the traffic behind the driver. Which of the following statements are true for the two mirrors?\n(i) The image formed by mirror 'X' is real, diminished and at its focus.\n(ii) The image formed by mirror 'Y' is virtual, diminished and erect.\n(iii) The image formed by mirror 'X' is virtual, diminished and erect.\n(iv) The image formed by mirror 'Y' is real, diminished and at its focus.",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "(i) and (ii)",
+        "(i) and (iii)",
+        "(ii) and (iv)",
+        "(i) and (iv)"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 10,
+          "bbox": [
+            109,
+            83,
+            220,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 17,
+      "raw_number": "17",
+      "section": null,
+      "instruction": "For Questions number 17 to 20, two statements are given \u2014 one labelled as Assertion (A) and the other labelled as Reason (R). Select the correct answer to these questions from the codes (A), (B), (C) and (D) as given below.",
+      "question_text": "Assertion (A): The amount of ozone in the atmosphere began to drop sharply in the 1980s.\nReason (R): The oxygen atoms combine with molecular oxygen to form ozone.",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "Both Assertion (A) and Reason (R) are true and Reason (R) is the correct explanation of Assertion (A).",
+        "Both Assertion (A) and Reason (R) are true, but Reason (R) is not the correct explanation of Assertion (A).",
+        "Assertion (A) is true, but Reason (R) is false.",
+        "Assertion (A) is false, but Reason (R) is true."
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 10,
+          "bbox": [
+            349,
+            83,
+            410,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 18,
+      "raw_number": "18",
+      "section": null,
+      "instruction": "For Questions number 17 to 20, two statements are given \u2014 one labelled as Assertion (A) and the other labelled as Reason (R). Select the correct answer to these questions from the codes (A), (B), (C) and (D) as given below.",
+      "question_text": "Assertion (A): No two magnetic field lines are found to cross each other.\nReason (R): The compass needle cannot point towards two directions at the point of intersection of two magnetic field lines.",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "Both Assertion (A) and Reason (R) are true and Reason (R) is the correct explanation of Assertion (A).",
+        "Both Assertion (A) and Reason (R) are true, but Reason (R) is not the correct explanation of Assertion (A).",
+        "Assertion (A) is true, but Reason (R) is false.",
+        "Assertion (A) is false, but Reason (R) is true."
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 10,
+          "bbox": [
+            449,
+            83,
+            510,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 19,
+      "raw_number": "19",
+      "section": null,
+      "instruction": "For Questions number 17 to 20, two statements are given \u2014 one labelled as Assertion (A) and the other labelled as Reason (R). Select the correct answer to these questions from the codes (A), (B), (C) and (D) as given below.",
+      "question_text": "Assertion (A): A human child bears all the basic features of human beings.\nReason (R): It looks exactly like its parents, showing very little variations.",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "Both Assertion (A) and Reason (R) are true and Reason (R) is the correct explanation of Assertion (A).",
+        "Both Assertion (A) and Reason (R) are true, but Reason (R) is not the correct explanation of Assertion (A).",
+        "Assertion (A) is true, but Reason (R) is false.",
+        "Assertion (A) is false, but Reason (R) is true."
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 10,
+          "bbox": [
+            549,
+            83,
+            610,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 20,
+      "raw_number": "20",
+      "section": null,
+      "instruction": "For Questions number 17 to 20, two statements are given \u2014 one labelled as Assertion (A) and the other labelled as Reason (R). Select the correct answer to these questions from the codes (A), (B), (C) and (D) as given below.",
+      "question_text": "Assertion (A): Decomposition reactions are generally endothermic reactions.\nReason (R): Decomposition of organic matter into compost is an exothermic process.",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "Both Assertion (A) and Reason (R) are true and Reason (R) is the correct explanation of Assertion (A).",
+        "Both Assertion (A) and Reason (R) are true, but Reason (R) is not the correct explanation of Assertion (A).",
+        "Assertion (A) is true, but Reason (R) is false.",
+        "Assertion (A) is false, but Reason (R) is true."
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 10,
+          "bbox": [
+            649,
+            83,
+            710,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 29,
+      "raw_number": "29",
+      "section": null,
+      "instruction": null,
+      "question_text": "Draw ray diagrams to show the nature, position and relative size of the image formed by a convex mirror when the object is placed (i) at infinity and (ii) between infinity and pole P of the mirror.",
+      "question_text_source": "llm",
+      "question_type": "long",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 16,
+          "bbox": [
+            89,
+            111,
+            150,
+            938
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 0.95,
+      "confidence": 0.95
+    },
+    {
+      "number": 30,
+      "raw_number": "30",
+      "section": null,
+      "instruction": null,
+      "question_text": "How many chromosomes are present in human beings ? Out of",
+      "question_text_source": "ocr_fallback",
+      "question_type": "short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "a",
+          "text": "How many chromosomes are present in human beings ? Out of these how many are sex chromosomes ?",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "b",
+          "text": "Explain how, in sexually reproducing organisms, the number of chromosomes in the progeny is maintained.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 16,
+          "bbox": [
+            184,
+            111,
+            289,
+            938
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 0.5,
+      "confidence": 0.5
+    },
+    {
+      "number": 31,
+      "raw_number": "31",
+      "section": null,
+      "instruction": null,
+      "question_text": "A hormone 'X' is secreted in blood when a person is under scary situation.",
+      "question_text_source": "llm",
+      "question_type": "short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "a",
+          "text": "Identify the hormone 'X' and the gland that secretes it.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "b",
+          "text": "Explain its role in dealing with scary or emergency situations.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 16,
+          "bbox": [
+            344,
+            111,
+            439,
+            938
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 0.95,
+      "confidence": 0.95
+    },
+    {
+      "number": 32,
+      "raw_number": "32",
+      "section": null,
+      "instruction": null,
+      "question_text": "(a) 3 iron articles get rusted.",
+      "question_text_source": "ocr_fallback",
+      "question_type": "long",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "a",
+          "text": "With the help of an activity, explain the conditions under which iron articles get rusted.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "b",
+          "text": "",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 16,
+          "bbox": [
+            474,
+            111,
+            709,
+            938
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 0.5,
+      "confidence": 0.5
+    },
+    {
+      "number": 33,
+      "raw_number": "33",
+      "section": null,
+      "instruction": null,
+      "question_text": "in the middle of the reactivity series.\"Justify this statement with",
+      "question_text_source": "ocr_fallback",
+      "question_type": "short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "a",
+          "text": "\"Displacement reactions also play a key role in extracting metals in the middle of the reactivity series.\" Justify this statement with two examples.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "b",
+          "text": "Why can metals high up in the reactivity series not be obtained by reduction of their oxides by carbon?",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 16,
+          "bbox": [
+            773,
+            111,
+            919,
+            938
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 0.5,
+      "confidence": 0.5
+    },
+    {
+      "number": 37,
+      "raw_number": "37",
+      "section": null,
+      "instruction": null,
+      "question_text": "",
+      "question_text_source": "llm",
+      "question_type": "short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "i",
+          "text": "(c) What is the function of the earth wire ? State the advantage of the earth wire in domestic electric appliances such as electric iron.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "ii",
+          "text": "(c) List two precautions to be taken to avoid electrical accidents. State how these precautions prevent possible damage to the circuit/appliance.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 24,
+          "bbox": [
+            77,
+            110,
+            149,
+            200
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 38,
+      "raw_number": "38",
+      "section": null,
+      "instruction": null,
+      "question_text": "Seawater contains many salts dissolved in it. Common salt is separated from these salts. Deposits of solid salt are also found in several parts of the world. These large crystals are often brown due to impurities.This is called rock salt and is mined like coal. The common salt is an important raw material for chemicals of daily use.",
+      "question_text_source": "llm",
+      "question_type": "passage",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "a",
+          "text": "Write balanced chemical equations to show the products formed during electrolysis of brine",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "b",
+          "text": "List two uses of any one product obtained during electrolysis of brine.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "c",
+          "text": "",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 24,
+          "bbox": [
+            38,
+            299,
+            810,
+            799
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 39,
+      "raw_number": "39",
+      "section": null,
+      "instruction": null,
+      "question_text": "The maintenance functions of all living organisms must go on even when they are not doing anything particular. Even when we are just sitting in a class or even asleep, this maintenance job has to go on. These maintenance processes require energy to prevent damage and break-down of cells and tissues, which is obtained by the individual organism from the food prepared by the autotrophs,called producers.",
+      "question_text_source": "llm",
+      "question_type": "passage",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "a",
+          "text": "Name and define the process by which green plants prepare food.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "b",
+          "text": "Write chemical equation involved in the above process.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "c",
+          "text": "",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 26,
+          "bbox": [
+            38,
+            90,
+            700,
+            670
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 1,
+      "raw_number": "1",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "The metals obtained from their molten chlorides by the process of electrolytic reduction are:",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "Gold and silver",
+        "Calcium and magnesium",
+        "Aluminium and silver",
+        "Sodium and iron"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 2,
+          "bbox": [
+            250,
+            118,
+            330,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 2,
+      "raw_number": "2",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "The formation of magnesium oxide is correctly shown in option :",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "Mg:O: -> Mg\u00b2\u207a[:O:\u00b2\u207b]",
+        "Mg\u00b7O\u00b7 -> Mg\u207a[:O:]\u207b",
+        "Mg: -> Mg\u00b2\u207a[:O:]\u00b2\u207b\u2082",
+        "2Mg\u00b7 + :O: -> [Mg\u00b2\u207a]\u2082[:O:\u00b2\u207b]"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 4,
+          "bbox": [
+            70,
+            118,
+            290,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 3,
+      "raw_number": "3",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "Reaction between two elements A and B, forms a compound C. A loses electrons and B gains electrons. Which one of the following properties will not be shown by compound C?",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "It has high melting point.",
+        "It is highly soluble in water.",
+        "It has weak electrostatic forces of attraction between its oppositely charged ions.",
+        "It conducts electricity in its molten state or aqueous solution."
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 4,
+          "bbox": [
+            300,
+            118,
+            490,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 4,
+      "raw_number": "4",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "Consider the following reactions:\n(i) Dilute hydrochloric acid reacts with sodium hydroxide.\n(ii) Magnesium oxide reacts with dilute hydrochloric acid.\n(iii) Carbon dioxide reacts with sodium hydroxide.\nIt is found that in each case:",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "Salt and water is formed.",
+        "Neutral salts are formed.",
+        "Hydrogen gas is formed.",
+        "Acidic salts are formed."
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 4,
+          "bbox": [
+            500,
+            118,
+            720,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 5,
+      "raw_number": "5",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "Tooth enamel is made up of calcium hydroxyapatite (a crystalline form of calcium phosphate). This chemical starts corroding in the mouth when the pH is:",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "7",
+        "5",
+        "10",
+        "14"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 4,
+          "bbox": [
+            730,
+            118,
+            860,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 6,
+      "raw_number": "6",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "The products formed when Aluminium and Magnesium are burnt in the presence of air respectively are:",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "Al\u2082O\u2084 and MgO\u2082",
+        "Al\u2082O\u2083 and MgO",
+        "Al\u2083O\u2084 and MgO",
+        "Al\u2082O\u2083 and MgO\u2082"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 6,
+          "bbox": [
+            60,
+            118,
+            190,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 7,
+      "raw_number": "7",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "Electrolysis of water is a decomposition reaction. The mass ratio (M_H : M_O) of hydrogen and oxygen gases liberated at the electrodes during electrolysis of water is:",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "8:1",
+        "2:1",
+        "1:2",
+        "1:8"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 6,
+          "bbox": [
+            200,
+            118,
+            350,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 8,
+      "raw_number": "8",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "The breakdown of glucose has taken the following pathway:\nGlucose --(a)--> Pyruvate + Energy --(b)--> Lactic acid + Energy\nThe sites 'a' and 'b' respectively are :",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "Mitochondria and Oxygen deficient muscle cells",
+        "Cytoplasm and Oxygen rich muscle cells",
+        "Cytoplasm and Yeast cells",
+        "Cytoplasm and Oxygen deficient muscle cells"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 6,
+          "bbox": [
+            360,
+            118,
+            560,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 9,
+      "raw_number": "9",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "If pea plants with round and green seeds (RRyy) are crossed with pea plants having wrinkled and yellow seeds (rrYY), the seeds developed by the plants of F\u2081 generation will be :",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "50% round and green",
+        "75% wrinkled and green",
+        "100% round and yellow",
+        "75% wrinkled and yellow"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 6,
+          "bbox": [
+            570,
+            118,
+            720,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 10,
+      "raw_number": "10",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "The correct/true statement(s) for a bisexual flower is/are:\n(i) They possess both stamen and pistil.\n(ii) They possess either stamen or pistil.\n(iii) They exhibit either self-pollination or cross-pollination.\n(iv) They cannot produce fruits on their own.",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "(i) only",
+        "(iv) only",
+        "(i) and (iii)",
+        "(i) and (iv)"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 6,
+          "bbox": [
+            730,
+            118,
+            910,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 11,
+      "raw_number": "11",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "\u0935\u0939 \u0915\u094c\u0928-\u0938\u093e \u092a\u093e\u0926\u092a \u0939\u093e\u0930\u094d\u092e\u094b\u0928 \u0939\u0948 \u091c\u093f\u0938\u0915\u0940 \u0938\u093e\u0902\u0926\u094d\u0930\u0924\u093e, \u092a\u094d\u0930\u0930\u094b\u0939 \u0915\u0947 \u092a\u094d\u0930\u0915\u093e\u0936 \u0938\u0947 \u0926\u0942\u0930 \u0935\u093e\u0932\u0947 \u092d\u093e\u0917 \u0915\u0940 \u0915\u094b\u0936\u093f\u0915\u093e\u0913\u0902 \u0915\u094b \u0932\u092e\u094d\u092c\u093e\u0908 \u092e\u0947\u0902 \u0935\u0943\u0926\u094d\u0927\u093f \u0915\u0947 \u0932\u093f\u090f \u0909\u0926\u094d\u0926\u0940\u092a\u093f\u0924 \u0915\u0930\u0924\u0940 \u0939\u0948?",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "\u0938\u093e\u0907\u091f\u094b\u0915\u093e\u0907\u0928\u093f\u0928",
+        "\u091c\u093f\u092c\u094d\u092c\u0947\u0930\u0947\u0932\u093f\u0928",
+        "\u0910\u092c\u094d\u0938\u093f\u0938\u093f\u0915 \u0905\u092e\u094d\u0932",
+        "\u0911\u0915\u094d\u0938\u093f\u0928"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 7,
+          "bbox": [
+            110,
+            118,
+            290,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 12,
+      "raw_number": "12",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "\u092e\u0941\u0901\u0939 \u092e\u0947\u0902 \u0932\u093e\u0930 \u0915\u093e \u0915\u092e \u092e\u093e\u0924\u094d\u0930\u093e \u092e\u0947\u0902 \u0938\u094d\u0930\u093e\u0935\u093f\u0924 \u0939\u094b\u0928\u093e \u0915\u093f\u0938 \u092a\u0930\u093f\u0935\u0930\u094d\u0924\u0928 \u0915\u094b \u092a\u094d\u0930\u092d\u093e\u0935\u093f\u0924 \u0915\u0930\u0924\u093e \u0939\u0948?",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "\u092a\u094d\u0930\u094b\u091f\u0940\u0928\u094b\u0902 \u0938\u0947 \u0910\u092e\u0940\u0928\u094b \u0905\u092e\u094d\u0932",
+        "\u0935\u0938\u093e \u0938\u0947 \u0935\u0938\u0940\u092f \u0905\u092e\u094d\u0932 \u0914\u0930 \u0917\u094d\u0932\u093f\u0938\u0930\u0949\u0932",
+        "\u0938\u094d\u091f\u093e\u0930\u094d\u091a \u0938\u0947 \u0938\u0930\u0932 \u0936\u0930\u094d\u0915\u0930\u093e",
+        "\u0936\u0930\u094d\u0915\u0930\u093e \u0938\u0947 \u0910\u0932\u094d\u0915\u094b\u0939\u0949\u0932"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 7,
+          "bbox": [
+            300,
+            118,
+            480,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 13,
+      "raw_number": "13",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "\u0915\u093f\u0938\u0940 \u0938\u094d\u0925\u0932\u0940\u092f \u092a\u093e\u0930\u093f\u0924\u0902\u0924\u094d\u0930 \u092e\u0947\u0902 \u0939\u0930\u0947 \u092a\u093e\u0926\u092a\u094b\u0902 \u0915\u0940 \u092a\u0924\u094d\u0924\u093f\u092f\u094b\u0902 \u0926\u094d\u0935\u093e\u0930\u093e \u092a\u094d\u0930\u093e\u092a\u094d\u0924 \u0938\u094c\u0930 \u090a\u0930\u094d\u091c\u093e \u0915\u093e \u0932\u0917\u092d\u0917 \u0915\u093f\u0924\u0928\u0947 \u092a\u094d\u0930\u0924\u093f\u0936\u0924 \u092d\u093e\u0917 \u0916\u093e\u0926\u094d\u092f \u090a\u0930\u094d\u091c\u093e \u092e\u0947\u0902 \u092a\u0930\u093f\u0935\u0930\u094d\u0924\u093f\u0924 \u0928\u0939\u0940\u0902 \u0939\u094b\u0924\u093e \u0939\u0948?",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "1%",
+        "10%",
+        "90%",
+        "99%"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 7,
+          "bbox": [
+            490,
+            118,
+            630,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 14,
+      "raw_number": "14",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "\u0928\u093f\u092e\u094d\u0928\u0932\u093f\u0916\u093f\u0924 \u092e\u0947\u0902 \u0938\u0947 \u0915\u094c\u0928-\u0915\u094c\u0928 \u0938\u0947 \u0938\u092e\u0942\u0939 \u0906\u0939\u093e\u0930 \u0936\u094d\u0930\u0943\u0902\u0916\u0932\u093e \u0928\u0939\u0940\u0902 \u092c\u0928\u093e\u0924\u0947 \u0939\u0948\u0902?\n(i) \u092d\u0947\u0921\u093c\u093f\u092f\u093e, \u0916\u0930\u0917\u094b\u0936, \u0918\u093e\u0938, \u0936\u0947\u0930\n(ii) \u092a\u094d\u0932\u0935\u0915, \u092e\u093e\u0928\u0935, \u091f\u093f\u0921\u094d\u0921\u093e, \u092e\u091b\u0932\u0940\n(iii) \u092c\u093e\u091c, \u0918\u093e\u0938, \u0938\u0930\u094d\u092a, \u091f\u093f\u0921\u094d\u0921\u093e, \u092e\u0947\u0902\u0922\u0915\n(iv) \u0918\u093e\u0938, \u0938\u0930\u094d\u092a, \u092d\u0947\u0921\u093c\u093f\u092f\u093e, \u092c\u093e\u0918",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "(i) \u0914\u0930 (iv)",
+        "(i) \u0914\u0930 (iii)",
+        "(ii) \u0914\u0930 (iii)",
+        "(ii) \u0914\u0930 (iv)"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 7,
+          "bbox": [
+            640,
+            118,
+            840,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 15,
+      "raw_number": "15",
+      "section": "SECTION A",
+      "instruction": "Select and write the most appropriate option out of the four options given for each of the questions no. 1 to 20. There is no negative marking for incorrect response.",
+      "question_text": "\u0935\u0939 \u0915\u094c\u0928-\u0938\u0940 \u092a\u0930\u093f\u0918\u091f\u0928\u093e \u0939\u0948 \u091c\u094b \u0927\u0941\u090f\u0901 \u0938\u0947 \u092d\u0930\u0947 \u0915\u092e\u0930\u0947 \u092e\u0947\u0902 \u0915\u093f\u0938\u0940 \u092a\u0924\u0932\u0947 \u091b\u093f\u0926\u094d\u0930 \u0938\u0947 \u0938\u0942\u0930\u094d\u092f \u0915\u0947 \u092a\u094d\u0930\u0915\u093e\u0936 \u092a\u0941\u0902\u091c \u0915\u0947 \u092a\u094d\u0930\u0935\u0947\u0936 \u0915\u0930\u0928\u0947 \u092a\u0930 \u0927\u0941\u090f\u0901 \u0915\u0947 \u0915\u0923\u094b\u0902 \u0915\u094b \u0926\u0943\u0937\u094d\u091f\u093f\u0917\u094b\u091a\u0930 \u092c\u0928\u093e\u0928\u0947 \u0915\u0947 \u0932\u093f\u090f \u0909\u0924\u094d\u0924\u0930\u0926\u093e\u092f\u0940 \u0939\u094b\u0924\u0940 \u0939\u0948?",
+      "question_text_source": "llm",
+      "question_type": "mcq",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": [
+        "\u092a\u094d\u0930\u0915\u093e\u0936 \u0915\u093e \u092a\u094d\u0930\u0915\u0940\u0930\u094d\u0923\u0928",
+        "\u092a\u094d\u0930\u0915\u093e\u0936 \u0915\u093e \u092a\u0930\u093f\u0915\u094d\u0937\u0947\u092a\u0923",
+        "\u092a\u094d\u0930\u0915\u093e\u0936 \u0915\u093e \u092a\u0930\u093e\u0935\u0930\u094d\u0924\u0928",
+        "\u092a\u094d\u0930\u0915\u093e\u0936 \u0915\u093e \u0906\u0928\u094d\u0924\u0930\u093f\u0915 \u092a\u0930\u093e\u0935\u0930\u094d\u0924\u0928"
+      ],
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 7,
+          "bbox": [
+            850,
+            118,
+            910,
+            725
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 1.0,
+      "confidence": 1.0
+    },
+    {
+      "number": 21,
+      "raw_number": "21",
+      "section": "SECTION B",
+      "instruction": "Questions no. 21 to 26 are Very Short Answer Type questions.",
+      "question_text": "An object is placed at a distance of 10 cm in front of a concave mirror of focal length 15 cm. Use mirror formula to determine the position of the image formed by this mirror.",
+      "question_text_source": "llm",
+      "question_type": "very_short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 12,
+          "bbox": [
+            109,
+            83,
+            160,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 22,
+      "raw_number": "22",
+      "section": "SECTION B",
+      "instruction": "Questions no. 21 to 26 are Very Short Answer Type questions.",
+      "question_text": "(a) Consider two lamps A and B of rating 50 W; 220 V and",
+      "question_text_source": "ocr_fallback",
+      "question_type": "very_short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "(a)",
+          "text": "Consider two lamps A and B of rating 50 W; 220 V and 25 W; 220 V respectively. Find the ratio of the resistances of the two lamps (i.e. RA : RB).",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "(b)",
+          "text": "Heat produced per second due to a current in a resistor of 4 \u03a9 is 400 joules. Calculate the potential difference across the resistor.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 12,
+          "bbox": [
+            199,
+            83,
+            340,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.5,
+      "confidence": 0.5
+    },
+    {
+      "number": 23,
+      "raw_number": "23",
+      "section": "SECTION B",
+      "instruction": "Questions no. 21 to 26 are Very Short Answer Type questions.",
+      "question_text": "Draw labelled diagrams to show different stages of budding in Hydra.",
+      "question_text_source": "llm",
+      "question_type": "very_short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 12,
+          "bbox": [
+            379,
+            83,
+            400,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 24,
+      "raw_number": "24",
+      "section": "SECTION B",
+      "instruction": "Questions no. 21 to 26 are Very Short Answer Type questions.",
+      "question_text": "(a) Besides minimising the loss of blood,why is it essential to plug any",
+      "question_text_source": "ocr_fallback",
+      "question_type": "very_short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "(a)",
+          "text": "Besides minimising the loss of blood, why is it essential to plug any leak in a blood vessel ? Name the component of blood which helps in this process and state how this component perform this function.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "(b)",
+          "text": "(i) The transport system in plants is relatively slower than in animals. Give reasons.\n(ii) State the role of phloem in the transport of materials in plants.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 12,
+          "bbox": [
+            439,
+            83,
+            590,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.5,
+      "confidence": 0.5
+    },
+    {
+      "number": 25,
+      "raw_number": "25",
+      "section": "SECTION B",
+      "instruction": "Questions no. 21 to 26 are Very Short Answer Type questions.",
+      "question_text": "A student performs the following experiment in his school laboratory.\n[Image of experiment]\nList two observations to justify that in this experiment a chemical change has taken place.",
+      "question_text_source": "llm",
+      "question_type": "very_short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 12,
+          "bbox": [
+            629,
+            83,
+            790,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 26,
+      "raw_number": "26",
+      "section": "SECTION B",
+      "instruction": "Questions no. 21 to 26 are Very Short Answer Type questions.",
+      "question_text": "Translate the following statements into chemical equations and then balance them:",
+      "question_text_source": "llm",
+      "question_type": "very_short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "(a)",
+          "text": "Nitric acid reacts with calcium hydroxide to form calcium nitrate and water.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "(b)",
+          "text": "Sodium chloride reacts with silver nitrate to form silver chloride and sodium nitrate.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 14,
+          "bbox": [
+            109,
+            83,
+            200,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 27,
+      "raw_number": "27",
+      "section": "SECTION C",
+      "instruction": "Questions no. 27 to 33 are Short Answer Type questions.",
+      "question_text": "a) Define one volt potential difference between two points in an",
+      "question_text_source": "ocr_fallback",
+      "question_type": "short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "(a)",
+          "text": "Define one volt potential difference between two points in an electric field.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "(b)",
+          "text": "Draw a schematic diagram of an electric circuit of a cell of 1.5 V, 5 \u03a9 and 10 \u03a9 resistor and a plug key, all connected in series. Calculate the current drawn from the cell when the key is closed.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 14,
+          "bbox": [
+            279,
+            83,
+            360,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.5,
+      "confidence": 0.5
+    },
+    {
+      "number": 28,
+      "raw_number": "28",
+      "section": "SECTION C",
+      "instruction": "Questions no. 27 to 33 are Short Answer Type questions.",
+      "question_text": "Consider the following electric circuit:\n[Image of circuit diagram]\nCalculate the values of the following:",
+      "question_text_source": "llm",
+      "question_type": "short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "(a)",
+          "text": "The total resistance of the circuit",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "(b)",
+          "text": "The total current drawn from the source",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "(c)",
+          "text": "Potential difference across the parallel combination of 10 \u03a9 and 15 \u03a9 resistors",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 14,
+          "bbox": [
+            399,
+            83,
+            620,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 29,
+      "raw_number": "29",
+      "section": "SECTION C",
+      "instruction": "Questions no. 27 to 33 are Short Answer Type questions.",
+      "question_text": "State the nature, position and relative size of the image formed by a convex mirror when the object is placed (i) at infinity (ii) between pole P and infinity.",
+      "question_text_source": "llm",
+      "question_type": "short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 15,
+          "bbox": [
+            109,
+            83,
+            160,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 30,
+      "raw_number": "30",
+      "section": "SECTION C",
+      "instruction": "Questions no. 27 to 33 are Short Answer Type questions.",
+      "question_text": "adaT ) 3 31.",
+      "question_text_source": "ocr_fallback",
+      "question_type": "short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "(a)",
+          "text": "How many chromosomes are present in humans? How many sex chromosomes are present in humans?",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "(b)",
+          "text": "Explain how the number of chromosomes in the progeny of sexually reproducing organisms is maintained.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 15,
+          "bbox": [
+            199,
+            83,
+            270,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.5,
+      "confidence": 0.5
+    },
+    {
+      "number": 31,
+      "raw_number": "31",
+      "section": "SECTION C",
+      "instruction": "Questions no. 27 to 33 are Short Answer Type questions.",
+      "question_text": "When a person is in adverse conditions, hormone 'X' is secreted in his blood.",
+      "question_text_source": "llm",
+      "question_type": "short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "(a)",
+          "text": "Identify hormone 'X' and state the gland which secretes it.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "(b)",
+          "text": "Explain its role in facing adverse/emergency situations.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 15,
+          "bbox": [
+            309,
+            83,
+            390,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 32,
+      "raw_number": "32",
+      "section": "SECTION C",
+      "instruction": "Questions no. 27 to 33 are Short Answer Type questions.",
+      "question_text": "With the help of an activity, explain the conditions under which iron articles rust.",
+      "question_text_source": "llm",
+      "question_type": "short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "(i)",
+          "text": "Name three metals that react with cold water at room temperature. Also, draw three observations that a student would note when these metals are put in a beaker of water.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "(ii)",
+          "text": "Name the gas (if any) evolved when these metals react with water and state any test to identify this gas.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 15,
+          "bbox": [
+            429,
+            83,
+            560,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.9,
+      "confidence": 0.9
+    },
+    {
+      "number": 33,
+      "raw_number": "33",
+      "section": "SECTION C",
+      "instruction": "Questions no. 27 to 33 are Short Answer Type questions.",
+      "question_text": "(a IPhPRIK",
+      "question_text_source": "ocr_fallback",
+      "question_type": "short",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "(a)",
+          "text": "'Displacement reactions play a main role in the extraction of metals in the middle of the reactivity series.' Justify this statement with two examples.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "(b)",
+          "text": "Why cannot metals at the top of the reactivity series be reduced from their oxides by carbon?",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 15,
+          "bbox": [
+            599,
+            83,
+            670,
+            899
+          ],
+          "visual_confidence": 0.0
+        }
+      ],
+      "ai_confidence": 0.5,
+      "confidence": 0.5
+    },
+    {
+      "number": 34,
+      "raw_number": "34",
+      "section": "SECTION D",
+      "instruction": "Questions no. 34 to 36 are Long Answer Type questions.",
+      "question_text": "The power of a lens X is -25 D.Name the lens and",
+      "question_text_source": "ocr_fallback",
+      "question_type": "long",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "a",
+          "text": "",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "b",
+          "text": "",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 18,
+          "bbox": [
+            70,
+            100,
+            870,
+            938
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 0.5,
+      "confidence": 0.5
+    },
+    {
+      "number": 35,
+      "raw_number": "35",
+      "section": "SECTION D",
+      "instruction": "Questions no. 34 to 36 are Long Answer Type questions.",
+      "question_text": "(a) reproductive system:",
+      "question_text_source": "ocr_fallback",
+      "question_type": "long",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "a",
+          "text": "",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "b",
+          "text": "",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 20,
+          "bbox": [
+            70,
+            100,
+            700,
+            938
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 0.5,
+      "confidence": 0.5
+    },
+    {
+      "number": 36,
+      "raw_number": "36",
+      "section": "SECTION D",
+      "instruction": "Questions no. 34 to 36 are Long Answer Type questions.",
+      "question_text": "(a) (i) Atomic Number of Chlorine=17",
+      "question_text_source": "ocr_fallback",
+      "question_type": "long",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "a",
+          "text": "",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "b",
+          "text": "",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 20,
+          "bbox": [
+            773,
+            100,
+            870,
+            938
+          ],
+          "visual_confidence": 0.9
+        },
+        {
+          "page_index": 22,
+          "bbox": [
+            100,
+            100,
+            370,
+            938
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 0.5,
+      "confidence": 0.5
+    },
+    {
+      "number": 37,
+      "raw_number": "37",
+      "section": "SECTION E",
+      "instruction": "The following questions are Source-based/Case-based questions. Read the case carefully and answer the questions that follow.",
+      "question_text": "In our homes, we receive the supply of electric power through a main supply also called mains, either supported through overhead electric poles or by underground cables. In our country the potential difference between the two wires (live wire and neutral wire) of this supply is 220 V.",
+      "question_text_source": "llm",
+      "question_type": "passage",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "a",
+          "text": "Write the colours of the insulation covers of the line wires through which supply comes to our homes.",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "b",
+          "text": "What should be the current rating of the electric circuit (220 V) so that an electric iron of 1 kW power rating can be operated?",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 22,
+          "bbox": [
+            440,
+            100,
+            870,
+            938
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 0.95,
+      "confidence": 0.95
+    },
+    {
+      "number": 38,
+      "raw_number": "38",
+      "section": "SECTION E",
+      "instruction": "The following questions are Source-based/Case-based questions. Read the case carefully and answer the questions that follow.",
+      "question_text": "\u0938\u092e\u0941\u0926\u094d\u0930\u0940 \u091c\u0932 \u092e\u0947\u0902 \u0915\u0908 \u092a\u094d\u0930\u0915\u093e\u0930 \u0915\u0947 \u0932\u0935\u0923 \u0918\u0941\u0932\u0947 \u0939\u094b\u0924\u0947 \u0939\u0948\u0902\u0964 \u0938\u093e\u0927\u093e\u0930\u0923 \u0928\u092e\u0915 \u0915\u094b \u0907\u0928 \u0932\u0935\u0923\u094b\u0902 \u0938\u0947 \u092a\u0943\u0925\u0915 \u0915\u093f\u092f\u093e \u091c\u093e\u0924\u093e \u0939\u0948\u0964 \u0935\u093f\u0936\u094d\u0935 \u0915\u0947 \u0915\u0908 \u092d\u093e\u0917\u094b\u0902 \u092e\u0947\u0902 \u092d\u0940 \u0920\u094b\u0938 \u0932\u0935\u0923 \u0915\u093e \u0928\u093f\u0915\u094d\u0937\u0947\u092a \u0939\u094b\u0924\u093e \u0939\u0948\u0964 \u092c\u0921\u093c\u0947 \u0906\u0915\u093e\u0930 \u0915\u0947 \u092f\u0939 \u0915\u094d\u0930\u093f\u0938\u094d\u091f\u0932 \u092a\u094d\u0930\u093e\u092f\u0903 \u0905\u092a\u0926\u094d\u0930\u0935\u094d\u092f\u094b\u0902 (\u0905\u0936\u0941\u0926\u094d\u0927\u093f\u092f\u094b\u0902) \u0915\u0947 \u0915\u093e\u0930\u0923 \u092d\u0942\u0930\u0947 \u0930\u0902\u0917 \u0915\u0947 \u0939\u094b\u0924\u0947 \u0939\u0948\u0902\u0964 \u0907\u0938\u0947 \u0916\u0928\u093f\u091c \u0928\u092e\u0915 \u0915\u0939\u0924\u0947 \u0939\u0948\u0902\u0964 \u0907\u0938\u0915\u093e \u0916\u0928\u0928 \u092d\u0940 \u0915\u094b\u092f\u0932\u0947 \u0915\u0940 \u092d\u093e\u0901\u0924\u093f \u0939\u094b\u0924\u093e \u0939\u0948\u0964 \u0938\u093e\u0927\u093e\u0930\u0923 \u0928\u092e\u0915 \u0926\u0948\u0928\u093f\u0915 \u091c\u0940\u0935\u0928 \u092e\u0947\u0902 \u0909\u092a\u092f\u094b\u0917 \u0939\u094b\u0928\u0947 \u0935\u093e\u0932\u0947 \u0930\u0938\u093e\u092f\u0928\u094b\u0902 \u0915\u0947 \u0932\u093f\u090f \u090f\u0915 \u092e\u0939\u0924\u094d\u0924\u094d\u0935\u092a\u0942\u0930\u094d\u0923 \u0915\u091a\u094d\u091a\u0940 \u0938\u093e\u092e\u0917\u094d\u0930\u0940 \u0939\u0948\u0964",
+      "question_text_source": "llm",
+      "question_type": "passage",
+      "marks": 0.0,
+      "mark_source": "inferred",
+      "mark_confidence": 0.0,
+      "options": null,
+      "subquestions": [
+        {
+          "label": "a",
+          "text": "\u0932\u0935\u0923-\u091c\u0932 (\u092c\u094d\u0930\u093e\u0907\u0928) \u0915\u0947 \u0935\u093f\u0926\u094d\u092f\u0941\u0924\u094d-\u0905\u092a\u0918\u091f\u0928 \u0938\u0947 \u0909\u0924\u094d\u092a\u0928\u094d\u0928 \u0909\u0924\u094d\u092a\u093e\u0926\u094b\u0902 \u0915\u094b \u0926\u0930\u094d\u0936\u093e\u0928\u0947 \u0915\u0947 \u0932\u093f\u090f \u0938\u0902\u0924\u0941\u0932\u093f\u0924 \u0930\u093e\u0938\u093e\u092f\u0928\u093f\u0915 \u0938\u092e\u0940\u0915\u0930\u0923 \u0932\u093f\u0916\u093f\u090f\u0964",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        },
+        {
+          "label": "b",
+          "text": "",
+          "marks": 0.0,
+          "mark_source": "inferred",
+          "mark_confidence": 0.0,
+          "confidence": 0.0,
+          "image_evidence": []
+        }
+      ],
+      "or_group_id": null,
+      "image_evidence": [
+        {
+          "page_index": 23,
+          "bbox": [
+            100,
+            100,
+            870,
+            938
+          ],
+          "visual_confidence": 0.9
+        }
+      ],
+      "ai_confidence": 0.95,
+      "confidence": 0.95
+    }
+  ],
+  "section_math_blocks": [],
+  "total_questions": 51,
+  "total_marks": 0.0,
+  "effective_total_marks": 0.0,
+  "bottom_total_marks": 0.0,
+  "numbering_contiguous": true
+}

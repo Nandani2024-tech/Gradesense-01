@@ -43,6 +43,32 @@ def _to_int(value: Any, default: int = 0) -> int:
     return safe_int(value, default)
 
 
+def _is_bbox_within(inner: List[float], outer: List[float], threshold: float = 0.5) -> bool:
+    if not inner or not outer or len(inner) < 4 or len(outer) < 4:
+        return False
+    # bbox format: [ymin, xmin, ymax, xmax]
+    i_ymin, i_xmin, i_ymax, i_xmax = inner[:4]
+    o_ymin, o_xmin, o_ymax, o_xmax = outer[:4]
+
+    # Calculate intersection
+    y_min_inter = max(i_ymin, o_ymin)
+    x_min_inter = max(i_xmin, o_xmin)
+    y_max_inter = min(i_ymax, o_ymax)
+    x_max_inter = min(i_xmax, o_xmax)
+
+    if y_min_inter >= y_max_inter or x_min_inter >= x_max_inter:
+        return False
+
+    intersection_area = (y_max_inter - y_min_inter) * (x_max_inter - x_min_inter)
+    inner_area = (i_ymax - i_ymin) * (i_xmax - i_xmin)
+
+    if inner_area <= 0:
+        return False
+
+    # Return true if intersection covers enough of the inner box
+    return (intersection_area / inner_area) >= threshold
+
+
 def as_payload_dict(parsed: Any) -> Optional[Dict[str, Any]]:
     if isinstance(parsed, dict):
         if any(
@@ -668,18 +694,82 @@ def merge_semantic_with_visual_entities(stage2_structure: Dict[str, Any], visual
         visual_labels_by_q[qn].add(label.lower())
 
     if visual_subparts_exist:
-        for qn, q in list(q_by_num.items()):
+        for qn, q in q_by_num.items():
             if not _allows_visual_subparts(q):
                 continue
-            keep_labels: Set[str] = visual_labels_by_q.get(qn) or set()
-            if keep_labels:
-                filtered = []
-                for sq in (q.get("subquestions") or []):
-                    lbl = str(sq.get("label") or "").strip().lower()
-                    if lbl and keep_labels and lbl in keep_labels:
-                        filtered.append(sq)
-                q["subquestions"] = filtered
+
+            # Refined Phase 2: Spatial Subquestion Filtering
+            # Keep semantic subquestions ONLY if they overlap with the parent question's bbox.
+            # This prevents hallucinated or misaligned subquestions from sticking to the wrong parent.
+            parent_bbox = None
+            parent_page = -1
+            v_anchor = next((r for r in (visual_entities or {}).get("questions") or [] if _to_int(r.get("number"), 0) == qn), None)
+            if v_anchor:
+                parent_bbox = v_anchor.get("bbox")
+                parent_page = _to_int(v_anchor.get("page"), 0)
+
+            # Build current set of semantic labels for fast lookup.
+            existing_subs = list(q.get("subquestions") or [])
+            filtered_subs = []
+            
+            for sq in existing_subs:
+                # If we have parent spatial context, check if subquestion evidence overlaps.
+                # (Semantic subquestions from LLM won't have bboxes yet, so we keep them
+                # unless they have evidence pointing elsewhere).
+                sq_evidence = sq.get("image_evidence") or []
+                is_misaligned = False
+                if parent_bbox and sq_evidence:
+                    # If all existing evidence is outside parent bbox, it's likely misaligned
+                    matches_parent = False
+                    for ev in sq_evidence:
+                        if _to_int(ev.get("page_index"), -1) == parent_page:
+                            if _is_bbox_within(ev.get("bbox"), parent_bbox, threshold=0.1):
+                                matches_parent = True
+                                break
+                    if not matches_parent:
+                        is_misaligned = True
+
+                if not is_misaligned:
+                    filtered_subs.append(sq)
+                else:
+                    logger.warning("PHASE2_SPATIAL: Dropping misaligned semantic subquestion qn=%s label=%s", qn, sq.get("label"))
+
+            existing_labels: Set[str] = {
+                str(sq.get("label") or "").strip().lower()
+                for sq in filtered_subs
+                if str(sq.get("label") or "").strip()
+            }
+
+            # Append any visual-detected labels not already in semantic subquestions
+            # as minimal stubs. Only append if they are spatially within the parent.
+            for v_row in (visual_entities or {}).get("subparts") or []:
+                if _to_int(v_row.get("q"), 0) != qn: continue
+                vlabel = str(v_row.get("label") or "").strip().lower()
+                v_bbox = v_row.get("bbox")
+                v_page = _to_int(v_row.get("page"), 0)
+                
+                if vlabel not in existing_labels:
+                    # Spatial check: Only add if inside parent question box
+                    if parent_bbox and v_bbox:
+                        if v_page != parent_page or not _is_bbox_within(v_bbox, parent_bbox, threshold=0.3):
+                            continue
+
+                    filtered_subs.append({
+                        "label": v_row.get("label"),
+                        "text": "",
+                        "marks": 0.0,
+                        "mark_source": "inferred",
+                        "mark_confidence": 0.0,
+                        "confidence": 0.0,
+                        "source": "visual_gap_fill_p2",
+                    })
+
+            q["subquestions"] = sorted(
+                filtered_subs,
+                key=lambda s: str(s.get("label") or "").strip().lower(),
+            )
             q_by_num[qn] = q
+
 
     for row in (visual_entities or {}).get("questions") or []:
         if not isinstance(row, dict):
