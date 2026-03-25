@@ -6,6 +6,7 @@ from .config import (
     LABEL_PATTERNS,
     ANCHOR_LEFT_RATIO,
 )
+from app.utils.identity_manager import normalize_question_id
 
 
 def _token_count(text: str) -> int:
@@ -16,7 +17,7 @@ def _segment_has_label(text: str) -> bool:
     return bool(SEGMENT_LABEL_PATTERN.match(_normalize_spaces(text)))
 
 
-def normalize_question_number(raw: str, expected_qs: Set[int], page_num: int = 0) -> Optional[int]:
+def normalize_question_number(raw: str, expected_ids: Set[str], page_num: int = 0) -> Optional[str]:
     t = _normalize_spaces(raw)
     if not t:
         return None
@@ -32,31 +33,21 @@ def normalize_question_number(raw: str, expected_qs: Set[int], page_num: int = 0
     if re.match(r"^\s*\d{1,3}\s*[-–]\s*\d{1,3}\b", t, re.IGNORECASE):
         return None
 
+    # Use canonical normalization for the raw text if it looks like a label
     for pat in LABEL_PATTERNS:
         m = pat.match(t)
         if not m:
             continue
-        token = m.group(1)
-        try:
-            n = int(token)
-        except Exception:
-            continue
-        if n in expected_qs:
-            return n
-        if len(token) == 3 and token.startswith("0"):
-            n2 = int(token[-2:])
-            if n2 in expected_qs:
-                return n2
-        if len(token) == 3 and token.startswith("9"):
-            n3 = int(token[-2:])
-            if n3 in expected_qs:
-                return n3
+        # Use canonical normalization. No more fallback guessing (Task 9).
+        qid = normalize_question_id(t)
+        if qid in expected_ids:
+            return qid
     return None
 
 
 def detect_margin_labels(
     words: List[Dict[str, Any]],
-    expected_qs: Set[int],
+    expected_ids: Set[str],
     width: float,
     page_num: int,
     left_ratio: float = ANCHOR_LEFT_RATIO,
@@ -73,12 +64,12 @@ def detect_margin_labels(
         in_right = x2 >= width * right_ratio
         if not (in_left or in_right):
             continue
-        q_num = normalize_question_number(text, expected_qs=expected_qs, page_num=page_num)
-        if q_num is None:
+        q_id = normalize_question_number(text, expected_ids=expected_ids, page_num=page_num)
+        if q_id is None:
             continue
         labels.append(
             {
-                "question_number": q_num,
+                "question_number": q_id,
                 "y": float(w.get("y1", 0.0)),
                 "x1": x1,
                 "x2": x2,
@@ -93,7 +84,7 @@ def detect_margin_labels(
         if deduped:
             prev = deduped[-1]
             if (
-                int(prev["question_number"]) == int(lb["question_number"])
+                str(prev["question_number"]) == str(lb["question_number"])
                 and int(prev["page"]) == int(lb["page"])
                 and abs(float(prev["y"]) - float(lb["y"])) <= 10.0
             ):

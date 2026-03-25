@@ -1,16 +1,14 @@
 import asyncio
 import json
 import re
-from typing import Dict, List, Any, Optional
-
+from typing import List, Dict, Any, Optional, Set, Tuple
 from app.services.grading.llm_evaluator import LlmEvaluator
 from app.adapters.interfaces import AbstractLLMService
 from app.services.grading.answer_normalizer import AnswerNormalizer
 from app.services.grading.concept_matcher import ConceptMatcher
 from app.services.grading.rubric_builder import RubricBuilder
 from app.core.logging_config import logger
-
-from typing import Tuple
+from app.utils.identity_manager import normalize_question_id, is_valid_question_id
 from app.core.exceptions import CustomServiceException
 from app.models.submission import QuestionScore, SubQuestionScore, GradingResult
 from app.repositories import ExamRepo
@@ -22,28 +20,7 @@ from app.layers.ai_structured.validation import validate_structure
 
 exam_repo = ExamRepo()
 
-class IdentityManager:
-    """Standardizes Question IDs from Vision models (e.g., '1', '22a', 'Q 34')."""
-    
-    @staticmethod
-    def normalize_id(qid: str) -> str:
-        if not qid:
-            return ""
-        # Remove whitespace and force upper
-        clean = re.sub(r'\s+', '', str(qid)).upper()
-        # Handle '1' or '22A' -> 'Q1' or 'Q22A'
-        if clean[0].isdigit():
-            clean = f"Q{clean}"
-        # Standardize sub-question dots (e.g., Q22A -> Q22.A if preferred, 
-        # but here we follow the prompt's example: Q22.a)
-        # Regex to insert dot before first letter following numbers
-        clean = re.sub(r'(Q\d+)([A-Z])', r'\1.\2', clean)
-        return clean
-
-    @staticmethod
-    def get_root_id(qid: str) -> str:
-        """Extracts parent ID for mark aggregation."""
-        return qid.split('.')[0]
+# Removed internal IdentityManager as it was doing aggressive normalization
 
 class GradingEngine:
     """
@@ -57,7 +34,6 @@ class GradingEngine:
     
     def __init__(self, llm_service: AbstractLLMService = None):
         self.llm_service = llm_service
-        self.id_manager = IdentityManager()
         self.evaluator = LlmEvaluator(llm_service)
         self.normalizer = AnswerNormalizer()
         self.matcher = ConceptMatcher()
@@ -83,7 +59,7 @@ class GradingEngine:
         model_answer = question.get("model_answer") or question.get("expected_answer") or "Refer to standard definition."
         
         # Identity
-        clean_qid = self.id_manager.normalize_id(qid)
+        clean_qid = normalize_question_id(qid)
         q_logs.append(f"Question {clean_qid}: max_marks={max_marks}")
         
         # Resolve initial raw_text and mapped_subanswers for entry evaluation
@@ -92,7 +68,8 @@ class GradingEngine:
         mapped_subanswers = {}
         
         if isinstance(mapped_packet, dict):
-            confidence = float(mapped_packet.get("mapping_confidence", 1.0))
+            # Task 5/8: Check both field names for confidence
+            confidence = float(mapped_packet.get("confidence_score") or mapped_packet.get("mapping_confidence", 1.0))
             raw_text = mapped_packet.get("combined_text", "")
             if mapped_packet.get("subanswers"):
                 for sa in mapped_packet.get("subanswers", []):
@@ -103,7 +80,7 @@ class GradingEngine:
                 for sa in mapped_packet.get("subanswers", []):
                     if sa.get("sub_id", "").lower() == sub_id:
                         raw_text = sa.get("combined_text", "")
-                        confidence = float(sa.get("mapping_confidence", confidence))
+                        confidence = float(sa.get("confidence_score") or sa.get("mapping_confidence", confidence))
                         q_logs.append(f"subanswer {sub_id} raw_text length={len(raw_text)}")
                         break
 
@@ -330,9 +307,8 @@ class GradingEngine:
         # ADDED LOGGING START
         logger.info("[STEP START] INITIALIZE_GRADING")
         # ADDED LOGGING END
-        # Rule 2: Ingestion & Normalization
         normalized_vision = {
-            self.id_manager.normalize_id(k): v 
+            normalize_question_id(k): v 
             for k, v in vision_answers.items() if k
         }
         
@@ -349,14 +325,31 @@ class GradingEngine:
         tasks = []
         for q in blueprint_questions:
             raw_qid = q.get("id") or q.get("question_number") or q.get("number")
-            clean_qid = self.id_manager.normalize_id(raw_qid)
-            root_id = self.id_manager.get_root_id(clean_qid)
+            clean_qid = normalize_question_id(raw_qid)
+            root_id = clean_qid.split('.')[0]
             
             mapped = normalized_vision.get(clean_qid)
             if mapped is None and root_id != clean_qid:
                 mapped = normalized_vision.get(root_id)
-                
-            tasks.append(self._grade_worker(q, mapped))
+            
+            # Task 8: Aggregation Safety & Case-insensitivity
+            # If mapping is not VALID (e.g. AMBIGUOUS, MISSING), do not award marks.
+            raw_status = (mapped.get("mapping_status") or "VALID") if mapped else "MISSING"
+            mapping_status = str(raw_status).upper()
+            
+            if mapping_status == "VALID":
+                tasks.append(self._grade_worker(q, mapped))
+            else:
+                # Store a dummy score for non-valid mapping to keep indices aligned for raw_results
+                async def mock_failed_mapping():
+                    return QuestionScore(
+                        question_number=clean_qid,
+                        max_marks=float(q.get("marks") or q.get("max_marks") or 0.0),
+                        obtained_marks=0.0,
+                        status="needs_review",
+                        ai_feedback=f"Aggregation safety: Mapping is {mapping_status}. Manual review required."
+                    )
+                tasks.append(mock_failed_mapping())
         
         # return_exceptions=True ensures one failure doesn't crash the whole run
         raw_results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -388,7 +381,7 @@ class GradingEngine:
         main_q_possible: Dict[str, float] = {}
         
         for res in results_list:
-            root_id = self.id_manager.get_root_id(res.question_number)
+            root_id = str(res.question_number).split('.')[0]
             main_q_awarded[root_id] = main_q_awarded.get(root_id, 0.0) + res.obtained_marks
             main_q_possible[root_id] = main_q_possible.get(root_id, 0.0) + res.max_marks
 

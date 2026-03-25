@@ -34,8 +34,11 @@ class Answer(BaseModel):
     model_config = ConfigDict(extra="ignore")
     question_number: str
     sub_label: Optional[str] = None
+    question_id: Optional[str] = None
     answer_text: str = ""
-    mapping_confidence: float = 1.0
+    confidence_score: float = 1.0
+    confidence_level: str = "HIGH" # "HIGH", "MEDIUM", "LOW"
+    mapping_status: str = "valid" # "valid", "ambiguous", "missing"
 
 class Submission(BaseModel):
     """The unified submission model for grading output and persistence."""
