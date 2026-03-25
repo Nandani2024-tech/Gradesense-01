@@ -1,7 +1,5 @@
-"""Submission-related Pydantic models"""
-
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 # app/models/submission.py
 
 from app.schemas.annotation.annotation_data import AnnotationData
@@ -17,6 +15,10 @@ class SubQuestionScore(BaseModel):
     status: str = "graded" # "graded", "failed", "not_attempted"
     ai_feedback: Optional[str] = None
     is_reviewed: bool = False
+    concepts_detected: List[str] = Field(default_factory=list)
+    missing_concepts: List[str] = Field(default_factory=list)
+    concept_coverage: float = 0.0
+    grading_mode: Optional[str] = "AI_EVALUATED" # "AI_EVALUATED", "DETERMINISTIC_FALLBACK"
 
 class QuestionScore(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -26,6 +28,10 @@ class QuestionScore(BaseModel):
     status: str = "graded" # "graded", "failed", "not_attempted"
     ai_feedback: Optional[str] = None
     is_reviewed: bool = False
+    concepts_detected: List[str] = Field(default_factory=list)
+    missing_concepts: List[str] = Field(default_factory=list)
+    concept_coverage: float = 0.0
+    grading_mode: Optional[str] = "AI_EVALUATED" # "AI_EVALUATED", "DETERMINISTIC_FALLBACK"
     sub_scores: List[SubQuestionScore] = Field(default_factory=list)
     normalized_answer: Optional[str] = None
 
@@ -50,6 +56,7 @@ class Submission(BaseModel):
     file_name: Optional[str] = None
     job_id: Optional[str] = None
     status: str = "ai_graded" # "ai_graded", "NEEDS_REVIEW", "teacher_reviewed", "grading"
+    answers: Dict[str, Any] = Field(default_factory=dict)
     question_scores: List[QuestionScore] = Field(default_factory=list)
     total_score: float = 0.0
     total_possible: float = 0.0

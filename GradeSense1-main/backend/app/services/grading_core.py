@@ -134,12 +134,21 @@ async def run_grading_orchestrator(
         
         # SCHEMA_ENFORCED: Convert to Answer models (Task 2 & 5)
         answers: List[Answer] = []
-        raw_rows = aligned_result_raw.get("answers") or []
-        for raw_ans in raw_rows:
+        # Phase 3: aligned_result_raw["answers"] is now a DICT
+        aligned_answers_dict = aligned_result_raw.get("answers") or {}
+        
+        # Step 4: Invariant Guard (MANDATORY)
+        assert isinstance(aligned_answers_dict, dict), "Aligned answers must be a dict"
+        assert all(
+            key is not None and isinstance(key, str)
+            for key in aligned_answers_dict.keys()
+        ), "CRITICAL: None or invalid key detected in aligned_answers"
+        
+        for cid, raw_ans in aligned_answers_dict.items():
             answers.append(Answer(
-                question_number=str(raw_ans.get("raw_question_number") or raw_ans.get("question_id") or ""),
+                question_number=str(raw_ans.get("raw_question_number") or cid or ""),
                 sub_label=str(raw_ans.get("sub_part") or ""),
-                question_id=raw_ans.get("question_id"),
+                question_id=cid, # Phase 3: canonical_id is the identity
                 answer_text=raw_ans.get("answer_text", ""),
                 confidence_score=float(raw_ans.get("confidence_score", 1.0)),
                 confidence_level=raw_ans.get("confidence_level", "HIGH"),
@@ -203,16 +212,22 @@ async def run_grading_orchestrator(
         )
         
         # 7. Final Submission model construction
+        final_total = engine_result.total_awarded
+        possible_total = engine_result.total_possible
+        
+        logger.info(f"[ORCHESTRATOR] Final aggregation: {final_total}/{possible_total}")
+        
         final_submission = Submission(
             submission_id=submission_id,
             exam_id=exam_id,
             student_id=student_id,
             student_name=student_name,
             status="NEEDS_REVIEW" if should_flag_review else "ai_graded",
+            answers=aligned_answers_dict, # Phase 3: Store as dict
             question_scores=engine_result.grades,
-            total_score=engine_result.total_awarded,
-            total_possible=engine_result.total_possible,
-            percentage=(engine_result.total_awarded / engine_result.total_possible * 100) if engine_result.total_possible > 0 else 0.0,
+            total_score=final_total,
+            total_possible=possible_total,
+            percentage=(final_total / possible_total * 100) if possible_total > 0 else 0.0,
             needs_manual_review=should_flag_review,
             graded_at=datetime.now(timezone.utc).isoformat(),
             logs=engine_result.logs

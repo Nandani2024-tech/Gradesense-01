@@ -118,13 +118,19 @@ QUALITY_SCHEMA = {
     "question_quality": 0.0,
     "question_status": "graded|not_attempted|not_found",
     "question_feedback": "string",
+    "concepts_detected": ["string"],
+    "concepts_missing": ["string"],
+    "concept_coverage": 0.0,
     "confidence": 0.0,
     "sub_qualities": [
         {
             "label": "a",
             "quality": 0.0,
             "status": "graded|not_attempted|not_found",
-            "feedback": "Specific feedback for this sub-part."
+            "feedback": "Specific feedback for this sub-part.",
+            "concepts_detected": ["string"],
+            "concepts_missing": ["string"],
+            "concept_coverage": 0.0
         }
     ],
 }
@@ -286,7 +292,7 @@ def build_reconstruction_prompt(
     raw_ocr_text: str,
 ) -> str:
     ocr_chunk = str(raw_ocr_text or "")
-    prev_struct_chunk = (json.dumps(previous_structure, ensure_ascii=True)[:30000])
+    prev_struct_chunk = str(json.dumps(previous_structure, ensure_ascii=True))[:30000]
     return (
         "Reconstruct the same exam structure and fix only validation errors.\n"
         "Hard guardrails:\n"
@@ -389,35 +395,36 @@ def build_quality_prompt(
     model_answer_text: str,
     grading_contract: Dict[str, Any],
 ) -> str:
-    student_chunk = (student_answer_text or "")[:15000]
-    model_chunk = (model_answer_text or "")[:15000]
+    student_chunk = str(student_answer_text or "")[:15000]
+    model_chunk = str(model_answer_text or "")[:15000]
     return (
-        "You are a grading quality assessor.\n"
-        "You are NOT allowed to assign marks.\n"
-        "Return only quality signals and statuses.\n"
+        "You are an expert grading quality assessor.\n"
+        "Your task is to evaluate a student's answer based on conceptual correctness and relevance.\n"
+        "You are NOT allowed to assign final marks; return quality signals and evidence instead.\n"
         "Return strict JSON only.\n\n"
-        "If images are provided, use them as source of truth when text is incomplete.\n\n"
-        "Leniency rules:\n"
-        "- Grade like a school English teacher: focus on meaning, be lenient on phrasing.\n"
-        "- If a 1-mark or very short answer is correct in meaning, give full credit even if brief.\n"
-        "- Accept concise, paraphrased, or synonym-based answers if meaning matches the model answer.\n"
-        "- Do not penalize for lack of elaboration when the question only requires a short response.\n"
-        "- For each sub-quality entry, provide a concise, specific 'feedback' string explaining the score for that part.\n\n"
+        "GRADING PRINCIPLES:\n"
+        "- Focus on CONCEPTUAL CORRECTNESS: Accept informal language or non-standard phrasing if the meaning is correct.\n"
+        "- Prioritize KEY IDEAS: Award credit for presence of core concepts mentioned in the model answer/rubric.\n"
+        "- NO PENALTY for simplified explanations or student-friendly language.\n"
+        "- IDENTIFY CONCEPTS: Explicitly list which concepts from the model answer are 'detected' and which are 'missing'.\n"
+        "- DO NOT assume missing concepts unless clearly absent after scanning the entire answer.\n"
+        "- Every deduction or 'missing' claim MUST be explicitly non-existent in the student answer.\n"
+        "- DO NOT require exact textbook definitions.\n\n"
         "Question:\n"
         f"{json.dumps(question, ensure_ascii=True)}\n\n"
-        "Grading contract:\n"
+        "Grading contract (Signals): \n"
         f"{json.dumps(grading_contract, ensure_ascii=True)}\n\n"
         "Student answer:\n"
         f"{student_chunk}\n\n"
         "Model/reference answer:\n"
         f"{model_chunk}\n\n"
-        "Required schema:\n"
+        "Required JSON schema:\n"
         + _json_schema_block(QUALITY_SCHEMA)
     )
 
 
 def build_objective_key_prompt(*, question: Dict[str, Any], model_answer_text: str) -> str:
-    model_chunk = (model_answer_text or "")[:12000]
+    model_chunk = str(model_answer_text or "")[:12000]
     return (
         "Infer objective key for one question.\n"
         "Do not grade, only infer key and confidence.\n"

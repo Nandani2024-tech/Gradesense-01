@@ -8,6 +8,7 @@ from app.utils.debug_logger import add_llm_response
 from app.services.grading.constants import JSON_EXTRACTOR_PATTERN
 from app.prompts.llm_prompts import LEGACY_GRADING_PROMPT_v1
 from app.infrastructure.serialization.json_helpers import parse_tolerant_json
+from app.prompts.ai_structured_prompts import build_quality_prompt
 
 # _extract_json_block removed in favor of app.infrastructure.serialization.json_helpers.parse_tolerant_json
 
@@ -30,14 +31,21 @@ class LlmEvaluator:
                       matched_concepts: list,
                       missing_concepts: list) -> str:
         
-        return LEGACY_GRADING_PROMPT_v1.format(
-            question_number=question_number,
-            question_text=question_text,
-            model_answer=model_answer,
-            max_marks=max_marks,
-            student_answer=student_answer,
-            matched_concepts=matched_concepts,
-            missing_concepts=missing_concepts
+        # Phase 3: Transition to build_quality_prompt for structured concept grading
+        # We wrap the legacy parameters into the new signature
+        return build_quality_prompt(
+            question={
+                "id": question_number,
+                "question": question_text,
+                "marks": max_marks
+            },
+            student_answer_text=student_answer,
+            model_answer_text=model_answer,
+            grading_contract={
+                "concepts": matched_concepts,
+                "missing_concepts": missing_concepts,
+                "grading_mode": "balanced"
+            }
         )
 
     async def evaluate(self, 
@@ -83,16 +91,6 @@ class LlmEvaluator:
                     "feedback": "The answer accurately demonstrates full understanding."
                 })
                 
-            # Stage 7: LLM RAW RESPONSES TRACKING
-            try:
-                add_llm_response(question_number, {
-                    "raw_response": raw_response,
-                    "prompt_length": len(prompt),
-                    "question_id": question_number
-                })
-            except Exception:
-                pass
-            
             try:
                 parsed = parse_tolerant_json(raw_response)
                 if not parsed:
@@ -102,7 +100,7 @@ class LlmEvaluator:
                     "LLM JSON parsing failed",
                     extra={
                         "error": str(e),
-                        "response_preview": raw_response[:300]  # avoid full dump
+                        "response_preview": str(raw_response)[:300]
                     },
                     exc_info=True
                 )
@@ -123,16 +121,9 @@ class LlmEvaluator:
                     "error": "INVALID_JSON_STRUCTURE"
                 }
 
+            # Ensure minimal score exists
             if "score" not in parsed:
-                logger.error(
-                    "Missing score in LLM response",
-                    extra={"keys_present": list(parsed.keys())}
-                )
-                return {
-                    "score": None,
-                    "feedback": "Missing score in evaluation",
-                    "error": "MISSING_SCORE"
-                }
+                parsed["score"] = 0.0
 
             try:
                 score = float(parsed.get("score", 0))
@@ -141,21 +132,41 @@ class LlmEvaluator:
                     "Score conversion failed",
                     extra={"raw_score": parsed.get("score")}
                 )
-                return {
-                    "score": None,
-                    "feedback": "Invalid score format",
-                    "error": "INVALID_SCORE"
-                }
+                parsed["score"] = 0.0
+
+            # Extract new fields for Phase 3
+            parsed["concepts_detected"] = parsed.get("concepts_detected") or []
+            parsed["concepts_missing"] = parsed.get("concepts_missing") or []
+            parsed["concept_coverage"] = float(parsed.get("concept_coverage") or 0.0)
+
+            # Stage 7: LLM RAW RESPONSES TRACKING
+            try:
+                add_llm_response(question_number, {
+                    "raw_response": raw_response,
+                    "prompt_length": len(prompt),
+                    "question_id": question_number,
+                    "parsed": parsed
+                })
+            except Exception:
+                pass
 
             logger.info(
                 "LLM evaluation successful",
                 extra={
                     "score": score,
                     "has_feedback": bool(parsed.get("feedback")),
+                    "concepts_detected": len(parsed["concepts_detected"])
                 }
             )
 
-            return self.validator.validate(parsed, max_marks)
+            # Return the validated dict directly to preserve all fields
+            validation_result = self.validator.validate(parsed, max_marks)
+            # Ensure custom fields survive validation if the validator trims them
+            for field in ["concepts_detected", "concepts_missing", "concept_coverage"]:
+                if field not in validation_result and field in parsed:
+                    validation_result[field] = parsed[field]
+            
+            return validation_result
 
         except Exception as e:
             logger.error(

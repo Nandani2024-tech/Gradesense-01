@@ -70,13 +70,18 @@ def _normalize_alignment_answers(payload: Dict[str, Any], expected_ids: List[str
         qn_raw = row.get("question_number")
         sub_raw = row.get("sub_part")
         
-        # Task 2: Use Canonical ID Bridge
+        # Task 2/Phase 3: Use Canonical ID Bridge
         qid = build_canonical_question_id(qn_raw, sub_raw)
         
-        # Task 3: No Null Collapse. 
-        # Even if qid is None, we keep the record but mark as MISSING.
-        # However, to avoid 'None' keys in metrics, we use a unique ID if unmapped.
-        effective_qid = qid if qid else f"UNMAPPED_{uuid.uuid4().hex[:6]}"
+        # Phase 3: No-None Key Invariant
+        # VALID -> Q{n} or Q{n}.{a}
+        # INVALID -> UNMAPPED_<uuid>
+        if qid:
+            canonical_id = qid
+            mapping_status = "VALID"
+        else:
+            canonical_id = f"UNMAPPED_{uuid.uuid4().hex}"
+            mapping_status = "MISSING"
 
         detected_type = str(row.get("detected_type") or "written").strip().lower()
         if detected_type not in allowed_types:
@@ -96,12 +101,13 @@ def _normalize_alignment_answers(payload: Dict[str, Any], expected_ids: List[str
         else:
             conf_level = "LOW"
 
-        # Hardened structure (Task 5 & 2)
+        # Phase 3 Hardened structure
         ans = {
-            "question_id": qid, # Can be None
-            "effective_qid": effective_qid,
+            "canonical_id": canonical_id,
+            "raw_question_id": qid, # The original ID if valid, else None
+            "question_number": qn_raw, # Restored for backward compatibility
+            "sub_part": sub_raw,       # Restored for backward compatibility
             "raw_question_number": qn_raw,
-            "sub_part": sub_raw,
             "answer_id": str(uuid.uuid4())[:8],
             "answer_text": ans_text,
             "detected_type": detected_type,
@@ -110,7 +116,7 @@ def _normalize_alignment_answers(payload: Dict[str, Any], expected_ids: List[str
             "confidence_score": conf_score,
             "confidence_level": conf_level,
             "source": "vision",
-            "mapping_status": "VALID" if qid else "MISSING",
+            "mapping_status": mapping_status,
             "_is_expected": qid in expected_set if qid else False,
         }
         answers.append(ans)
@@ -134,7 +140,7 @@ def _compute_alignment_metrics(
     unmapped_answers = []
 
     for ans in answers:
-        qid = ans.get("question_id")
+        qid = ans.get("raw_question_id") # Use raw_question_id for stats
         ans_id = ans.get("answer_id")
         
         if qid:
@@ -156,7 +162,7 @@ def _compute_alignment_metrics(
 
     # Final Status Tagging & Trace Logging
     for ans in answers:
-        qid = ans.get("question_id")
+        qid = ans.get("raw_question_id")
         ans_id = ans.get("answer_id")
         
         if not qid:
@@ -339,19 +345,6 @@ async def align_answers(
     for res in batch_results:
         all_answers.extend(res)
 
-    if not all_answers:
-        # SSOT ENFORCEMENT: No final safety fallback allowed
-        logger.error("[STEP FAILED] ALIGNMENT_COMPLETE | submission_id=%s | reason=no_answers_found", submission_id)
-        raise ValueError(f"No answers found during alignment for submission {submission_id}")
-
-    # Step 7: Output Validation & Deduplication
-    q_ids = [str(a.get("question_number")) for a in all_answers]
-    logger.info(
-        "DEDUP CHECK: unique_questions=%d total_answers=%d",
-        len(set(q_ids)),
-        len(q_ids)
-    )
-
     # ADDED LOGGING START
     logger.info("[STEP START] METRICS_COMPUTATION")
     # ADDED LOGGING END
@@ -360,8 +353,28 @@ async def align_answers(
     logger.info("[STEP SUCCESS] METRICS_COMPUTATION")
     # ADDED LOGGING END
 
+    # Phase 3 Step 3: Transform to Dict Keyed by canonical_id
+    aligned_answers: Dict[str, Any] = {}
+    for ans in all_answers:
+        cid = ans.get("canonical_id")
+        if not cid:
+            cid = f"UNMAPPED_{uuid.uuid4().hex}"
+            ans["canonical_id"] = cid
+        
+        aligned_answers[cid] = ans
+
+    # Step 4: Invariant Guard (MANDATORY)
+    assert isinstance(aligned_answers, dict), "Aligned answers must be a dict"
+    assert all(
+        key is not None and isinstance(key, str)
+        for key in aligned_answers.keys()
+    ), "CRITICAL: None or invalid key detected in aligned_answers"
+
+    # Step 5: Logging Fix
+    logger.info(f"Aligned submission keys: {list(aligned_answers.keys())}")
+
     result = {
-        "answers": all_answers,
+        "answers": aligned_answers, # Now a DICT
         **metrics,
     }
 

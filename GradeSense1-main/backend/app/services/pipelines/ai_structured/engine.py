@@ -273,8 +273,9 @@ async def align_submission_for_grading(
         )
 
         # Output logging: detect keys and answer count
-        vision_answers = result.get("answers") or []
-        logger.info("Aligned submission keys: %s", [a.get("question_number") for a in vision_answers])
+        vision_answers = result.get("answers") or {}
+        # Phase 3: vision_answers is a dict {canonical_id: answer_dict}
+        logger.info("Aligned submission keys: %s", list(vision_answers.keys()))
         logger.info("Number of answers: %d", len(vision_answers))
 
         return result
@@ -341,12 +342,14 @@ async def grade_images_with_locked_blueprint(
     total_answers = 0
     total_subanswers = 0
     
-    for raw_ans in (alignment_result.get("answers") or []):
+    # Phase 3: answers is now a dict
+    answers_payload = alignment_result.get("answers") or {}
+    for raw_ans in answers_payload.values():
         total_answers += 1
         # DO NOT mutate original ans object — create copies
         ans = raw_ans.copy()
         
-        qn = str(ans.get("question_number"))
+        qn = str(ans.get("question_number") or ans.get("canonical_id"))
         sub_label = ans.get("sub_label")
         
         if qn not in vision_answers:
@@ -407,9 +410,14 @@ async def grade_images_with_locked_blueprint(
             sub_scores=sub_scores_models
         ))
         
+    final_total = grading_report.get("total_awarded")
+    possible_total = grading_report.get("total_possible")
+    
+    logger.info(f"[ORCHESTRATOR_STANDALONE] Final aggregation: {final_total}/{possible_total}")
+    
     packet_meta = {
-        "total_awarded": grading_report.get("total_awarded"),
-        "total_possible": grading_report.get("total_possible"),
+        "total_awarded": final_total,
+        "total_possible": possible_total,
         "logs": grading_report.get("logs")
     }
     
