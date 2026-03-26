@@ -84,13 +84,28 @@ def _source_confidence(source: str) -> float:
     return 0.62
 
 
-def _margin_mark_maps(visual_entities: Optional[Dict[str, Any]]) -> Tuple[Dict[int, Dict[str, Any]], Dict[Tuple[int, str], Dict[str, Any]]]:
-    q_marks: Dict[int, Dict[str, Any]] = {}
-    sq_marks: Dict[Tuple[int, str], Dict[str, Any]] = {}
+def _margin_mark_maps(visual_entities: Optional[Dict[str, Any]]) -> Tuple[Dict[Tuple[str, int], Dict[str, Any]], Dict[Tuple[str, int, str], Dict[str, Any]]]:
+    q_marks: Dict[Tuple[str, int], Dict[str, Any]] = {}
+    sq_marks: Dict[Tuple[str, int, str], Dict[str, Any]] = {}
+    
+    # [FIX 5] Build (page, number) -> section lookup to resolve margin mark ambiguity
+    anchor_sections: Dict[Tuple[int, int], str] = {}
+    for q in (visual_entities or {}).get("questions") or []:
+        p = to_int(q.get("page"), 0)
+        n = to_int(q.get("number"), 0)
+        sec = str(q.get("section") or "").strip()
+        if p >= 0 and n > 0:
+            anchor_sections[(p, n)] = sec
+
     for row in (visual_entities or {}).get("margin_marks") or []:
         if not isinstance(row, dict):
             continue
         qn = to_int(row.get("q"), 0)
+        page = to_int(row.get("page"), 0)
+        
+        # Resolve section from anchor lookup
+        section = anchor_sections.get((page, qn), "")
+        
         if qn <= 0:
             continue
         mark = max(0.0, to_float(row.get("marks"), 0.0))
@@ -110,15 +125,15 @@ def _margin_mark_maps(visual_entities: Optional[Dict[str, Any]]) -> Tuple[Dict[i
             "split": split_values or None,
             "evidence": {
                 "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
-                "page": to_int(row.get("page"), 0),
+                "page": page,
                 "confidence": round(to_float(row.get("confidence"), 0.0), 4),
                 "source": "margin",
             },
         }
         if sub:
-            sq_marks[(qn, sub)] = payload
+            sq_marks[(section, qn, sub)] = payload
         else:
-            q_marks[qn] = payload
+            q_marks[(section, qn)] = payload
     return q_marks, sq_marks
 
 

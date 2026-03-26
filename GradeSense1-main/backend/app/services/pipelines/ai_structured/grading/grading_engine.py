@@ -29,13 +29,17 @@ class IdentityManager:
     def normalize_id(qid: str) -> str:
         if not qid:
             return ""
-        # Remove whitespace and force upper
-        clean = re.sub(r'\s+', '', str(qid)).upper()
+        # Remove whitespace and force upper for legacy keys, but preserve UIDs if they look special
+        s_qid = str(qid).strip()
+        if "__q" in s_qid:
+            # It's a UID, keep as is (or lower/upper consistently)
+            # We'll stick to lowercase for UIDs as that's what build_question_uid uses
+            return s_qid.lower()
+            
+        clean = re.sub(r'\s+', '', s_qid).upper()
         # Handle '1' or '22A' -> 'Q1' or 'Q22A'
-        if clean[0].isdigit():
+        if clean and clean[0].isdigit():
             clean = f"Q{clean}"
-        # Standardize sub-question dots (e.g., Q22A -> Q22.A if preferred, 
-        # but here we follow the prompt's example: Q22.a)
         # Regex to insert dot before first letter following numbers
         clean = re.sub(r'(Q\d+)([A-Z])', r'\1.\2', clean)
         return clean
@@ -69,8 +73,8 @@ class GradingEngine:
         # logs for this question
         q_logs: List[str] = []
         
-        # Support both 'id' (new), 'question_number' (legacy), AND 'number' (AI structured SSOT)
-        qid = str(question.get("id") or question.get("question_number") or question.get("number") or "Unknown")
+        # Support both 'question_uid' (SSOT), 'id' (new), 'question_number' (legacy), AND 'number' (AI structured)
+        qid = str(question.get("question_uid") or question.get("id") or question.get("question_number") or question.get("number") or "Unknown")
         q_id = qid # For user snippet compatibility
         
         # Support both 'marks' (new) and 'max_marks' (legacy)
@@ -348,8 +352,8 @@ class GradingEngine:
         # Rule 7: Parallel Execution Using Asyncio (Fixes ThreadPool sync mismatches)
         tasks = []
         for q in blueprint_questions:
-            raw_qid = q.get("id") or q.get("question_number") or q.get("number")
-            clean_qid = self.id_manager.normalize_id(raw_qid)
+            raw_qid = q.get("question_uid") or q.get("id") or q.get("question_number") or q.get("number")
+            clean_qid = self.id_manager.normalize_id(raw_qid) if not q.get("question_uid") else str(raw_qid)
             root_id = self.id_manager.get_root_id(clean_qid)
             
             mapped = normalized_vision.get(clean_qid)

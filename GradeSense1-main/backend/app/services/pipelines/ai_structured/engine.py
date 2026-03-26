@@ -346,26 +346,26 @@ async def grade_images_with_locked_blueprint(
         # DO NOT mutate original ans object — create copies
         ans = raw_ans.copy()
         
-        qn = str(ans.get("question_number"))
+        quid = str(ans.get("question_uid") or ans.get("question_number") or "Unknown")
         sub_label = ans.get("sub_label")
         
-        if qn not in vision_answers:
-            vision_answers[qn] = {
-                "question_number": qn,
+        if quid not in vision_answers:
+            vision_answers[quid] = {
+                "question_uid": quid,
+                "question_number": ans.get("question_number"),
                 "subanswers": [],
                 "combined_text": "",
                 "mapping_confidence": 1.0
             }
             
-        if sub_label:
+        if not sub_label:
+            vision_answers[quid]["combined_text"] += f"\n{ans.get('answer_text')}"
+            vision_answers[quid]["mapping_confidence"] = min(vision_answers[quid]["mapping_confidence"], ans.get("confidence", 1.0))
+        else:
             total_subanswers += 1
             # Ensure sub_id is set for GradingEngine compatibility
             ans["sub_id"] = sub_label
-            vision_answers[qn]["subanswers"].append(ans)
-        else:
-            ans["sub_id"] = "root"
-            vision_answers[qn]["subanswers"].append(ans)
-            total_subanswers += 1
+            vision_answers[quid]["subanswers"].append(ans)
 
 
     # 3. Add Safety Logging

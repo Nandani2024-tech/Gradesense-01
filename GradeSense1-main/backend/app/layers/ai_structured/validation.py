@@ -8,6 +8,7 @@ from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.infrastructure.serialization.safe_numeric import to_float, to_int
+from app.utils.identity_manager import build_question_uid
 
 
 
@@ -32,6 +33,9 @@ def normalize_structure_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(q, dict):
             continue
         qn = to_int(q.get("number"), 0)
+        sec = (str(q.get("section") or "").strip() or "default")
+        q_uid = (str(q.get("question_uid") or q.get("uid") or "").strip() or build_question_uid(sec, qn))
+
         if qn <= 0:
             continue
         subquestions = [_normalize_subquestion(sq) for sq in (q.get("subquestions") or []) if isinstance(sq, dict)]
@@ -39,6 +43,8 @@ def normalize_structure_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         normalized_questions.append(
             {
                 "number": qn,
+                "question_uid": q_uid,
+                "uid": q_uid,
                 "section": (str(q.get("section") or "").strip() or None),
                 "instruction": (str(q.get("instruction") or "").strip() or None),
                 "question_text": str(q.get("question_text") or "").strip(),
@@ -55,7 +61,7 @@ def normalize_structure_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
             }
         )
 
-    normalized_questions.sort(key=lambda item: int(item["number"]))
+    normalized_questions.sort(key=lambda item: (str(item.get("section") or ""), int(item["number"])))
 
     # Drop singleton OR groups; OR semantics require at least two branches.
     or_counts = Counter(

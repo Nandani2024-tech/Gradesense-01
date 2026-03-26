@@ -19,73 +19,71 @@ def _section_rule_priority(rule: Dict[str, Any]) -> int:
 
 
 def _reconcile_section_rule_starts(
-    section_rules: List[Dict[str, Any]], qnums: List[int]
+    section_rules: List[Dict[str, Any]], q_keys: List[Tuple[str, int]]
 ) -> List[Dict[str, Any]]:
-    if not section_rules or not qnums:
+    if not section_rules or not q_keys:
         return section_rules
-    qnums_sorted = list(qnums)
-    cursor_idx = 0
+    
+    # [FIX 5] Bridge for section-agnostic rules. 
+    # Most section rules from LLM are already relative to their section.
+    # We realign them to the first matching question in the correctly scoped list.
     reconciled: List[Dict[str, Any]] = []
-
+    
     for rule in section_rules:
         count = to_int(rule.get("count"), 0)
+        start_val = to_int(rule.get("start_question"), 0)
+        rule_sec = str(rule.get("section") or "").strip()
+        
         if count <= 0:
             continue
-        start = to_int(rule.get("start_question"), 0)
-
-        if cursor_idx >= len(qnums_sorted):
-            reconciled.append(rule)
-            continue
-
-        cursor_q = qnums_sorted[cursor_idx]
-        new_start = start
-        if start <= 0:
-            new_start = cursor_q
-        elif start < cursor_q:
-            # Overlapping/secondary rule (likely subparts). Keep as-is.
-            reconciled.append(rule)
-            continue
-        elif start > cursor_q:
-            new_start = cursor_q
-            logger.info(
-                "SECTION_RULE_REALIGN start_old=%s start_new=%s count=%s",
-                start,
-                new_start,
-                count,
-            )
-
-        if new_start != start:
-            rule = dict(rule)
-            rule["start_question"] = new_start
-            per = max(0.0, to_float(rule.get("marks_per_question"), 0.0))
-            if per > 0:
-                rule["total"] = round(per * count, 4)
+            
+        # Find index of start question in THAT section
+        possible_keys = [i for i, k in enumerate(q_keys) if k[1] == start_val and (not rule_sec or k[0] == rule_sec)]
+        
+        if not possible_keys and start_val <= 0:
+            # Fallback to first question in section if start is 0
+            first_in_sec = [i for i, k in enumerate(q_keys) if (not rule_sec or k[0] == rule_sec)]
+            if first_in_sec:
+                new_start = q_keys[first_in_sec[0]][1]
+                rule = dict(rule)
+                rule["start_question"] = new_start
+                
         reconciled.append(rule)
-
-        # Advance cursor only for primary (non-overlapping) rules.
-        if new_start == cursor_q:
-            cursor_idx = min(len(qnums_sorted), cursor_idx + count)
-
     return reconciled
 
 
 def _apply_section_rule_conflicts(
     section_rules: List[Dict[str, Any]],
-    qnums: List[int],
-    q_margin: Dict[int, Dict[str, Any]],
-) -> Tuple[Dict[int, Dict[str, Any]], List[Dict[str, Any]]]:
-    assignments: Dict[int, Dict[str, Any]] = {}
+    q_keys: List[Tuple[str, int]],
+    q_margin: Dict[Tuple[str, int], Dict[str, Any]],
+) -> Tuple[Dict[Tuple[str, int], Dict[str, Any]], List[Dict[str, Any]]]:
+    assignments: Dict[Tuple[str, int], Dict[str, Any]] = {}
     rule_meta: Dict[str, Dict[str, Any]] = {}
-    q_to_rule: Dict[int, str] = {}
+    q_to_rule: Dict[Tuple[str, int], str] = {}
 
     for idx, rule in enumerate(section_rules):
         count = to_int(rule.get("count"), 0)
         per = max(0.0, to_float(rule.get("marks_per_question"), 0.0))
         start_q = to_int(rule.get("start_question"), 0)
-        if count <= 0 or per <= 0 or start_q <= 0 or start_q not in qnums:
+        rule_sec = str(rule.get("section") or "").strip()
+        
+        # Find the specific key this rule starts at
+        found_idx = -1
+        for i, k in enumerate(q_keys):
+            if k[1] == start_q and (not rule_sec or k[0] == rule_sec):
+                found_idx = i
+                break
+                
+        if count <= 0 or per <= 0 or found_idx == -1:
             continue
-        start_idx = qnums.index(start_q)
-        run = qnums[start_idx:start_idx + count]
+            
+        # Run window is now in q_keys space
+        run = q_keys[found_idx:found_idx + count]
+        
+        # Ensure we don't bleed into another section if rule was section-scoped
+        if rule_sec:
+            run = [k for k in run if k[0] == rule_sec]
+
         rule_id = f"sec_{idx + 1}"
         priority = _section_rule_priority(rule)
         rule_meta[rule_id] = {
@@ -94,50 +92,33 @@ def _apply_section_rule_conflicts(
             "priority": priority,
             "run": list(run),
         }
-        for qn in run:
-            if qn in q_margin:
-                logger.info(
-                    "SECTION_RULE_OVERRIDE q=%s keep=margin drop=%s",
-                    qn,
-                    str(rule.get("expr") or ""),
-                )
+        
+        for key in run:
+            if key in q_margin:
+                logger.info("[SECTION_RULE] q=%s section=%s skip=margin_override", key[1], key[0])
                 continue
-            existing = assignments.get(qn)
+            existing = assignments.get(key)
             if existing:
                 if existing.get("priority", 0) >= priority:
                     continue
-                prev_id = q_to_rule.get(qn)
-                if prev_id and qn in rule_meta.get(prev_id, {}).get(
-                    "applied", []
-                ):
-                    rule_meta[prev_id]["applied"].remove(qn)
-                logger.info(
-                    "SECTION_RULE_OVERRIDE q=%s keep=%s drop=%s",
-                    qn,
-                    str(rule.get("expr") or ""),
-                    str(existing.get("expr") or ""),
-                )
+                prev_id = q_to_rule.get(key)
+                if prev_id and key in rule_meta.get(prev_id, {}).get("applied", []):
+                    rule_meta[prev_id]["applied"].remove(key)
 
-            assignments[qn] = {
+            assignments[key] = {
                 "marks": round(per, 4),
-                "expr": str(
-                    rule.get("expr")
-                    or f"{count} x {round(per, 4)} = "
-                    f"{round(to_float(rule.get('total'), 0.0), 4)}"
-                ),
+                "expr": str(rule.get("expr") or f"{len(run)} x {round(per, 4)}"),
                 "evidence": {
                     "bbox": list(rule.get("bbox") or [0, 0, 0, 0]),
                     "page": to_int(rule.get("source_page"), 0),
-                    "confidence": round(
-                        to_float(rule.get("confidence"), 0.0), 4
-                    ),
+                    "confidence": round(to_float(rule.get("confidence"), 0.0), 4),
                     "source": "section_math",
                 },
                 "rule_id": rule_id,
                 "priority": priority,
             }
-            q_to_rule[qn] = rule_id
-            rule_meta[rule_id]["applied"].append(qn)
+            q_to_rule[key] = rule_id
+            rule_meta[rule_id]["applied"].append(key)
 
     resolved_rules: List[Dict[str, Any]] = []
     for rule_id, meta in rule_meta.items():
@@ -146,52 +127,33 @@ def _apply_section_rule_conflicts(
             continue
         rule = dict(meta.get("rule") or {})
         per = max(0.0, to_float(rule.get("marks_per_question"), 0.0))
-        original_count = to_int(rule.get("count"), 0)
-        if len(applied) < original_count:
-            logger.warning(
-                "SECTION_RULE_PARTIAL_APPLY start=%s count=%s applied=%s questions=%s",
-                to_int(rule.get("start_question"), 0),
-                original_count,
-                len(applied),
-                applied,
-            )
-        applied_sorted = sorted(applied)
-        segments: List[List[int]] = []
-        current: List[int] = []
-        for qn in applied_sorted:
-            if not current or qn == current[-1] + 1:
-                current.append(qn)
+        
+        # Group segments by section AND continuity
+        applied_sorted = sorted(applied, key=lambda x: (x[0], x[1]))
+        segments: List[List[Tuple[str, int]]] = []
+        current: List[Tuple[str, int]] = []
+        for key in applied_sorted:
+            if not current or (key[0] == current[-1][0] and key[1] == current[-1][1] + 1):
+                current.append(key)
             else:
                 segments.append(current)
-                current = [qn]
+                current = [key]
         if current:
             segments.append(current)
 
         for seg_idx, segment in enumerate(segments):
             seg_rule = dict(rule)
             seg_rule_id = rule_id if seg_idx == 0 else f"{rule_id}_{seg_idx + 1}"
-            seg_rule["start_question"] = segment[0]
+            seg_rule["start_question"] = segment[0][1]
+            seg_rule["section"] = segment[0][0]
             seg_rule["count"] = len(segment)
             seg_rule["total"] = round(len(segment) * per, 4)
-            seg_rule["questions"] = list(segment)
+            seg_rule["questions"] = [k[1] for k in segment]
             seg_rule["rule_id"] = seg_rule_id
             resolved_rules.append(seg_rule)
             logger.info(
-                "SECTION_RULE_APPLIED start=%s count=%s marks=%s total=%s questions=%s",
-                to_int(seg_rule.get("start_question"), 0),
-                to_int(seg_rule.get("count"), 0),
-                round(per, 4),
-                round(to_float(seg_rule.get("total"), 0.0), 4),
-                segment,
+                "[SECTION_RULE_APPLY] sec=%s start=%s count=%s total=%s",
+                segment[0][0], segment[0][1], len(segment), seg_rule["total"]
             )
-            for qn in segment:
-                logger.info(
-                    "SECTION_RULE_APPLIED_Q q=%s start=%s count=%s marks=%s expr=%s",
-                    qn,
-                    to_int(seg_rule.get("start_question"), 0),
-                    to_int(seg_rule.get("count"), 0),
-                    round(per, 4),
-                    str(seg_rule.get("expr") or ""),
-                )
 
     return assignments, resolved_rules

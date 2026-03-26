@@ -57,10 +57,10 @@ def _is_objective_question(question: Dict[str, Any]) -> bool:
 
 
 
-def _normalize_alignment_answers(payload: Dict[str, Any], expected_numbers: List[int]) -> List[Dict[str, Any]]:
+def _normalize_alignment_answers(payload: Dict[str, Any], expected_uids: List[str]) -> List[Dict[str, Any]]:
     answers = []
     allowed_types = {"mcq", "written", "blank"}
-    expected_set = set(expected_numbers)
+    expected_set = set(expected_uids)
 
     for row in (payload.get("answers") or []):
         if not isinstance(row, dict):
@@ -107,7 +107,8 @@ def _normalize_alignment_answers(payload: Dict[str, Any], expected_numbers: List
             "page_index": int(str(row.get("page_index"))) if str(row.get("page_index", "")).isdigit() else None,
             "bbox": row.get("bbox") if isinstance(row.get("bbox"), list) else None,
             "confidence": max(0.0, min(1.0, safe_float(row.get("confidence"), 0.0))),
-            "_is_expected": qn in expected_set,
+            "question_uid": str(row.get("question_uid") or ""),
+            "_is_expected": str(row.get("question_uid")) in expected_set,
         }
         answers.append(ans)
     return answers
@@ -115,13 +116,13 @@ def _normalize_alignment_answers(payload: Dict[str, Any], expected_numbers: List
 
 def _compute_alignment_metrics(
     answers: List[Dict[str, Any]],
-    expected_numbers: List[int],
+    expected_uids: List[str],
     page_count: int,
 ) -> Dict[str, Any]:
-    expected_set = set(expected_numbers)
+    expected_set = set(expected_uids)
     key_counter: Counter[Tuple[int, Optional[str]]] = Counter()
     mapped_question_set = set()
-    answered_question_set = set()
+    answered_uid_set = set()
     used_pages = set()
     unmapped_answers = []
 
@@ -136,14 +137,14 @@ def _compute_alignment_metrics(
         text = str(ans.get("answer_text") or "").strip()
         is_blank = str(ans.get("detected_type") or "").lower() == "blank" or not text
         if not is_blank:
-            answered_question_set.add(qn)
+            answered_uid_set.add(ans.get("question_uid"))
 
-        if qn in expected_set:
-            mapped_question_set.add(qn)
+        if ans.get("question_uid") in expected_set:
+            mapped_question_set.add(ans.get("question_uid"))
         else:
             unmapped_answers.append(ans)
 
-    question_coverage_map = {str(qn): (qn in mapped_question_set) for qn in expected_numbers}
+    question_coverage_map = {uid: (uid in mapped_question_set) for uid in expected_uids}
     duplicate_answers = [
         {"question_number": qn, "sub_label": sub, "count": count}
         for (qn, sub), count in key_counter.items()
@@ -151,11 +152,11 @@ def _compute_alignment_metrics(
     ]
 
     expected_questions = len(expected_set)
-    answered_questions = len({qn for qn in answered_question_set if qn in expected_set})
+    answered_questions_valid = len({uid for uid in answered_uid_set if uid in expected_set})
     mapped_questions = len(mapped_question_set)
 
     coverage_ratio = (mapped_questions / float(expected_questions)) if expected_questions else 0.0
-    alignment_coverage = (mapped_questions / float(answered_questions)) if answered_questions else 0.0
+    alignment_coverage = (mapped_questions / float(answered_questions_valid)) if answered_questions_valid else 0.0
 
     avg_conf = (
         sum(safe_float(ans.get("confidence"), 0.0) for ans in answers) / float(len(answers))
@@ -185,7 +186,7 @@ def _compute_alignment_metrics(
         "orphan_pages": orphan_pages,
         "alignment_confidence_score": round(alignment_confidence_score, PRECISION_ROUNDING),
         "expected_questions": expected_questions,
-        "answered_questions": answered_questions,
+        "answered_questions": answered_questions_valid,
         "mapped_questions": mapped_questions,
     }
 
@@ -241,14 +242,14 @@ async def align_answers(
     use_cache: bool = True,
     **kwargs,
 ) -> Dict[str, Any]:
-    expected_numbers = sorted(
-        {
-            int(q.get("number"))
-            for q in (question_structure.get("questions") or [])
-            if str(q.get("number", "")).isdigit()
-        }
-    )
-    logger.info("ALIGNMENT_TRACE: expected_numbers=%s", expected_numbers)
+    expected_uids = [
+        str(q.get("question_uid"))
+        for q in (question_structure.get("questions") or [])
+        if q.get("question_uid")
+    ]
+    # Keep expected_numbers for backward compatibility or metrics
+    expected_numbers = expected_uids 
+    logger.info("ALIGNMENT_TRACE: expected_uids=%s", expected_uids)
 
     if use_cache:
         cached = get_alignment_cache(submission_id, blueprint_signature)
@@ -284,7 +285,7 @@ async def align_answers(
                     if isinstance(ans, dict) and str(ans.get("page_index", "")).isdigit():
                         ans["page_index"] = int(ans["page_index"]) + start_idx
                 
-                normalized = _normalize_alignment_answers(payload, expected_numbers)
+                normalized = _normalize_alignment_answers(payload, expected_uids)
                 logger.info("ALIGNMENT_TRACE: batch=%d payload_answers_count=%d normalized_answers_count=%d", 
                             start_idx // batch_size + 1, len(payload.get("answers") or []), len(normalized))
                 if not normalized and payload.get("answers"):
@@ -329,7 +330,7 @@ async def align_answers(
     # ADDED LOGGING START
     logger.info("[STEP START] METRICS_COMPUTATION")
     # ADDED LOGGING END
-    metrics = _compute_alignment_metrics(all_answers, expected_numbers, page_count=len(answer_images))
+    metrics = _compute_alignment_metrics(all_answers, expected_uids, page_count=len(answer_images))
     # ADDED LOGGING START
     logger.info("[STEP SUCCESS] METRICS_COMPUTATION")
     # ADDED LOGGING END

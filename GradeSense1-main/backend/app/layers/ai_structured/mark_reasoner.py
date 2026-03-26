@@ -59,7 +59,7 @@ def resolve_marks(
 
     normalized = normalize_structure_payload(question_structure or {})
     questions = [dict(q) for q in (normalized.get("questions") or [])]
-    questions.sort(key=lambda q: to_int(q.get("number"), 0))
+    questions.sort(key=lambda q: (str(q.get("section") or ""), to_int(q.get("number"), 0)))
     if not questions:
         return {
             "resolved_structure": normalized,
@@ -71,29 +71,35 @@ def resolve_marks(
             "question_audit_tree": [],
         }
 
-    by_num: Dict[int, Dict[str, Any]] = {to_int(q.get("number"), 0): q for q in questions if to_int(q.get("number"), 0) > 0}
-    qnums = sorted(by_num.keys())
-    base_marks: Dict[int, float] = {qn: max(0.0, to_float(by_num[qn].get("marks"), 0.0)) for qn in qnums}
-    evidence_refs: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+    # [FIX 5] Section-aware identity: (section, number)
+    by_key: Dict[Tuple[str, int], Dict[str, Any]] = {
+        (str(q.get("section") or ""), to_int(q.get("number"), 0)): q 
+        for q in questions 
+        if to_int(q.get("number"), 0) > 0
+    }
+    q_keys = sorted(by_key.keys(), key=lambda x: (x[0], x[1]))
+    
+    base_marks: Dict[Tuple[str, int], float] = {key: max(0.0, to_float(by_key[key].get("marks"), 0.0)) for key in q_keys}
+    evidence_refs: Dict[Tuple[str, int], List[Dict[str, Any]]] = defaultdict(list)
 
     q_margin, sq_margin = _margin_mark_maps(visual_entities)
     section_rules = _build_section_math_rules(normalized, visual_entities)
-    section_rules = _reconcile_section_rule_starts(section_rules, qnums)
+    section_rules = _reconcile_section_rule_starts(section_rules, q_keys)
     _ensure_section_rule_anchor_coverage(section_rules, visual_entities)
     _log_anchor_merge_result(visual_entities)
-    changed_questions: set[int] = set()
+    changed_questions: set[Tuple[str, int]] = set()
 
     # Build OR groups first.
     or_groups_map = _build_or_groups(questions, visual_entities)
 
     # Apply section math rule assignments with conflict resolution.
-    section_assignments, section_rules = _apply_section_rule_conflicts(section_rules, qnums, q_margin)
+    section_assignments, section_rules = _apply_section_rule_conflicts(section_rules, q_keys, q_margin)
 
     # Resolve parent marks + subpart marks pass.
     question_audit_tree: List[Dict[str, Any]] = []
     _initial_mark_pass(
-        qnums=qnums,
-        by_num=by_num,
+        q_keys=q_keys,
+        by_key=by_key,
         base_marks=base_marks,
         q_margin=q_margin,
         sq_margin=sq_margin,
@@ -108,23 +114,24 @@ def resolve_marks(
         _reconcile_header_marks(
             header_total_marks=header_total_marks,
             header_total_reliable=header_total_reliable,
-            qnums=qnums,
-            by_num=by_num,
+            q_keys=q_keys,
+            by_key=by_key,
             question_audit_tree=question_audit_tree,
             changed_questions=changed_questions,
         )
 
     # Pattern inference for still-missing marks.
-    covered_by_rules: set[int] = set()
+    covered_by_rules: set[Tuple[str, int]] = set()
     for rule in section_rules:
-        covered_by_rules.update(int(qn) for qn in (rule.get("questions") or []) if to_int(qn, 0) > 0)
+        sec = str(rule.get("section") or "").strip()
+        covered_by_rules.update((sec, to_int(qn, 0)) for qn in (rule.get("questions") or []) if to_int(qn, 0) > 0)
     covered_by_rules.update(section_assignments.keys())
 
-    pattern_mark = _mode_positive([to_float((by_num.get(qn) or {}).get("marks"), 0.0) for qn in qnums]) or 1.0
-    for qn in qnums:
-        if qn in covered_by_rules:
+    pattern_mark = _mode_positive([to_float((by_key.get(key) or {}).get("marks"), 0.0) for key in q_keys]) or 1.0
+    for key in q_keys:
+        if key in covered_by_rules:
             continue
-        q = by_num[qn]
+        q = by_key[key]
         if to_float(q.get("marks"), 0.0) > 0:
             continue
         qtype = str(q.get("question_type") or "").strip().lower()
@@ -132,23 +139,25 @@ def resolve_marks(
         q["marks"] = round(inferred_default, 4)
         q["mark_source"] = "inferred"
         q["distribution_mode"] = "section_pattern"
-        by_num[qn] = q
-        changed_questions.add(qn)
+        by_key[key] = q
+        changed_questions.add(key)
         logger.info(
-            "MARK_APPLIED q=%s reason=pattern_inference marks=%s qtype=%s",
-            qn,
+            "[MARK_INFER] q=%s section=%s reason=pattern_inference marks=%s qtype=%s",
+            key[1], key[0],
             round(q["marks"], 4),
             qtype or "unknown",
         )
-        _sync_audit_for_question(qn, question_audit_tree, by_num)
+        _sync_audit_for_question(key, question_audit_tree, by_key)
 
     # OR integrity.
     for gid, members in sorted(or_groups_map.items(), key=lambda kv: kv[0]):
-        # Note: clean_or_groups_robust (aliased as _build_or_groups) already enforced 
-        # presence, Nested OR prevention, and orphan removal.
-        shared = max(max(0.0, to_float((by_num.get(qn) or {}).get("marks"), 0.0)) for qn in members)
-        for qn in members:
-            q = by_num.get(qn)
+        # members contains (section, number) tuples
+        shared = 0.0
+        for key in members:
+            shared = max(shared, to_float((by_key.get(key) or {}).get("marks"), 0.0))
+            
+        for key in members:
+            q = by_key.get(key)
             if not q:
                 continue
             old = max(0.0, to_float(q.get("marks"), 0.0))
@@ -156,20 +165,21 @@ def resolve_marks(
                 q["marks"] = round(shared, 4)
                 q["mark_source"] = _norm_source(q.get("mark_source") or "inferred")
                 q["distribution_mode"] = str(q.get("distribution_mode") or "direct")
-                by_num[qn] = q
-                changed_questions.add(qn)
-                logger.info("MARK_RECONCILED q=%s sub=- ai=%s visual=%s reason=or_group", qn, round(old, 4), round(shared, 4))
-                _sync_audit_for_question(qn, question_audit_tree, by_num)
+                by_key[key] = q
+                changed_questions.add(key)
+                logger.info("[MARK_APPLY] q=%s section=%s reason=or_group marks=%s", key[1], key[0], round(shared, 4))
+                _sync_audit_for_question(key, question_audit_tree, by_key)
         logger.info("OR_GROUP_RESOLVED group=%s members=%s effective_marks=%s", gid, members, round(shared, 4))
 
     # Final reconciliation pass for all questions
-    for qn in qnums:
-        q = by_num.get(qn)
+    for key in q_keys:
+        q = by_key.get(key)
         if not q:
             continue
         
-        # Priority 0: Model Answer Check
-        ma_entry = (model_answer_map or {}).get(str(qn)) or (model_answer_map or {}).get(qn)
+        # [FIX 5] Model Answer Check (scoped by key)
+        # Fallback to number only if string map doesn't have it, but prefer (sec, num) logic in future
+        ma_entry = (model_answer_map or {}).get(str(key[1])) or (model_answer_map or {}).get(key[1])
         ma_marks = None
         ma_sub_marks = None
         if isinstance(ma_entry, dict):
@@ -184,21 +194,21 @@ def resolve_marks(
                 q["marks"] = round(ma_marks, 4)
                 q["mark_source"] = MARK_REASON_RECONCILED
                 q["distribution_mode"] = "model_answer"
-                by_num[qn] = q
-                changed_questions.add(qn)
-                logger.info("MARK_RECONCILED q=%s reason=model_answer marks=%s", qn, round(ma_marks, 4))
+                by_key[key] = q
+                changed_questions.add(key)
+                logger.info("[MARK_OVERRIDE] q=%s section=%s reason=model_answer marks=%s", key[1], key[0], round(ma_marks, 4))
 
         if _reconcile_subpart_marks(q, ma_sub_marks):
-            by_num[qn] = q
-            logger.info("MARK_RECONCILED q=%s subparts=true reason=model_answer", qn)
-            _sync_audit_for_question(qn, question_audit_tree, by_num)
+            by_key[key] = q
+            logger.info("[MARK_RECONCILE] q=%s section=%s subparts=true", key[1], key[0])
+            _sync_audit_for_question(key, question_audit_tree, by_key)
 
-    resolved_questions = [by_num[qn] for qn in qnums]
+    resolved_questions = [by_key[key] for key in q_keys]
     resolved_structure = {
         "questions": resolved_questions,
         "section_math_blocks": [
             {
-                "section": None,
+                "section": str(b.get("section") or ""),
                 "expression": str(b.get("expr") or ""),
                 "question_count": to_int(b.get("count"), 0),
                 "per_question_marks": round(to_float(b.get("per"), 0.0), 4),
@@ -219,6 +229,7 @@ def resolve_marks(
         ],
         "section_math_rules": [
             {
+                "section": str(rule.get("section") or ""),
                 "start_question": to_int(rule.get("start_question"), 0),
                 "count": to_int(rule.get("count"), 0),
                 "marks_per_question": round(to_float(rule.get("marks_per_question"), 0.0), 4),
@@ -233,16 +244,22 @@ def resolve_marks(
     }
 
     ai_visual_mismatches: List[Dict[str, Any]] = []
-    for qn in qnums:
-        ai_mark = round(max(0.0, to_float(base_marks.get(qn), 0.0)), 4)
-        resolved_mark = round(max(0.0, to_float((by_num.get(qn) or {}).get("marks"), 0.0)), 4)
+    for key in q_keys:
+        ai_mark = round(max(0.0, to_float(base_marks.get(key), 0.0)), 4)
+        resolved_mark = round(max(0.0, to_float((by_key.get(key) or {}).get("marks"), 0.0)), 4)
         if abs(ai_mark - resolved_mark) > 1e-6:
-            ai_visual_mismatches.append({"question_number": qn, "ai_marks": ai_mark, "visual_marks": resolved_mark})
+            ai_visual_mismatches.append({
+                "question_number": key[1],
+                "section": key[0],
+                "ai_marks": ai_mark,
+                "visual_marks": resolved_mark
+            })
 
-    for audit in sorted(question_audit_tree, key=lambda x: to_int(x.get("number"), 0)):
+    for audit in sorted(question_audit_tree, key=lambda x: (str(x.get("section") or ""), to_int(x.get("number"), 0))):
         logger.info(
-            "QUESTION_AUDIT q=%s total=%s source=%s mode=%s subparts=%s confidence=%.3f",
+            "QUESTION_AUDIT q=%s section=%s total=%s source=%s mode=%s subparts=%s confidence=%.3f",
             to_int(audit.get("number"), 0),
+            str(audit.get("section") or ""),
             round(to_float(audit.get("total_marks"), 0.0), 4),
             str(audit.get("mark_source") or "inferred"),
             str(audit.get("distribution_mode") or "direct"),
@@ -250,19 +267,20 @@ def resolve_marks(
             to_float(audit.get("confidence"), 0.0),
         )
 
-    coverage = round((len(changed_questions) / float(len(qnums))) if qnums else 0.0, 4)
-    logger.info("MARK_REASON_APPLIED questions=%s changed=%s coverage=%.4f", len(qnums), len(changed_questions), coverage)
+    coverage = round((len(changed_questions) / float(len(q_keys))) if q_keys else 0.0, 4)
+    logger.info("MARK_REASON_APPLIED questions=%s changed=%s coverage=%.4f", len(q_keys), len(changed_questions), coverage)
 
     effective_marks_map = []
-    for q in resolved_questions:
-        qn = to_int(q.get("number"), 0)
+    for key in q_keys:
+        q = by_key[key]
         effective_marks_map.append(
             {
-                "question_number": qn,
+                "question_number": key[1],
+                "section": key[0],
                 "marks": round(max(0.0, to_float(q.get("marks"), 0.0)), 4),
                 "source": _norm_source(q.get("mark_source")),
-                "is_override": qn in changed_questions,
-                "evidence": evidence_refs.get(qn, []),
+                "is_override": key in changed_questions,
+                "evidence": evidence_refs.get(key, []),
             }
         )
 
@@ -271,9 +289,9 @@ def resolve_marks(
         "effective_total_marks": _compute_effective_total(resolved_questions),
         "effective_marks_map": effective_marks_map,
         "mark_override_coverage": coverage,
-        "or_groups_map": {gid: sorted(set(members)) for gid, members in or_groups_map.items() if len(set(members)) >= 2},
+        "or_groups_map": {gid: sorted(list(members)) for gid, members in or_groups_map.items() if len(members) >= 2},
         "ai_visual_mismatches": ai_visual_mismatches,
-        "question_audit_tree": sorted(question_audit_tree, key=lambda x: to_int(x.get("number"), 0)),
+        "question_audit_tree": sorted(question_audit_tree, key=lambda x: (str(x.get("section") or ""), to_int(x.get("number"), 0))),
     }
 
 __all__ = ['resolve_marks']
