@@ -2,7 +2,8 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
 
 from app.core.logging_config import logger
-from app.services.pipelines.ai_structured.grading.grading_engine import GradingEngine, IdentityManager
+from app.services.pipelines.ai_structured.grading.grading_engine import GradingEngine
+from app.utils.identity_manager import normalize_question_id, is_valid_question_id
 from app.services.pipelines.ai_structured.engine import align_submission_for_grading, extract_question_structure
 from app.services.llm_provider import get_llm_service
 from app.services.pipelines.ai_extraction_service import _extract_student_info
@@ -29,6 +30,37 @@ def build_fallback_response(exam_id: str, submission_id: str, exc: Exception) ->
         error=str(exc),
         error_type=type(exc).__name__
     )
+
+def validate_blueprint_ids(blueprint: Dict[str, Any]) -> None:
+    """
+    Task 3: Pre-grading validation layer.
+    Ensures all question IDs in the blueprint are canonical and unique.
+    """
+    questions = blueprint.get("questions") or []
+    seen_ids = set()
+    for q in questions:
+        raw_id = str(q.get("number") or q.get("id") or "")
+        if not raw_id:
+            raise ValueError("invalid_blueprint_identity: missing_id")
+            
+        # Verify it follows the canonical format Q1, Q1.a
+        if not is_valid_question_id(raw_id):
+            # If not already canonical, check if it can be normalized without collision
+            normalized = normalize_question_id(raw_id)
+            if not normalized:
+                raise ValueError(f"invalid_blueprint_identity: malformed_id '{raw_id}'")
+            raw_id = normalized
+            
+        if raw_id in seen_ids:
+            raise ValueError(f"invalid_blueprint_identity: duplicate_id '{raw_id}'")
+        seen_ids.add(raw_id)
+        
+        # Check subquestions
+        sub_questions = q.get("sub_questions") or q.get("subquestions") or []
+        for sq in sub_questions:
+            sq_id = str(sq.get("sub_id") or sq.get("id") or "")
+            if not sq_id:
+                raise ValueError(f"invalid_blueprint_identity: missing_sub_id in {raw_id}")
 
 async def run_grading_orchestrator(
     exam_id: str,
@@ -69,7 +101,10 @@ async def run_grading_orchestrator(
         if not blueprint or not blueprint.get("questions"):
             raise ValueError(f"Blueprint not found or empty for exam: {exam_id}")
             
-        logger.info(f"✅ Blueprint fetched: exam_id={exam_id}")
+        # Task 3: Pre-grading validation
+        validate_blueprint_ids(blueprint)
+        
+        logger.info(f"✅ Blueprint fetched and validated: exam_id={exam_id}")
 
         # 2. Fetch Submission & Images
         logger.info(f"🔍 Fetching submission: submission_id={submission_id}")
@@ -97,43 +132,75 @@ async def run_grading_orchestrator(
             llm_service=llm_service
         )
         
-        # SCHEMA_ENFORCED: Convert to Answer models
+        # SCHEMA_ENFORCED: Convert to Answer models (Task 2 & 5)
         answers: List[Answer] = []
-        for raw_ans in (aligned_result_raw.get("answers") or []):
+        # Phase 3: aligned_result_raw["answers"] is now a DICT
+        aligned_answers_dict = aligned_result_raw.get("answers") or {}
+        
+        # Step 4: Invariant Guard (MANDATORY)
+        assert isinstance(aligned_answers_dict, dict), "Aligned answers must be a dict"
+        assert all(
+            key is not None and isinstance(key, str)
+            for key in aligned_answers_dict.keys()
+        ), "CRITICAL: None or invalid key detected in aligned_answers"
+        
+        for cid, raw_ans in aligned_answers_dict.items():
             answers.append(Answer(
-                question_number=str(raw_ans.get("question_number")),
-                sub_label=raw_ans.get("sub_label"),
+                question_number=str(raw_ans.get("raw_question_number") or cid or ""),
+                sub_label=str(raw_ans.get("sub_part") or ""),
+                question_id=cid, # Phase 3: canonical_id is the identity
                 answer_text=raw_ans.get("answer_text", ""),
-                mapping_confidence=float(raw_ans.get("confidence", 1.0))
+                confidence_score=float(raw_ans.get("confidence_score", 1.0)),
+                confidence_level=raw_ans.get("confidence_level", "HIGH"),
+                mapping_status=raw_ans.get("mapping_status", "valid")
             ))
+
+        # Task 6: Coverage Validation (Non-Blocking)
+        metrics = aligned_result_raw.get("metrics") or {}
+        coverage_ratio = float(metrics.get("coverage_ratio", 1.0))
+        
+        should_flag_review = False
+        if coverage_ratio < 0.7:
+            logger.warning(f"[COVERAGE] Low mapping coverage: {coverage_ratio:.2f} < 0.7. Flagging for review.")
+            should_flag_review = True
 
         logger.info(f"✅ Alignment complete: submission_id={submission_id}, answers={len(answers)}")
 
         # 5. Convert to GradingEngine format (vision_answers)
         vision_answers = {}
-        id_manager = IdentityManager()
         
         for ans in answers:
-            qn = ans.question_number
-            sub_label = ans.sub_label
-            clean_qn = id_manager.normalize_id(qn)
+            # Use question_id if available, otherwise fallback and normalize
+            clean_qn = ans.question_id or normalize_question_id(ans.question_number)
+            
+            if not clean_qn:
+                logger.warning(f"⚠️ Skipping unmapped answer in vision_answers: {ans.question_number} | {ans.sub_label}")
+                continue
+
+            # Task 4/7: Standardize status for GradingEngine (case-insensitive)
+            status_upper = (ans.mapping_status or "valid").upper()
             
             if clean_qn not in vision_answers:
                 vision_answers[clean_qn] = {
                     "question_number": clean_qn,
                     "subanswers": [],
                     "combined_text": ans.answer_text,
-                    "mapping_confidence": ans.mapping_confidence
+                    "confidence_score": ans.confidence_score,
+                    "confidence_level": ans.confidence_level,
+                    "mapping_status": status_upper
                 }
             else:
                 vision_answers[clean_qn]["combined_text"] += "\n" + ans.answer_text
+                # If any part of a multi-segment answer is problematic, the whole thing is.
+                if status_upper != "VALID":
+                    vision_answers[clean_qn]["mapping_status"] = status_upper
             
             # Sub-question mapping
-            sub_id = sub_label if sub_label else "root"
+            sub_id = str(ans.sub_label) if ans.sub_label else "root"
             vision_answers[clean_qn]["subanswers"].append({
                 "sub_id": sub_id,
                 "combined_text": ans.answer_text,
-                "mapping_confidence": ans.mapping_confidence
+                "confidence_score": ans.confidence_score
             })
 
         # 6. Grade using the GradingEngine
@@ -145,16 +212,23 @@ async def run_grading_orchestrator(
         )
         
         # 7. Final Submission model construction
+        final_total = engine_result.total_awarded
+        possible_total = engine_result.total_possible
+        
+        logger.info(f"[ORCHESTRATOR] Final aggregation: {final_total}/{possible_total}")
+        
         final_submission = Submission(
             submission_id=submission_id,
             exam_id=exam_id,
             student_id=student_id,
             student_name=student_name,
-            status="ai_graded",
+            status="NEEDS_REVIEW" if should_flag_review else "ai_graded",
+            answers=aligned_answers_dict, # Phase 3: Store as dict
             question_scores=engine_result.grades,
-            total_score=engine_result.total_awarded,
-            total_possible=engine_result.total_possible,
-            percentage=(engine_result.total_awarded / engine_result.total_possible * 100) if engine_result.total_possible > 0 else 0.0,
+            total_score=final_total,
+            total_possible=possible_total,
+            percentage=(final_total / possible_total * 100) if possible_total > 0 else 0.0,
+            needs_manual_review=should_flag_review,
             graded_at=datetime.now(timezone.utc).isoformat(),
             logs=engine_result.logs
         )

@@ -70,9 +70,13 @@ def _question_to_legacy(question: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _aggregate_alignment_answers(answers: List[Dict[str, Any]]) -> Dict[int, Dict[Optional[str], str]]:
+def _aggregate_alignment_answers(answers: Any) -> Dict[int, Dict[Optional[str], str]]:
     grouped: Dict[int, Dict[Optional[str], List[str]]] = defaultdict(lambda: defaultdict(list))
-    for ans in answers:
+    
+    # Handle both list (legacy) and dict (Phase 3)
+    answers_list = answers.values() if isinstance(answers, dict) else answers
+    
+    for ans in (answers_list or []):
         try:
             qn_raw = ans.get("question_number")
             if isinstance(qn_raw, str):
@@ -223,7 +227,11 @@ def _select_context_images(
     if include_student:
         qn = int(question.get("number", 0) or 0)
         if answer_images:
-            for ans in (alignment_result.get("answers") or []):
+            # Phase 3: handles both list and dict
+            ans_payload = alignment_result.get("answers") or {}
+            ans_iterator = ans_payload.values() if isinstance(ans_payload, dict) else ans_payload
+            
+            for ans in (ans_iterator or []):
                 try:
                     qn_raw = ans.get("question_number")
                     if isinstance(qn_raw, str):

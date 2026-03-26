@@ -131,7 +131,7 @@ async def perform_alignment_and_update(
         "detected_questions": sorted(
             {
                 int(a.get("question_number"))
-                for a in (alignment_result.get("answers") or [])
+                for a in (alignment_result.get("answers") or {}).values()
                 if str(a.get("question_number", "")).isdigit()
             }
         ),

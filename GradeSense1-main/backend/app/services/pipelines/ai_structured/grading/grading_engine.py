@@ -1,16 +1,13 @@
 import asyncio
 import json
 import re
-from typing import Dict, List, Any, Optional
-
+from typing import List, Dict, Any, Optional, Set, Tuple
 from app.services.grading.llm_evaluator import LlmEvaluator
 from app.adapters.interfaces import AbstractLLMService
 from app.services.grading.answer_normalizer import AnswerNormalizer
-from app.services.grading.concept_matcher import ConceptMatcher
 from app.services.grading.rubric_builder import RubricBuilder
 from app.core.logging_config import logger
-
-from typing import Tuple
+from app.utils.identity_manager import normalize_question_id, is_valid_question_id
 from app.core.exceptions import CustomServiceException
 from app.models.submission import QuestionScore, SubQuestionScore, GradingResult
 from app.repositories import ExamRepo
@@ -19,6 +16,8 @@ from app.services.pipelines.ai_structured.extraction.utils import _derive_total_
 from app.services.pipelines.ai_structured.grading.alignment_service import ALIGNMENT_COVERAGE_GATE, align_answers
 from app.services.pipelines.ai_structured.grading.grading_interface import GRADING_CONTRACT_VERSION, grade_answers_with_contracts
 from app.layers.ai_structured.validation import validate_structure
+from app.services.pipelines.ai_structured.grading.score_validator import validate_score_justification
+from app.services.pipelines.ai_structured.grading.score_band import compute_score_band, enforce_score_band
 
 exam_repo = ExamRepo()
 
@@ -61,10 +60,8 @@ class GradingEngine:
     
     def __init__(self, llm_service: AbstractLLMService = None):
         self.llm_service = llm_service
-        self.id_manager = IdentityManager()
         self.evaluator = LlmEvaluator(llm_service)
         self.normalizer = AnswerNormalizer()
-        self.matcher = ConceptMatcher()
         self.rubric_builder = RubricBuilder()
 
     async def _grade_worker(self, question: Dict[str, Any], mapped_packet: Optional[Dict[str, Any]]) -> QuestionScore:
@@ -87,7 +84,7 @@ class GradingEngine:
         model_answer = question.get("model_answer") or question.get("expected_answer") or "Refer to standard definition."
         
         # Identity
-        clean_qid = self.id_manager.normalize_id(qid)
+        clean_qid = normalize_question_id(qid)
         q_logs.append(f"Question {clean_qid}: max_marks={max_marks}")
         
         # Resolve initial raw_text and mapped_subanswers for entry evaluation
@@ -96,7 +93,8 @@ class GradingEngine:
         mapped_subanswers = {}
         
         if isinstance(mapped_packet, dict):
-            confidence = float(mapped_packet.get("mapping_confidence", 1.0))
+            # Task 5/8: Check both field names for confidence
+            confidence = float(mapped_packet.get("confidence_score") or mapped_packet.get("mapping_confidence", 1.0))
             raw_text = mapped_packet.get("combined_text", "")
             if mapped_packet.get("subanswers"):
                 for sa in mapped_packet.get("subanswers", []):
@@ -107,7 +105,7 @@ class GradingEngine:
                 for sa in mapped_packet.get("subanswers", []):
                     if sa.get("sub_id", "").lower() == sub_id:
                         raw_text = sa.get("combined_text", "")
-                        confidence = float(sa.get("mapping_confidence", confidence))
+                        confidence = float(sa.get("confidence_score") or sa.get("mapping_confidence", confidence))
                         q_logs.append(f"subanswer {sub_id} raw_text length={len(raw_text)}")
                         break
 
@@ -210,41 +208,70 @@ class GradingEngine:
                 sq_norm_result = self.normalizer.normalize(sq_raw_text)
                 sq_clean_answer = sq_norm_result["normalized_answer"]
 
-                # Rubric & Concept Match (Deterministic base)
+                # Rubric Extraction (For signal only)
                 sq_rubric = self.rubric_builder.build_rubric(sq_text, sq_model, sq_max_marks)
-                sq_match = self.matcher.match_concepts(sq_rubric, sq_clean_answer)
-                sq_deterministic_score = float(sq_match["score"])
-
-                # LLM Evaluation
+                sq_concepts = sq_rubric.get("concepts", [])
+                
+                # LLM Evaluation (Step 1)
                 sq_eval_result = await self.evaluator.evaluate(
                     question_number=f"{clean_qid}.{sq_id}",
                     question_text=sq_text,
                     model_answer=sq_model,
                     max_marks=sq_max_marks,
                     student_answer=sq_clean_answer,
-                    matched_concepts=sq_match["matched_concepts"],
-                    missing_concepts=sq_match["missing_concepts"]
+                    matched_concepts=[c["concept"] for c in sq_concepts],
+                    missing_concepts=[]
                 )
                 
-                # Apply deterministic score and validate
-                # Check for evaluation failure
-                if sq_eval_result.get("score") is None:
-                    error_msg = sq_eval_result.get("error") or "evaluation_failed"
-                    raise ValueError(f"evaluation_failure: question={qid} sub={sq_id} reason={error_msg}")
+                llm_score = float(sq_eval_result.get("score", 0.0))
+                feedback = sq_eval_result.get("feedback", "")
+                detected = sq_eval_result.get("concepts_detected", [])
+                missing = sq_eval_result.get("concepts_missing", [])
+                
+                # Concept Coverage (Step 0 - for logs/fallback)
+                total_c = len(sq_concepts)
+                detected_c = len(detected)
+                concept_coverage = detected_c / total_c if total_c > 0 else 1.0
+                logger.info(f"[CONCEPT] coverage={concept_coverage:.2f} detected={detected_c} missing={len(missing)}")
 
-                # Use the evaluated LLM score capped at max_marks.
-                sq_awarded = min(float(sq_eval_result.get("score", 0.0)), sq_max_marks)
+                # Validation (Step 2)
+                validation = validate_score_justification(sq_eval_result, sq_clean_answer, sq_max_marks)
+                hallucination_detected = validation.get("hallucination_detected", False)
+                logger.info(f"[VALIDATION] hallucination_detected={hallucination_detected}")
 
+                sq_grading_mode = "AI_EVALUATED"
+                if hallucination_detected:
+                    # Step 3: Fallback
+                    logger.warning("[VALIDATION_FAILED] Triggering deterministic fallback")
+                    sq_awarded = concept_coverage * sq_max_marks
+                    sq_grading_mode = "DETERMINISTIC_FALLBACK"
+                    logger.info(f"[FALLBACK] activated coverage={concept_coverage:.2f} score={sq_awarded:.2f}")
+                else:
+                    # Step 4: Score Band Clamp
+                    min_score, max_score = compute_score_band(concept_coverage, sq_max_marks)
+                    sq_awarded = max(min(llm_score, max_score), min_score)
+                    logger.info(f"[SCORE_BAND] allowed={min_score:.2f}-{max_score:.2f} given={llm_score:.2f} corrected={sq_awarded:.2f}")
+
+                # Step 5: Zero Score Protection
+                if concept_coverage > 0.4 and sq_awarded == 0:
+                    logger.warning("[ZERO_SCORE_OVERRIDE] Invalid zero score detected")
+                    sq_awarded = concept_coverage * sq_max_marks
+                    logger.info(f"[ZERO_SCORE_FIXED] new_score={sq_awarded:.2f}")
+
+                # Finalize
                 total_awarded += sq_awarded
-                fb = sq_eval_result.get("feedback", "")
-                if fb:
-                    final_feedback.append(f"Part {sq_id}: {fb}")
+                if feedback:
+                    final_feedback.append(f"Part {sq_id}: {feedback}")
 
                 sub_scores.append(SubQuestionScore(
                     sub_id=sq_id,
                     max_marks=sq_max_marks,
                     obtained_marks=sq_awarded,
-                    ai_feedback=fb
+                    ai_feedback=feedback,
+                    concepts_detected=detected,
+                    missing_concepts=missing,
+                    concept_coverage=concept_coverage,
+                    grading_mode=sq_grading_mode
                 ))
             
             # ✅ STEP 5 — SUMMARY LOG (PER QUESTION, NOT FUNCTION)
@@ -269,21 +296,11 @@ class GradingEngine:
             norm_result = self.normalizer.normalize(raw_text)
             clean_answer = norm_result["normalized_answer"]
 
-            # 1. Build Rubric Deterministically
-            rubric = self.rubric_builder.build_rubric(
-                q_text,
-                model_answer,
-                max_marks
-            )
+            # 1. Build Rubric (Signal only)
+            rubric = self.rubric_builder.build_rubric(q_text, model_answer, max_marks)
+            concepts = rubric.get("concepts", [])
 
-            # 2. Match Concepts Deterministically
-            match_result = self.matcher.match_concepts(
-                rubric,
-                clean_answer
-            )
-            deterministic_score = float(match_result["score"])
-
-            # 3. Generate Feedback using LLM
+            # 2. LLM Evaluation (Step 1)
             if clean_answer.strip():
                 eval_result = await self.evaluator.evaluate(
                     question_number=clean_qid,
@@ -291,23 +308,61 @@ class GradingEngine:
                     model_answer=model_answer,
                     max_marks=max_marks,
                     student_answer=clean_answer,
-                    matched_concepts=match_result["matched_concepts"],
-                    missing_concepts=match_result["missing_concepts"]
+                    matched_concepts=[c["concept"] for c in concepts],
+                    missing_concepts=[]
                 )
                 
-                # Check for evaluation failure
-                if eval_result.get("score") is None:
-                    error_msg = eval_result.get("error") or "evaluation_failed"
-                    raise ValueError(f"evaluation_failure: question={qid} reason={error_msg}")
+                llm_score = float(eval_result.get("score", 0.0))
+                feedback = eval_result.get("feedback", "No feedback provided.")
+                detected = eval_result.get("concepts_detected", [])
+                missing = eval_result.get("concepts_missing", [])
+                
+                # Concept Coverage (Step 0)
+                total_c = len(concepts)
+                detected_c = len(detected)
+                concept_coverage = detected_c / total_c if total_c > 0 else 1.0
+                logger.info(f"[CONCEPT] coverage={concept_coverage:.2f} detected={detected_c} missing={len(missing)}")
 
-                # Use the evaluated LLM score capped at max_marks.
-                final_awarded = min(float(eval_result.get("score", 0.0)), max_marks)
-                global_feedback = eval_result.get("feedback", "No feedback provided.")
+                # Validation (Step 2)
+                validation = validate_score_justification(eval_result, clean_answer, max_marks)
+                hallucination_detected = validation.get("hallucination_detected", False)
+                logger.info(f"[VALIDATION] hallucination_detected={hallucination_detected}")
+
+                grading_mode = "AI_EVALUATED"
+                if hallucination_detected:
+                    # Step 3: Fallback
+                    logger.warning("[VALIDATION_FAILED] Triggering deterministic fallback")
+                    final_awarded = concept_coverage * max_marks
+                    grading_mode = "DETERMINISTIC_FALLBACK"
+                    logger.info(f"[FALLBACK] activated coverage={concept_coverage:.2f} score={final_awarded:.2f}")
+                else:
+                    # Step 4: Score Band Clamp
+                    min_score, max_score = compute_score_band(concept_coverage, max_marks)
+                    final_awarded = max(min(llm_score, max_score), min_score)
+                    logger.info(f"[SCORE_BAND] allowed={min_score:.2f}-{max_score:.2f} given={llm_score:.2f} corrected={final_awarded:.2f}")
+
+                # Step 5: Zero Score Protection
+                if concept_coverage > 0.4 and final_awarded == 0:
+                    logger.warning("[ZERO_SCORE_OVERRIDE] Invalid zero score detected")
+                    final_awarded = concept_coverage * max_marks
+                    logger.info(f"[ZERO_SCORE_FIXED] new_score={final_awarded:.2f}")
+
+                # Finalize
+                global_feedback = feedback
+                concepts_detected_final = detected
+                missing_concepts_final = missing
+                coverage_final = concept_coverage
+                grading_mode_final = grading_mode
+
             else:
                 # Handle empty answer gracefully
                 logger.info(f"Empty answer detected for question {qid}")
                 final_awarded = 0.0
                 global_feedback = "No answer provided by student."
+                concepts_detected_final = []
+                missing_concepts_final = [c["concept"] for c in concepts]
+                coverage_final = 0.0
+                grading_mode_final = "AI_EVALUATED"
 
             global_answer = clean_answer
 
@@ -321,7 +376,11 @@ class GradingEngine:
             status="graded",
             ai_feedback=global_feedback,
             normalized_answer=global_answer,
-            sub_scores=sub_scores
+            sub_scores=sub_scores,
+            concepts_detected=concepts_detected_final if not sub_questions else [],
+            missing_concepts=missing_concepts_final if not sub_questions else [],
+            concept_coverage=coverage_final if not sub_questions else 0.0,
+            grading_mode=grading_mode_final if not sub_questions else "AI_EVALUATED"
         )
 
     async def run_production_grading(self, blueprint: Dict[str, Any], vision_answers: Dict[str, Any]) -> GradingResult:
@@ -334,9 +393,8 @@ class GradingEngine:
         # ADDED LOGGING START
         logger.info("[STEP START] INITIALIZE_GRADING")
         # ADDED LOGGING END
-        # Rule 2: Ingestion & Normalization
         normalized_vision = {
-            self.id_manager.normalize_id(k): v 
+            normalize_question_id(k): v 
             for k, v in vision_answers.items() if k
         }
         
@@ -359,8 +417,25 @@ class GradingEngine:
             mapped = normalized_vision.get(clean_qid)
             if mapped is None and root_id != clean_qid:
                 mapped = normalized_vision.get(root_id)
-                
-            tasks.append(self._grade_worker(q, mapped))
+            
+            # Task 8: Aggregation Safety & Case-insensitivity
+            # If mapping is not VALID (e.g. AMBIGUOUS, MISSING), do not award marks.
+            raw_status = (mapped.get("mapping_status") or "VALID") if mapped else "MISSING"
+            mapping_status = str(raw_status).upper()
+            
+            if mapping_status == "VALID":
+                tasks.append(self._grade_worker(q, mapped))
+            else:
+                # Store a dummy score for non-valid mapping to keep indices aligned for raw_results
+                async def mock_failed_mapping():
+                    return QuestionScore(
+                        question_number=clean_qid,
+                        max_marks=float(q.get("marks") or q.get("max_marks") or 0.0),
+                        obtained_marks=0.0,
+                        status="needs_review",
+                        ai_feedback=f"Aggregation safety: Mapping is {mapping_status}. Manual review required."
+                    )
+                tasks.append(mock_failed_mapping())
         
         # return_exceptions=True ensures one failure doesn't crash the whole run
         raw_results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -388,16 +463,46 @@ class GradingEngine:
                 # Since we want SCHEMA_ENFORCED, we strictly follow QuestionScore.
 
         # Rule 9: Dynamic Score Aggregation (Root-ID level)
+        # Task 2: Enforce correct accumulation
+        total_awarded = 0.0
+        total_possible = 0.0
+        
         main_q_awarded: Dict[str, float] = {}
         main_q_possible: Dict[str, float] = {}
         
         for res in results_list:
-            root_id = self.id_manager.get_root_id(res.question_number)
-            main_q_awarded[root_id] = main_q_awarded.get(root_id, 0.0) + res.obtained_marks
-            main_q_possible[root_id] = main_q_possible.get(root_id, 0.0) + res.max_marks
+            # Task 4: Lock aggregation source of truth
+            # final_score is res.obtained_marks (already validated/banded in _grade_worker)
+            final_score = res.obtained_marks
+            max_marks = res.max_marks
+            qid = res.question_number
+            
+            # Sub-question awareness for aggregation
+            root_id = str(qid).split('.')[0]
+            main_q_awarded[root_id] = main_q_awarded.get(root_id, 0.0) + final_score
+            main_q_possible[root_id] = main_q_possible.get(root_id, 0.0) + max_marks
+            
+            # Task 2: Accumulate totals
+            total_awarded += final_score
+            total_possible += max_marks
+            
+            # Task 5: Aggregation logs
+            all_logs.append(f"[AGGREGATION] {qid} → score={final_score:.2f} max={max_marks:.2f} running_total={total_awarded:.2f}")
 
-        total_awarded = round(sum(main_q_awarded.values()), 2)
-        total_possible = round(sum(main_q_possible.values()), 2)
+        # Final rounding for persistence safety
+        total_awarded = float(f"{total_awarded:.2f}")
+        total_possible = float(f"{total_possible:.2f}")
+
+        # Task 6: Final sanity log (including normalization if target exists)
+        target_total = float(blueprint.get("total_marks") or total_possible)
+        normalized_score = (total_awarded / total_possible * target_total) if total_possible > 0 else 0.0
+        
+        check_msg = f"[FINAL SCORE CHECK] sum_of_questions={total_awarded} total_possible={total_possible}"
+        if abs(target_total - total_possible) > 0.01:
+            check_msg += f" normalized={normalized_score:.2f}/{target_total:.2f}"
+            
+        logger.info(check_msg)
+        all_logs.append(check_msg)
 
         logger.info(f"Engine totals: awarded={total_awarded}, possible={total_possible}")
 
