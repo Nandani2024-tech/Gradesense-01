@@ -85,18 +85,31 @@ def _source_confidence(source: str) -> float:
     return 0.62
 
 
-def _margin_mark_maps(visual_entities: Optional[Dict[str, Any]]) -> Tuple[Dict[Tuple[str, int], Dict[str, Any]], Dict[Tuple[str, int, str], Dict[str, Any]]]:
+def _margin_mark_maps(
+    visual_entities: Optional[Dict[str, Any]],
+    semantic_questions: Optional[List[Dict[str, Any]]] = None
+) -> Tuple[Dict[Tuple[str, int], Dict[str, Any]], Dict[Tuple[str, int, str], Dict[str, Any]]]:
     q_marks: Dict[Tuple[str, int], Dict[str, Any]] = {}
     sq_marks: Dict[Tuple[str, int, str], Dict[str, Any]] = {}
     
     # [FIX 5] Build (page, number) -> section lookup to resolve margin mark ambiguity
     anchor_sections: Dict[Tuple[int, int], str] = {}
-    for q in (visual_entities or {}).get("questions") or []:
+    visual_qs = (visual_entities or {}).get("questions") or []
+    for q in visual_qs:
         p = to_int(q.get("page"), 0)
         n = to_int(q.get("number"), 0)
         sec = str(q.get("section") or "").strip()
         if p >= 0 and n > 0:
             anchor_sections[(p, n)] = sec
+
+    # Fallback: if visual_questions is empty, map from semantic structure
+    semantic_fallback_sections: Dict[int, str] = {}
+    if not visual_qs and semantic_questions:
+        for q in semantic_questions:
+            n = to_int(q.get("number"), 0)
+            sec = str(q.get("section") or "").strip()
+            if n > 0:
+                semantic_fallback_sections[n] = sec
 
     for row in (visual_entities or {}).get("margin_marks") or []:
         if not isinstance(row, dict):
@@ -104,8 +117,10 @@ def _margin_mark_maps(visual_entities: Optional[Dict[str, Any]]) -> Tuple[Dict[T
         qn = to_int(row.get("q"), 0)
         page = to_int(row.get("page"), 0)
         
-        # Resolve section from anchor lookup
+        # Resolve section from anchor lookup, fallback to semantic fallback
         section = anchor_sections.get((page, qn), "")
+        if not section and semantic_fallback_sections:
+            section = semantic_fallback_sections.get(qn, "")
         
         if qn <= 0:
             continue
@@ -308,10 +323,52 @@ def _build_section_math_rules(structure: Dict[str, Any], visual_entities: Option
     return rules
 
 
-# _ensure_section_rule_anchor_coverage removed for Phase 1 compliance.
-# PASS 1: Remove synthetic anchor generation.
-# Phase 1 requires 1 visual anchor = 1 final question.
-# DO NOT create synthetic questions to cover gaps in section rules.
+def _ensure_section_rule_anchor_coverage(
+    section_rules: List[Dict[str, Any]],
+    visual_entities: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    if not section_rules or not isinstance(visual_entities, dict):
+        return {"synthetic_anchors_added": 0, "anchors": []}
+    
+    anchors = list(visual_entities.get("questions") or [])
+    by_num: Dict[int, Dict[str, Any]] = {}
+    for row in anchors:
+        if not isinstance(row, dict):
+            continue
+        qn = to_int(row.get("number"), 0)
+        if qn <= 0 or qn in by_num:
+            continue
+        by_num[qn] = row
+
+    synthetic_added = 0
+    for rule in section_rules:
+        start_q = to_int(rule.get("start_question"), 0)
+        count = to_int(rule.get("count"), 0)
+        if start_q <= 0 or count <= 0:
+            continue
+        expected = list(range(start_q, start_q + count))
+        missing = [qn for qn in expected if qn not in by_num]
+        if not missing:
+            continue
+        for qn in missing:
+            anchor = {
+                "number": qn,
+                "bbox": list(rule.get("bbox") or [0, 0, 0, 0]),
+                "page": to_int(rule.get("source_page"), 0),
+                "confidence": 0.2,
+                "source": "synthetic",
+            }
+            anchors.append(anchor)
+            by_num[qn] = anchor
+            synthetic_added += 1
+
+    if synthetic_added:
+        anchors.sort(key=lambda r: to_int(r.get("number"), 0))
+        
+    return {
+        "synthetic_anchors_added": synthetic_added,
+        "anchors": anchors
+    }
 
 def _build_section_math_rules_assignments(section_rules: List[Dict[str, Any]]) -> Dict[Tuple[str, int], float]:
     """Parse section math rules into explicit assignments.

@@ -15,6 +15,7 @@ from .mark_sources import (
     _build_section_math_rules,
     _resolve_section_math_blocks,
     _compute_effective_total,
+    _ensure_section_rule_anchor_coverage,
 )
 from .mark_conflict_resolver import (
     _reconcile_section_rule_starts,
@@ -81,9 +82,17 @@ def resolve_marks(
     base_marks: Dict[Tuple[str, int], float] = {key: max(0.0, to_float(by_key[key].get("marks"), 0.0)) for key in q_keys}
     evidence_refs: Dict[Tuple[str, int], List[Dict[str, Any]]] = defaultdict(list)
 
-    q_margin, sq_margin = _margin_mark_maps(visual_entities)
+    q_margin, sq_margin = _margin_mark_maps(visual_entities, questions)
     section_rules = _build_section_math_rules(normalized, visual_entities)
     section_rules = _reconcile_section_rule_starts(section_rules, q_keys)
+    
+    coverage_result = _ensure_section_rule_anchor_coverage(section_rules, visual_entities)
+    added_count = coverage_result.get("synthetic_anchors_added", 0)
+    if added_count > 0:
+        logger.info("[SYNTHETIC_ANCHORS_DETECTED] Count=%s", added_count)
+        preview = coverage_result.get("anchors", [])[:3]
+        logger.debug("Synthetic Anchor Preview: %s", preview)
+        
     _log_anchor_merge_result(visual_entities)
     changed_questions: set[Tuple[str, int]] = set()
 
