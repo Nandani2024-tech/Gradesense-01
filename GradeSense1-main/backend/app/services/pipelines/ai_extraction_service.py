@@ -34,6 +34,7 @@ from app.layers.ai_structured.structure_repair import apply_structure_repairs
 from app.layers.ai_structured.structure_validator import validate_structure as validate_structure_stage3
 from app.layers.ai_structured.validation import normalize_structure_payload
 from app.adapters.visual_extractor import extract_visual_entities
+from app.utils.identity_manager import build_question_uid, normalize_section
 
 
 _ALLOWED_TYPES = {
@@ -351,7 +352,7 @@ def _normalize_visual_payload(payload: Dict[str, Any], page_offset: int, page_co
             {
                 "number": qn,
                 "raw_number": str(row.get("number")),
-                "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
+                "bbox": [x for x in (row.get("bbox") or [0, 0, 0, 0])],
                 "page": _norm_page(row.get("page_index")),
                 "confidence": round(_to_float(row.get("confidence"), 0.0), 4),
             }
@@ -368,7 +369,7 @@ def _normalize_visual_payload(payload: Dict[str, Any], page_offset: int, page_co
             {
                 "q": qn,
                 "label": label,
-                "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
+                "bbox": [x for x in (row.get("bbox") or [0, 0, 0, 0])],
                 "page": _norm_page(row.get("page_index")),
                 "confidence": round(_to_float(row.get("confidence"), 0.0), 4),
             }
@@ -411,7 +412,7 @@ def _normalize_visual_payload(payload: Dict[str, Any], page_offset: int, page_co
                     "end": _to_int(row.get("start_question"), 0) + count - 1,
                 },
                 "expr": str(row.get("expression") or f"{count} x {round(float(per), 4)} = {round(float(total), 4)}"),
-                "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
+                "bbox": [x for x in (row.get("bbox") or [0, 0, 0, 0])],
                 "page": _norm_page(row.get("page_index")),
                 "confidence": round(_to_float(row.get("confidence"), 0.0), 4),
             }
@@ -428,7 +429,7 @@ def _normalize_visual_payload(payload: Dict[str, Any], page_offset: int, page_co
             {
                 "q1": q1,
                 "q2": q2,
-                "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
+                "bbox": [x for x in (row.get("bbox") or [0, 0, 0, 0])],
                 "page": _norm_page(row.get("page_index")),
                 "confidence": round(_to_float(row.get("confidence"), 0.0), 4),
             }
@@ -444,7 +445,7 @@ def _normalize_visual_payload(payload: Dict[str, Any], page_offset: int, page_co
             {
                 "kind": str(row.get("kind") or "section"),
                 "text": text,
-                "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
+                "bbox": [x for x in (row.get("bbox") or [0, 0, 0, 0])],
                 "page": _norm_page(row.get("page_index")),
                 "confidence": round(_to_float(row.get("confidence"), 0.0), 4),
             }
@@ -461,7 +462,7 @@ def _extract_partial_payload(raw_text: str) -> Optional[Dict[str, Any]]:
     if not snippets:
         return None
 
-    questions_by_number: Dict[int, Dict[str, Any]] = {}
+    questions_by_uid: Dict[str, Dict[str, Any]] = {}
     section_math_blocks: List[Dict[str, Any]] = []
     section_math_seen: set[Tuple[str, int, float, float]] = set()
 
@@ -470,19 +471,25 @@ def _extract_partial_payload(raw_text: str) -> Optional[Dict[str, Any]]:
         if parsed is None:
             continue
 
-        # Direct payload style.
         payload = _as_payload_dict(parsed)
         if isinstance(payload, dict):
             for q in (payload.get("questions") or []):
                 if not isinstance(q, dict):
                     continue
                 qn = _to_int(q.get("number"), 0)
-                if not qn:
+                sec = (str(q.get("section") or "").strip() or "default")
+                uid = build_question_uid(sec, qn) if qn else None
+                if not uid:
                     continue
-                if qn not in questions_by_number:
-                    questions_by_number[qn] = dict(q)
+                if uid not in questions_by_uid:
+                    q_copy = dict(q)
+                    # Ensure UID is present in the object
+                    q_copy["question_uid"] = uid
+                    q_copy["uid"] = uid
+                    questions_by_uid[uid] = q_copy
                 else:
-                    questions_by_number[qn] = _merge_questions(questions_by_number[qn], q)
+                    questions_by_uid[uid] = _merge_questions(questions_by_uid[uid], q)
+            
             for b in (payload.get("section_math_blocks") or []):
                 if not isinstance(b, dict):
                     continue
@@ -501,10 +508,16 @@ def _extract_partial_payload(raw_text: str) -> Optional[Dict[str, Any]]:
         # Question object style.
         if isinstance(parsed, dict) and _looks_like_question_dict(parsed):
             qn = _to_int(parsed.get("number"), 0)
-            if qn not in questions_by_number:
-                questions_by_number[qn] = dict(parsed)
-            else:
-                questions_by_number[qn] = _merge_questions(questions_by_number[qn], parsed)
+            sec = (str(parsed.get("section") or "").strip() or "default")
+            uid = build_question_uid(sec, qn) if qn else None
+            if uid:
+                if uid not in questions_by_uid:
+                    q_copy = dict(parsed)
+                    q_copy["question_uid"] = uid
+                    q_copy["uid"] = uid
+                    questions_by_uid[uid] = q_copy
+                else:
+                    questions_by_uid[uid] = _merge_questions(questions_by_uid[uid], parsed)
             continue
 
         # Section-math object style.
@@ -520,10 +533,10 @@ def _extract_partial_payload(raw_text: str) -> Optional[Dict[str, Any]]:
                 section_math_blocks.append(dict(parsed))
             continue
 
-    if not questions_by_number and not section_math_blocks:
+    if not questions_by_uid and not section_math_blocks:
         return None
 
-    ordered_questions = [questions_by_number[n] for n in sorted(questions_by_number.keys())]
+    ordered_questions = [questions_by_uid[u] for u in sorted(questions_by_uid.keys())]
     return {
         "questions": ordered_questions,
         "section_math_blocks": section_math_blocks,
@@ -700,7 +713,7 @@ def _normalize_batch_payload(
     normalized_questions: List[Dict[str, Any]] = []
     section_math_blocks: List[Dict[str, Any]] = []
     orphan_subparts = []
-    q_by_num = {}
+    q_by_uid = {}
 
     for q in questions:
         if not isinstance(q, dict):
@@ -755,11 +768,8 @@ def _normalize_batch_payload(
         text_source = "llm"
 
         # Fix 1: OCR backfill when LLM omits question_text.
-        # Use the page index from image_evidence to find the relevant OCR page text,
-        # then search for a pattern like "1." or "Q1" and extract the next sentence.
         if not llm_text and page_ocr_texts:
-            # Determine which page the question is on (use first evidence page if available).
-            ev_page = page_offset  # default to batch start page
+            ev_page = page_offset
             if evidence:
                 ev_page = evidence[0].get("page_index", page_offset)
 
@@ -767,14 +777,11 @@ def _normalize_batch_payload(
             if 0 <= ev_page < len(page_ocr_texts):
                 ocr_page_text = page_ocr_texts[ev_page]
             elif page_ocr_texts:
-                # Fallback: join all pages in this batch range.
                 ocr_page_text = " ".join(
                     page_ocr_texts[page_offset: page_offset + max(1, len(evidence))]
                 )
 
             if ocr_page_text:
-                # Search for the question number pattern followed by text.
-                # Handles: "1.", "Q1", "1)", "Question 1".
                 ocr_match = re.search(
                     rf"(?:^|\n)\s*(?:Q\.?\s*|Question\s*)?{re.escape(str(qn))}\s*[.):\-]?\s*(.{{10,512}}?)(?:\n|$)",
                     ocr_page_text,
@@ -782,58 +789,60 @@ def _normalize_batch_payload(
                 )
                 if ocr_match:
                     candidate = ocr_match.group(1).strip()
-                    # Collapse excessive whitespace and truncate.
                     candidate = re.sub(r"\s+", " ", candidate)[:512]
                     if len(candidate) >= 10:
                         llm_text = candidate
                         text_source = "ocr_fallback"
                         logger.info(
-                            "OCR_BACKFILL qn=%s page=%s text_len=%s",
-                            qn, ev_page, len(llm_text),
+                            "OCR_BACKFILL qn=%s page=%s",
+                            qn, ev_page,
                         )
 
         # Fix 2: Set ai_confidence based on text provenance.
-        # 0.9 = came from LLM (high confidence), 0.5 = OCR fallback, 0.1 = no text found.
         llm_ai_conf = _to_float(q.get("ai_confidence", q.get("confidence")), 0.0)
         if text_source == "llm" and llm_text:
-            # Preserve LLM-emitted confidence if higher, otherwise default to 0.9.
             ai_conf = max(llm_ai_conf, 0.9)
         elif text_source == "ocr_fallback":
             ai_conf = 0.5
         else:
-            ai_conf = max(llm_ai_conf, 0.1)  # no text at all
+            ai_conf = max(llm_ai_conf, 0.1)
+
+        # identity: generate globally unique question_uid (canonical)
+        sec = (str(q.get("section") or "").strip() or None)
+        q_uid = build_question_uid(sec or "default", qn)
 
         question_obj = {
             "number": qn,
             "raw_number": str(q.get("number")),
-            "section": (str(q.get("section") or "").strip() or None),
+            "question_uid": q_uid,
+            "uid": q_uid,  # Step 2: Ensure "uid" field is present
+            "section": sec,
             "instruction": (str(q.get("instruction") or "").strip() or None),
-            "question_text": llm_text,  # Fix 1: may now contain OCR fallback text
-            "question_text_source": text_source,  # Fix 1: track provenance
+            "question_text": llm_text,
+            "question_text_source": text_source,
             "question_type": _normalize_type(q.get("question_type")),
-            # Layer-2 semantic extraction must not assign marks.
             "marks": 0.0,
             "mark_source": "inferred",
             "mark_confidence": 0.0,
             "options": list(q.get("options") or []) or None,
             "subquestions": subquestions,
-            # OR groups are resolved from visual layer.
             "or_group_id": None,
             "image_evidence": evidence,
-            "ai_confidence": round(ai_conf, 4),  # Fix 2: always numeric 0–1
+            "ai_confidence": round(ai_conf, 4),
             "confidence": round(ai_conf, 4),
         }
         normalized_questions.append(question_obj)
-        q_by_num[qn] = question_obj
+        q_by_uid[q_uid] = question_obj
 
-    # Attach orphan subparts to their parents.
+    # Attach orphan subparts to their parents (using UID-aware matching).
     for orphan in orphan_subparts:
-        parent_q = q_by_num.get(orphan["parent"])
+        # Build suspected parent UID using current section context context if possible
+        parent_uid = build_question_uid("default", orphan["parent"])
+        parent_q = q_by_uid.get(parent_uid)
         if not parent_q:
             continue
 
         subparts = list(parent_q.get("subquestions") or [])
-
         if not any(str(sq.get("label") or "").strip().lower() == orphan["label"] for sq in subparts):
             subparts.append({
                 "label": orphan["label"],
@@ -843,18 +852,12 @@ def _normalize_batch_payload(
                 "confidence": orphan["confidence"],
                 "source": "semantic_orphan_recovery"
             })
-            logger.info(
-                "SUBPART_RECOVERED parent=%s label=%s text_len=%s",
-                orphan["parent"],
-                orphan["label"],
-                len(orphan["text"])
-            )
+            logger.info("SUBPART_RECOVERED parent=%s label=%s", orphan["parent"], orphan["label"])
 
         parent_q["subquestions"] = sorted(subparts, key=lambda s: str(s.get("label") or "").strip().lower())
 
     return {
         "questions": normalized_questions,
-        # Stage-2 semantic layer does not emit section math blocks.
         "section_math_blocks": section_math_blocks,
         "total_questions": int(payload.get("total_questions") or len(normalized_questions)),
         "total_marks": 0.0,
@@ -864,12 +867,20 @@ def _normalize_batch_payload(
 
 
 def _merge_questions(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str, Any]:
-    logger.warning(
-        "MERGE_FUNC_INPUT existing=%s incoming=%s",
-        json.dumps(existing, indent=2)[:1000],
-        json.dumps(incoming, indent=2)[:1000]
-    )
+    # Defensive check: Fail loudly if UID is missing
+    uid = existing.get("question_uid") or existing.get("uid")
+    if not uid:
+        sec = existing.get("section") or "unknown"
+        num = existing.get("number")
+        raise Exception(f"CRITICAL_UID_LOSS_ERROR stage=semantic_merge_start existing_number={num}, section={sec}")
+
+    # [SEMANTIC_MERGE_UID_CHECK] uid={uid}
+    logger.info(f"[SEMANTIC_MERGE_UID_CHECK] uid={uid}")
+
     merged = dict(existing)
+    # Ensure UID is explicitly preserved
+    merged["question_uid"] = uid
+    merged["uid"] = uid
     if len(str(incoming.get("question_text") or "")) > len(str(merged.get("question_text") or "")):
         merged["question_text"] = incoming.get("question_text")
 
@@ -1018,9 +1029,12 @@ def _extract_ocr_question_anchors(images: List[str]) -> List[Dict[str, Any]]:
             bbox = list(row.get("bbox") or row.get("bounding_box") or [0, 0, 0, 0])
             if len(bbox) != 4:
                 bbox = [0, 0, 0, 0]
+            q_uid = build_question_uid("default", qn)
             anchors.append(
                 {
                     "number": qn,
+                    "question_uid": q_uid,
+                    "uid": q_uid,
                     "bbox": bbox,
                     "page": idx,
                     "confidence": _to_float(row.get("confidence"), 0.6),
@@ -1034,6 +1048,7 @@ def _extract_structured_question_anchors(structure: Dict[str, Any]) -> List[Dict
     anchors: List[Dict[str, Any]] = []
     for q in (structure or {}).get("questions") or []:
         qn = _to_int(q.get("number"), 0)
+        q_uid = q.get("question_uid") or q.get("uid") or build_question_uid(q.get("section") or "default", qn)
         if not qn:
             continue
         best: Optional[Dict[str, Any]] = None
@@ -1048,6 +1063,8 @@ def _extract_structured_question_anchors(structure: Dict[str, Any]) -> List[Dict
             if best is None or conf > best["confidence"]:
                 best = {
                     "number": qn,
+                    "question_uid": q_uid,
+                    "uid": q_uid,
                     "bbox": bbox,
                     "page": page,
                     "confidence": conf,
@@ -1071,10 +1088,17 @@ def _merge_question_anchors(
         qn = _to_int(row.get("number"), 0)
         if qn <= 0:
             continue
+            
+        sec = row.get("section") or "default"
+        uid = row.get("question_uid") or row.get("uid") or build_question_uid(sec, qn)
+        
         candidates.append(
             {
                 "number": qn,
                 "raw_number": str(row.get("number")),
+                "question_uid": uid,
+                "uid": uid,
+                "section": row.get("section"),
                 "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
                 "page": _to_int(row.get("page"), -1),
                 "confidence": _to_float(row.get("confidence"), 0.0),
@@ -1085,17 +1109,26 @@ def _merge_question_anchors(
     candidates.extend([dict(a) for a in (ocr_anchors or [])])
     candidates.extend([dict(a) for a in (structured_anchors or [])])
 
-    by_number: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
-    for cand in candidates:
-        qn = _to_int(cand.get("number"), 0)
-        if qn <= 0:
-            continue
-        by_number[qn].append(cand)
+    # [ANCHOR_MERGE_UID_CHECK] candidates={len(candidates)}
+    logger.info(f"[ANCHOR_MERGE_UID_CHECK] candidates={len(candidates)}")
+
+    by_uid = defaultdict(list)
+    for q in candidates:
+        uid = q.get("question_uid") or q.get("uid")
+        if not uid:
+            # Step 10: Strict Identity Enforcement (No fallback allowed)
+            sec = q.get("section") or "unknown"
+            num = q.get("number")
+            raise Exception(f"UID missing for question number={num}, section={sec}")
+        by_uid[uid].append(q)
 
     merged: List[Dict[str, Any]] = []
-    for qn, items in by_number.items():
+    for uid, items in by_uid.items():
         if not items:
             continue
+        # Checkpoint C: UID Integrity Check (Per question in merge)
+        logger.info("LOG TAG: UID_INTEGRITY_CHECK_ANCHOR_MERGE uid=%s instances=%s", uid, len(items))
+        
         visuals = [it for it in items if str(it.get("source") or "").lower() == "visual"]
         ocrs = [it for it in items if str(it.get("source") or "").lower() == "ocr"]
         if visuals:
@@ -1139,7 +1172,10 @@ def _merge_question_anchors(
         best["source"] = final_source
         merged.append(best)
 
-    merged.sort(key=lambda r: _to_int(r.get("number"), 0))
+    # [ANCHOR_MERGE_RESULT] final_count={len(merged)} uids={[m.get('question_uid') for m in merged]}
+    logger.info(f"[ANCHOR_MERGE_RESULT] final_count={len(merged)} uids={[m.get('question_uid') or m.get('uid') for m in merged]}")
+
+    merged.sort(key=lambda r: (str(r.get("section") or ""), _to_int(r.get("number"), 0)))
     return merged
 
 
@@ -1352,324 +1388,304 @@ def _semantic_structure_from_visual_entities(visual_entities: Dict[str, Any]) ->
             "numbering_contiguous": False,
         }
     )
-
-
 def _merge_semantic_with_visual_entities(
     stage2_structure: Dict[str, Any],
     visual_entities: Dict[str, Any],
     page_ocr_texts: Optional[List[str]] = None,
-    full_ocr_results: Optional[List[Dict[str, Any]]] = None,  # Refined Phase 1: Spatial backfill
+    full_ocr_results: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
+    from app.utils.identity_manager import build_question_uid, normalize_section
+    import copy
+    import re
+
     def _demote_choice_subparts(question: Dict[str, Any]) -> bool:
         subparts = list(question.get("subquestions") or [])
-        if not subparts:
-            return False
+        if not subparts: return False
         qtype = str((question or {}).get("question_type") or "").strip().lower()
-        if qtype in {"passage", "passage_subparts"}:
-            return False
-
-        # Explicit subpart marks indicate real subquestions.
+        if qtype in {"passage", "passage_subparts"}: return False
         for sq in subparts:
-            if _to_float(sq.get("marks"), 0.0) > 0 and str(sq.get("mark_source") or "").strip().lower() in {
-                "margin",
-                "section_math",
-                "instruction",
-            }:
+            if _to_float(sq.get("marks"), 0.0) > 0 and str(sq.get("mark_source") or "").strip().lower() in {"margin", "section_math", "instruction"}:
                 return False
-
         raw_text = f"{question.get('instruction') or ''}\n{question.get('question_text') or ''}"
         text = raw_text.lower()
-        choice_phrases = [
-            "any one",
-            "any of the following",
-            "attempt any one",
-            "choose any one",
-            "either of the following",
-            "alternative question",
-            "in lieu of",
-        ]
-        has_choice_signal = any(phrase in text for phrase in choice_phrases)
-        if not has_choice_signal and re.search(r"(^|\n)\s*or\s*(\n|$)", raw_text, flags=re.IGNORECASE):
-            has_choice_signal = True
-        if qtype == "mcq":
-            has_choice_signal = True
-
-        if not has_choice_signal:
-            return False
-
+        choice_phrases = ["any one", "any of the following", "attempt any one", "choose any one", "either of the following", "alternative question", "in lieu of"]
+        has_choice_signal = any(phrase in text for phrase in choice_phrases) or bool(re.search(r"(^|\n)\s*or\s*(\n|$)", raw_text, flags=re.IGNORECASE)) or qtype == "mcq"
+        if not has_choice_signal: return False
         options = list(question.get("options") or [])
         preserved_subquestions = []
         demoted_any = False
-
         for sq in subparts:
             opt = str(sq.get("text") or "").strip()
-            sq_marks = _to_float(sq.get("marks"), 0.0)
-            
-            # Preserve valid semantic subquestions that have distinct text and positive marks
-            if qtype != "mcq" and opt and sq_marks > 0:
+            if qtype != "mcq" and opt and _to_float(sq.get("marks"), 0.0) > 0:
                 preserved_subquestions.append(sq)
             else:
-                if opt and opt not in options:
-                    options.append(opt)
+                if opt and opt not in options: options.append(opt)
                 demoted_any = True
-
-        if options:
-            question["options"] = options
-            
-        # Retain subquestions that were not demoted
+        if options: question["options"] = options
         question["subquestions"] = preserved_subquestions
         return demoted_any
 
     def _allows_visual_subparts(question: Dict[str, Any]) -> bool:
         qtype = str((question or {}).get("question_type") or "").strip().lower()
-        # Visual a/b/c/d labels are commonly MCQ options, not structural subparts.
-        if qtype in {"mcq", "fill_blank", "very_short", "writing", "letter", "essay"}:
-            return False
+        if qtype in {"mcq", "fill_blank", "very_short", "writing", "letter", "essay"}: return False
         options = (question or {}).get("options")
-        if isinstance(options, list) and len(options) >= 2:
-            return False
+        if isinstance(options, list) and len(options) >= 2: return False
         return qtype in {"short", "long", "passage", "passage_subparts", "descriptive_choice", "or_group"}
 
     def _extract_header_context(text: str) -> Dict[str, Any]:
-        """Extracts marks, number ranges, and instruction context from header text."""
         res = {"marks": None, "range": None, "instruction": text}
         if not text: return res
-        
-        # 1. Look for marks (e.g., "2 marks each", "5X2=10", "(5)")
         marks_match = re.search(r"(\d+(?:\.\d+)?)\s*marks?\s*(?:each)?", text, re.I)
-        if marks_match:
-            res["marks"] = float(marks_match.group(1))
+        if marks_match: res["marks"] = float(marks_match.group(1))
         else:
             simple_marks = re.search(r"\((\d+(?:\.\d+)?)\)", text)
             if simple_marks: res["marks"] = float(simple_marks.group(1))
-            
-        # 2. Look for question ranges (e.g., "Questions 1 to 5", "1-5", "Q. 1-10")
         range_match = re.search(r"(?:questions?|qn?\.?)\s*(\d+)\s*(?:to|-)\s*(\d+)", text, re.I)
-        if range_match:
-            res["range"] = (int(range_match.group(1)), int(range_match.group(2)))
-        
+        if range_match: res["range"] = (int(range_match.group(1)), int(range_match.group(2)))
         return res
 
-    normalized = normalize_structure_payload(stage2_structure or {})
-    q_by_num: Dict[Tuple[Optional[str], int], Dict[str, Any]] = {}
-    for q in (normalized.get("questions") or []):
-        num = _parse_question_number(q.get("number"))
-        if num is not None and num > 0:
-            s_val = (str(q.get("section") or "").strip() or None)
-            q_by_num[(s_val, num)] = dict(q)
-    visual_subparts_exist = bool((visual_entities or {}).get("subparts") or [])
-    visual_labels_by_q: Dict[int, Set[str]] = defaultdict(set)
-    for row in (visual_entities or {}).get("subparts") or []:
-        if not isinstance(row, dict):
-            continue
-        qn = _to_int(row.get("q"), 0)
-        label = str(row.get("label") or "").strip()
-        if qn <= 0 or not label:
-            continue
-        visual_labels_by_q[qn].add(label.lower())
+    def _is_bbox_overlap(b1: List[float], b2: List[float], threshold: float = 0.5) -> bool:
+        if not b1 or not b2 or len(b1) != 4 or len(b2) != 4: return False
+        x_left = max(b1[0], b2[0])
+        y_top = max(b1[1], b2[1])
+        x_right = min(b1[2], b2[2])
+        y_bottom = min(b1[3], b2[3])
+        if x_right < x_left or y_bottom < y_top: return False
+        overlap_area = (x_right - x_left) * (y_bottom - y_top)
+        area1 = (b1[2] - b1[0]) * (b1[3] - b1[1])
+        return overlap_area / max(1e-5, area1) >= threshold
 
-    # 1. Group visual anchors by page for efficient spatial lookup
-    visual_by_page = defaultdict(list)
-    for row in (visual_entities or {}).get("questions") or []:
-        if isinstance(row, dict):
-            p = _to_int(row.get("page"), 0)
-            visual_by_page[p].append(row)
+    semantic_questions = stage2_structure.get("questions") or []
+    visual_anchors = (visual_entities or {}).get("questions") or []
+    
+    logger.info("LOG TAG: VISUAL_MERGE_START semantic_count=%s visual_anchors=%s", len(semantic_questions), len(visual_anchors))
 
-    # Phase 3: Enrichment & Propagation
-    # 1. Pre-parse visual headers for range and mark context
+    # 1. Header Contexts for spatial section assignment
     header_contexts = []
     for h in sorted((visual_entities or {}).get("headers") or [], 
                     key=lambda x: (_to_int(x.get("page"), 0), (x.get("bbox") or [0])[0])):
         h_text = str(h.get("text") or "").strip()
         ctx = _extract_header_context(h_text)
-        ctx.update({
-            "page": _to_int(h.get("page"), 0),
-            "ymin": (h.get("bbox") or [0])[0],
-        })
+        ctx.update({"page": _to_int(h.get("page"), 0), "ymin": (h.get("bbox") or [0])[0], "instruction": h_text})
         header_contexts.append(ctx)
 
-    # 2. Map semantic questions to visual anchors and propagate context
-    for (sec_key, qn), q in q_by_num.items():
-        if not _allows_visual_subparts(q): continue
+    # 2. VISUAL-FIRST MERGE: Build visual map as Source of Truth
+    visual_map = {}
+    ordered_keys = []
+    
+    for anchor in visual_anchors:
+        if not isinstance(anchor, dict): continue
+        qn = _parse_question_number(anchor.get("number"))
+        if qn is None: continue
         
-        # Find best spatial match. 
-        # In multi-section exams, multiple anchors might have the same number.
-        # We find the anchor that best matches the semantic 'section'.
-        best_anchor = None
-        for p_idx, anchors in visual_by_page.items():
-            for anchor in anchors:
-                if _parse_question_number(anchor.get("number")) == qn:
-                    # Spatial Section Context for Anchor
-                    a_ymin = (anchor.get("bbox") or [0])[0]
-                    h_text = None
-                    for ctx in header_contexts:
-                        if ctx["page"] < p_idx or (ctx["page"] == p_idx and ctx["ymin"] < a_ymin):
-                            h_text = ctx["instruction"]
-                        else: break
-                    
-                    # Match by section if available
-                    if sec_key and h_text and sec_key.lower() == h_text.lower():
-                        best_anchor = anchor; break
-                    elif not sec_key:
-                        best_anchor = anchor; break
-            if best_anchor: break
-
-        v_page = _to_int(best_anchor.get("page"), 0) if best_anchor else -1
-        v_bbox = (best_anchor.get("bbox") or []) if best_anchor else []
-        a_ymin = v_bbox[0] if v_bbox else 0
-
-        # Propagation: Nearest preceding header (Refined for Section-Awareness)
-        matched_ctx = None
+        p_idx = _to_int(anchor.get("page"), 0)
+        a_bbox = anchor.get("bbox") or [0, 0, 0, 0]
+        
+        # Spatial section logic
+        a_ymin = a_bbox[0] if a_bbox else 0
+        spatial_sec = None
         for ctx in header_contexts:
-            if ctx["range"] and ctx["range"][0] <= qn <= ctx["range"][1]:
-                matched_ctx = ctx; break
-            if ctx["page"] < v_page or (ctx["page"] == v_page and ctx["ymin"] < a_ymin):
-                matched_ctx = ctx
+            if ctx["page"] < p_idx or (ctx["page"] == p_idx and ctx["ymin"] < a_ymin):
+                spatial_sec = ctx["instruction"]
+            else: break
+            
+        base_key = (p_idx, tuple(a_bbox))
+        idx = 0
+        key = (base_key[0], base_key[1], idx)
+        while key in visual_map:
+            idx += 1
+            key = (base_key[0], base_key[1], idx)
+            
+        ordered_keys.append(key)
+        visual_map[key] = {
+            "number": qn,
+            "page": p_idx,
+            "bbox": a_bbox,
+            "confidence": _to_float(anchor.get("confidence"), 0.0),
+            "section": spatial_sec,
+            "candidates": [],
+            "subquestions": copy.deepcopy(anchor.get("subquestions", [])),
+            "original_anchor": copy.deepcopy(anchor),
+        }
+
+    # Detect overlaps
+    for i in range(len(ordered_keys)):
+        for j in range(i + 1, len(ordered_keys)):
+            k1 = ordered_keys[i]
+            k2 = ordered_keys[j]
+            if k1[0] == k2[0] and _is_bbox_overlap(list(k1[1]), list(k2[1]), 0.5):
+                logger.warning("LOG TAG: VISUAL_OVERLAP_DETECTED anchors >50%% page=%s box1=%s box2=%s", k1[0], k1[1], k2[1])
+
+    # 3. SEMANTIC ENRICHMENT
+    for sq in semantic_questions:
+        best_key = None
+        evs = sq.get("image_evidence") or []
+        sq_page = _to_int(evs[0].get("page_index"), -1) if evs else -1
+        sq_bbox = evs[0].get("bbox") if evs else None
+        sq_num = _to_int(sq.get("number"), 0)
+        
+        # Priority 1: Match by page and bbox overlap > 50%
+        if sq_page >= 0 and sq_bbox:
+            for k in ordered_keys:
+                if k[0] == sq_page and _is_bbox_overlap(sq_bbox, list(k[1]), 0.5):
+                    best_key = k
+                    break
+                    
+        # Priority 2: Fallback exact number match (since sections are removed from primary keys)
+        if not best_key:
+            for k in ordered_keys:
+                if visual_map[k]["number"] == sq_num:
+                    best_key = k
+                    break
+                    
+        if best_key:
+            visual_map[best_key]["candidates"].append(sq)
+        else:
+            logger.warning("LOG TAG: MISSING_SEMANTIC_MATCH number=%s section=%s", sq_num, sq.get("section"))
+
+    logger.info("LOG TAG: VISUAL_MERGE_AFTER_SEMANTIC Total matched semantic enrichment candidates=%s", sum(len(v["candidates"]) for v in visual_map.values()))
+
+    # 4. RESOLVE FINAL QUESTIONS
+    final_questions = []
+    final_q_by_key = {}
+    used_uids = set()
+    
+    for key in ordered_keys:
+        v_node = visual_map[key]
+        qn = v_node["number"]
+        spatial_sec = v_node["section"]
+        candidates = v_node["candidates"]
+        
+        if len(candidates) > 1:
+            logger.warning("LOG TAG: SEMANTIC_CONFLICT Multiple semantics match visual anchor page=%s bbox=%s", key[0], key[1])
+            
+        best_cand = None
+        if candidates:
+            best_cand = max(candidates, key=lambda c: len(str(c.get("question_text") or "")))
+            
+        final_q = dict(v_node["original_anchor"])
+        final_q["number"] = qn
+        final_q["raw_number"] = str(qn)
+        
+        if best_cand:
+            final_q["question_text"] = best_cand.get("question_text", "")
+            final_q["question_type"] = best_cand.get("question_type", final_q.get("question_type") or "descriptive")
+            if best_cand.get("question_uid"):
+                cand_uid = best_cand["question_uid"]
+                idx = 1
+                unique_uid = cand_uid
+                while unique_uid in used_uids:
+                    unique_uid = f"{cand_uid}_{idx}"
+                    idx += 1
+                final_q["question_uid"] = unique_uid
+                final_q["uid"] = unique_uid
+        else:
+            final_q["question_text"] = ""
+            final_q["question_type"] = final_q.get("question_type") or "descriptive"
+            
+        if "question_uid" not in final_q:
+            base_uid = build_question_uid(spatial_sec or "default", qn)
+            idx = 1
+            unique_uid = base_uid
+            while unique_uid in used_uids:
+                unique_uid = f"{base_uid}_{idx}"
+                idx += 1
+            final_q["question_uid"] = unique_uid
+            final_q["uid"] = unique_uid
+            
+        used_uids.add(final_q["question_uid"])
+            
+        final_q["section"] = final_q.get("section") or spatial_sec
+        final_q["subquestions"] = v_node["subquestions"]
+        
+        ev = {
+            "page_index": key[0],
+            "bbox": list(key[1]),
+            "visual_confidence": v_node["confidence"]
+        }
+        if "image_evidence" not in final_q or not final_q["image_evidence"]:
+            final_q["image_evidence"] = []
+        final_q["image_evidence"].append(ev)
+        
+        p_idx = key[0]
+        a_bbox = key[1]
+        
+        llm_text = str(final_q.get("question_text") or "").strip()
+        if not llm_text and full_ocr_results and 0 <= p_idx < len(full_ocr_results):
+            lines = [str(L.get("text") or "").strip() for L in full_ocr_results[p_idx].get("lines", []) 
+                     if _is_bbox_within(L.get("bbox"), list(a_bbox), threshold=0.5)]
+            if lines:
+                final_q["question_text"] = " ".join(lines)[:1024]
+                final_q["question_text_source"] = "ocr_spatial_p3"
+                
+        matched_header = None
+        for ctx in header_contexts:
+            if ctx["range"] and ctx["range"][0] <= qn <= ctx["range"][1]: matched_header = ctx; break
+            if ctx["page"] < p_idx or (ctx["page"] == p_idx and ctx["ymin"] < a_bbox[0]): matched_header = ctx
             else: break
         
-        if matched_ctx:
-            q["section"] = matched_ctx["instruction"]
-            if matched_ctx["marks"] is not None and _to_float(q.get("marks"), 0.0) <= 0:
-                q["marks"] = matched_ctx["marks"]; q["mark_source"] = "header_propagation"
-                logger.info("PHASE3_MARKS_PROPAGATION (sec=%s, qn=%s) marks=%s", q["section"], qn, q["marks"])
-
-        if best_anchor:
-            # Refined Phase 3: Confidence Refinement
-            llm_text = str(q.get("question_text") or "").strip()
-            llm_conf = float(_to_float(q.get("ai_confidence"), 0.0))
-            ocr_conf = 0.0
+        if matched_header and matched_header["marks"] is not None and _to_float(final_q.get("marks"), 0.0) <= 0:
+            final_q["marks"] = matched_header["marks"]
+            final_q["mark_source"] = "header_propagation"
             
-            # Spatial OCR Backfill (Empty/Weak Text)
-            if not llm_text or llm_conf < 0.4:
-                if full_ocr_results and 0 <= v_page < len(full_ocr_results) and v_bbox:
-                    lines = [str(L.get("text") or "").strip() for L in full_ocr_results[v_page].get("lines", []) 
-                             if _is_bbox_within(L.get("bbox"), v_bbox, threshold=0.5)]
-                    if lines:
-                        backfilled = " ".join(lines)[:1024]
-                        if not llm_text or len(backfilled) > len(llm_text):
-                            q["question_text"] = backfilled
-                            ocr_conf = 0.7
-                            q["question_text_source"] = "ocr_spatial_p3"
-            
-            # Confidence Logic: LLM + Bounded OCR -> 0.9, Visual fallback -> 0.7
-            if llm_text and v_bbox and llm_conf >= 0.4:
-                q["ai_confidence"] = 0.9
-            else:
-                q["ai_confidence"] = max(llm_conf, ocr_conf, 0.7 if ocr_conf > 0 else 0.0)
-            q["confidence"] = q["ai_confidence"]
+        final_questions.append(final_q)
+        final_q_by_key[key] = final_q
 
-            # Option Cleanup (Descriptive)
-            if str(q.get("question_type") or "").lower() != "mcq" and q.get("options"):
-                q["options"] = None
+    for q in final_questions:
+        _demote_choice_subparts(q)
 
-            # Attach Spatial Evidence
-            ev = {"page_index": v_page, "bbox": v_bbox, "visual_confidence": _to_float(best_anchor.get("confidence"), 0.0)}
-            q["image_evidence"] = [ev]
-
-            # Propagate to Subquestions
-            p_marks = _to_float(q.get("marks"), 0.0)
-            p_instr = q.get("section")
-            for sq in (q.get("subquestions") or []):
-                if _to_float(sq.get("marks"), 0.0) <= 0 and p_marks > 0:
-                    # If whole section header said "2 marks each", propagate that.
-                    # This is slightly naive but better than 0.0.
-                    sq["marks"] = p_marks
-                    sq["mark_source"] = "parent_propagation"
-                if not sq.get("instruction"):
-                    sq["instruction"] = p_instr
-
-            logger.info("PHASE3_ENRICHMENT qn=%s page=%s conf=%s marks=%s", qn, v_page, q["ai_confidence"], q["marks"])
-
-    # 3. Create Visual-only Stubs with Phase 3 Enrichment
-    for p_idx, anchors in visual_by_page.items():
-        for anchor in anchors:
-            qn = _parse_question_number(anchor.get("number"))
-            if qn is None or qn <= 0: continue
-            
-            v_bbox = anchor.get("bbox") or []
-            ocr_text = ""
-            if full_ocr_results and 0 <= p_idx < len(full_ocr_results) and v_bbox:
-                lines = [str(L.get("text") or "").strip() for L in full_ocr_results[p_idx].get("lines", []) 
-                         if _is_bbox_within(L.get("bbox"), v_bbox, threshold=0.5)]
-                ocr_text = " ".join(lines)[:1024]
-            
-            # Find closest context for stub
-            matched_ctx = None
-            for ctx in header_contexts:
-                if ctx["range"] and ctx["range"][0] <= qn <= ctx["range"][1]:
-                    matched_ctx = ctx; break
-                if ctx["page"] < p_idx or (ctx["page"] == p_idx and ctx["ymin"] < (v_bbox[0] if v_bbox else 0)):
-                    matched_ctx = ctx
-                else: break
-
-            sec_stub = (str(matched_ctx.get("instruction") or "").strip() if matched_ctx else None)
-            if (sec_stub, qn) in q_by_num:
-                continue
-
-            q_by_num[(sec_stub, qn)] = {
-                "number": qn,
-                "section": sec_stub,
-                "question_text": ocr_text,
-                "question_text_source": "ocr_spatial_stub_p3",
-                "question_type": "descriptive",
-                "marks": _to_float(matched_ctx.get("marks"), 0.0) if matched_ctx else 0.0,
-                "ai_confidence": 0.7 if ocr_text else 0.0,
-                "options": None,
-                "subquestions": [],
-                "image_evidence": [{"page_index": p_idx, "bbox": v_bbox, "visual_confidence": _to_float(anchor.get("confidence"), 0.0)}],
-            }
-
-    # 4. Synchronize visual subparts (Section-Aware Union)
-    for (sec_key, qn), q in q_by_num.items():
-        if not _allows_visual_subparts(q): continue
-
-        original_subs = list(q.get("subquestions") or [])
-        semantic_labels = {str(sq.get("label") or "").strip().lower() for sq in original_subs}
+    # 5. Visual Subparts and OR groups sync based on strict spatial / number match
+    for row in (visual_entities or {}).get("subparts") or []:
+        qn_sub = _to_int(row.get("q"), 0)
+        label = str(row.get("label") or "").strip()
+        if qn_sub <= 0 or not label: continue
         
-        # Match visual subparts using number and section context
-        for row in (visual_entities or {}).get("subparts") or []:
-            if _to_int(row.get("q"), 0) != qn: continue
-            
-            # Determine visual section for this subpart
-            s_page = _to_int(row.get("page"), 0)
-            s_ymin = (row.get("bbox") or [0])[0]
-            v_sec = None
-            for ctx in header_contexts:
-                if ctx["page"] < s_page or (ctx["page"] == s_page and ctx["ymin"] < s_ymin):
-                    v_sec = ctx["instruction"]
-                else: break
-            
-            # Skip if subpart section doesn't match question section
-            if sec_key and v_sec and sec_key.lower() != v_sec.lower():
-                continue
-
-            label = str(row.get("label") or "").strip()
-            if not label: continue
+        s_page = _to_int(row.get("page"), 0)
+        s_bbox = row.get("bbox") or []
+        
+        target_q = None
+        if s_bbox:
+            for k in ordered_keys:
+                if k[0] == s_page and visual_map[k]["number"] == qn_sub:
+                    if _is_bbox_overlap(s_bbox, list(k[1]), 0.1):
+                        target_q = final_q_by_key[k]
+                        break
+        if not target_q:
+            for k in ordered_keys:
+                if k[0] == s_page and visual_map[k]["number"] == qn_sub:
+                    target_q = final_q_by_key[k]
+                    break
+        if not target_q:
+            for k in ordered_keys:
+                if visual_map[k]["number"] == qn_sub:
+                    target_q = final_q_by_key[k]
+                    break
+                    
+        if target_q and _allows_visual_subparts(target_q):
+            subs = target_q.get("subquestions") or []
+            ev = {"page_index": s_page, "bbox": s_bbox, "visual_confidence": _to_float(row.get("confidence"), 0.0)}
             norm_label = label.lower()
-            ev = {"page_index": s_page, "bbox": row.get("bbox"), "visual_confidence": _to_float(row.get("confidence"), 0.0)}
-
-            if norm_label in semantic_labels:
-                for sq in original_subs:
-                    if str(sq.get("label") or "").strip().lower() == norm_label:
-                        sq.setdefault("image_evidence", []).append(ev)
-                        sq["confidence"] = max(_to_float(sq.get("confidence"), 0.01), _to_float(row.get("confidence"), 0.0))
-            else:
-                original_subs.append({
+            match_found = False
+            for sq in subs:
+                if str(sq.get("label") or "").strip().lower() == norm_label:
+                    sq.setdefault("image_evidence", []).append(ev)
+                    sq["confidence"] = max(_to_float(sq.get("confidence"), 0.0), _to_float(row.get("confidence"), 0.0))
+                    match_found = True; break
+            
+            if not match_found:
+                subs.append({
                     "label": label, "text": "", "marks": 0.0, "mark_source": "inferred",
                     "confidence": _to_float(row.get("confidence"), 0.0), "image_evidence": [ev],
-                    "source": "visual_gap_fill_sec_p3"
+                    "source": "visual_gap_fill_matched"
                 })
-        q["subquestions"] = sorted(original_subs, key=lambda s: str(s.get("label") or "").strip().lower())
+                target_q["subquestions"] = sorted(subs, key=lambda s: str(s.get("label") or "").strip().lower())
 
-    # 5. Final OR mapping and Math logic
+    # Map OR IDs without relying on (section, number) generated UIDs
     or_map = _build_or_groups_from_visual(visual_entities)
     for qn_or, gid in or_map.items():
-        for key_tup, q_obj in q_by_num.items():
-            if key_tup[1] == qn_or:
-                q_obj["or_group_id"] = gid
-
-    for q in q_by_num.values():
-        _demote_choice_subparts(q)
+        for k in ordered_keys:
+            if visual_map[k]["number"] == qn_or:
+                final_q_by_key[k]["or_group_id"] = gid
 
     section_math_blocks = []
     for row in (visual_entities or {}).get("section_math") or []:
@@ -1683,12 +1699,18 @@ def _merge_semantic_with_visual_entities(
                 "confidence": _to_float(row.get("confidence"), 0.0),
             })
 
+    logger.info("LOG TAG: VISUAL_MERGE_FINAL_OUTPUT final_questions=%s", len(final_questions))
+
+    # Strict assertion
+    assert len(final_questions) == len(ordered_keys), "Visual anchor count mismatch"
+
     merged = {
-        "questions": [q_by_num[k] for k in sorted(q_by_num.keys(), key=lambda x: (str(x[0] or ""), x[1]))],
+        "questions": sorted(final_questions, key=lambda q: (str(q.get("section") or ""), _to_int(q.get("number"), 0))),
         "section_math_blocks": section_math_blocks,
-        "total_questions": len(q_by_num),
+        "total_questions": len(final_questions),
         "total_marks": 0.0,
     }
+    
     return normalize_structure_payload(merged)
 
 
@@ -1697,46 +1719,8 @@ def _clip_to_expected_question_count(
     visual_entities: Dict[str, Any],
     expected_question_count: Optional[int],
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    """Refined Phase 3: Safe Clipping. Warns instead of deleting if questions exist."""
-    expected = _to_int(expected_question_count, 0)
-    if expected <= 0:
-        return structure, visual_entities
-
-    normalized = normalize_structure_payload(structure or {})
-    questions = normalized.get("questions") or []
-    actual_count = len(questions)
-
-    if actual_count > expected:
-        # Check if the visual layer confirms a lower count (e.g. no more visual anchors exist)
-        # If visual anchors DO exist for higher questions, DO NOT clip.
-        visual_questions = (visual_entities or {}).get("questions") or []
-        max_visual_qn = max([_to_int(v.get("number"), 0) for v in visual_questions], default=0)
-        
-        if max_visual_qn > expected:
-            logger.warning(
-                "SAFE_CLIPPING_BYPASSED: Found %s questions but expected %s. "
-                "Capping restricted because visual layer confirms questions up to Q%s.",
-                actual_count, expected, max_visual_qn
-            )
-            return structure, visual_entities
-        else:
-            logger.warning(
-                "HARD_CLIPPING_ACTIVE: Found %s questions but expected %s. Clipping to Q1..Q%s.",
-                actual_count, expected, expected
-            )
-            kept_questions = [q for q in questions if 1 <= _to_int(q.get("number"), 0) <= expected]
-            normalized["questions"] = kept_questions
-            normalized["total_questions"] = len(kept_questions)
-            
-            # Subparts and marks remain attached because normalized["questions"] contains the full objects.
-            
-            ve = dict(visual_entities or {})
-            ve["questions"] = [row for row in visual_questions if 1 <= _to_int(row.get("number"), 0) <= expected]
-            ve["subparts"] = [r for r in (ve.get("subparts") or []) if 1 <= _to_int(r.get("q"), 0) <= expected]
-            ve["margin_marks"] = [r for r in (ve.get("margin_marks") or []) if 1 <= _to_int(r.get("q"), 0) <= expected]
-            return normalized, ve
-
-    return normalized, visual_entities
+    # Step 1: Disable HARD CLIPPING (Hard Early Return)
+    return structure, visual_entities
 
 
 async def _call_extraction_llm(images: List[str], prompt: str, model_name: str, llm_service: "AbstractLLMService") -> Dict[str, Any]:
@@ -2221,33 +2205,63 @@ async def extract_question_structure(
         tasks = [asyncio.create_task(_runner(item, idx + 1)) for idx, item in enumerate(chunks)]
         batch_payloads = await asyncio.gather(*tasks)
 
-        merged: Dict[Any, Dict[str, Any]] = {}
-        for payload in batch_payloads:
-            for q in (payload.get("questions") or []):
-                qn = _parse_question_number(q.get("number"))
-                if qn is None: continue
-                
-                sec = (str(q.get("section") or "").strip() or None)
-                key = (sec, qn)
+        # Step 1.1: BEFORE_SEMANTIC_MERGE (Safe Logging)
+        try:
+            total_semantic = sum(len(p.get("questions") or []) for p in batch_payloads)
+            logger.info(f"[BEFORE_SEMANTIC_MERGE] total_semantic_questions={total_semantic}")
+        except Exception:
+            pass
 
-                if key not in merged:
-                    merged[key] = dict(q)
+        merged: Dict[str, Dict[str, Any]] = {}
+        for b_idx, payload in enumerate(batch_payloads):
+            for q in (payload.get("questions") or []):
+                q_uid = q.get("question_uid")
+                if not q_uid:
+                    # Fallback for unexpected missing UID
+                    qn = _to_int(q.get("number"), -1)
+                    if qn == -1: continue
+                    q_uid = f"unknown__q{qn}"
+
+                if q_uid not in merged:
+                    # Step 2: RAW_SEMANTIC_INPUT (Safe Logging with UID)
+                    try:
+                        logger.info(
+                            "LOG TAG: RAW_SEMANTIC_INPUT uid=%s section=%s text=%s marks=%s chunk_index=%s",
+                            q_uid, q.get("section"), str(q.get("question_text", ""))[:200], q.get("marks"), b_idx
+                        )
+                    except Exception:
+                        pass
+                    merged[q_uid] = dict(q)
                 else:
-                    # Semantic Collision Warning (same section, same number)
-                    logger.warning("SEMANTIC_COLLISION_WARNING section=%s qn=%s", sec, qn)
-                    merged[key] = _merge_questions(merged[key], q)
+                    # Step 3: SEMANTIC_COLLISION (Safe Logging with UID)
+                    try:
+                        existing = merged[q_uid]
+                        logger.warning(
+                            "LOG TAG: SEMANTIC_COLLISION uid=%s existing_sec=%s incoming_sec=%s existing_text=%s incoming_text=%s",
+                            q_uid, existing.get("section"), q.get("section"), 
+                            str(existing.get("question_text", ""))[:150], 
+                            str(q.get("question_text", ""))[:150]
+                        )
+                    except Exception:
+                        pass
+                    merged[q_uid] = _merge_questions(merged[q_uid], q)
 
         # Final validation pass: ensure each question has at least some content
-        for qn, q in merged.items():
+        for uid, q in merged.items():
             if not q.get("question_text") and not q.get("subquestions"):
-                logger.warning("SEMANTIC_CHUNK_VALIDATION_WARNING qn=%s reason=no_text_or_subparts", qn)
+                logger.warning("SEMANTIC_CHUNK_VALIDATION_WARNING uid=%s reason=no_text_or_subparts", uid)
             elif q.get("subquestions"):
                 for sq in q["subquestions"]:
                     if not sq.get("text"):
-                         logger.warning("SEMANTIC_CHUNK_VALIDATION_WARNING qn=%s sub=%s reason=no_text", qn, sq.get("label"))
+                         logger.warning("SEMANTIC_CHUNK_VALIDATION_WARNING uid=%s sub=%s reason=no_text", uid, sq.get("label"))
+
+        # Checkpoint C: UID Integrity Check (Post Semantic Merge)
+        unique_uids_s = set(merged.keys())
+        logger.info("LOG TAG: UID_INTEGRITY_CHECK_POST_SEMANTIC_MERGE total=%s unique=%s", 
+                    len(merged), len(unique_uids_s))
 
         consolidated = {
-            "questions": [merged[k] for k in sorted(merged.keys(), key=lambda x: (str(x[0] or ""), x[1]))],
+            "questions": [merged[k] for k in sorted(merged.keys(), key=lambda k: (str(merged[k].get("section") or ""), _to_int(merged[k].get("number"), 0)))],
             "section_math_blocks": [],
             "total_questions": len(merged),
             "total_marks": 0.0,
@@ -2255,6 +2269,21 @@ async def extract_question_structure(
             "bottom_total_marks": 0.0,
             "numbering_contiguous": True,
         }
+
+        # Step 4: POST_SEMANTIC_MERGE_STATE (Safe Logging)
+        try:
+            q_uids = sorted(merged.keys())
+            logger.info(
+                "LOG TAG: POST_SEMANTIC_MERGE_STATE total_count=%s question_uids=%s",
+                len(merged), q_uids
+            )
+            for uid, q_obj in merged.items():
+                logger.info(
+                    "POST_SEMANTIC_DETAIL uid=%s section=%s number=%s text_len=%s",
+                    uid, q_obj.get("section"), q_obj.get("number"), len(str(q_obj.get("question_text", "")))
+                )
+        except Exception:
+            pass
 
         logger.warning(
             "FINAL_CONSOLIDATED_QUESTIONS=%s",
@@ -2286,6 +2315,9 @@ async def extract_question_structure(
         except Exception as deb_exc:
             logger.warning("DEBUG_FILE_GENERATION_FAILED error=%s", deb_exc)
 
+        # Checkpoint D: BEFORE VALIDATION (Log full UID list)
+        logger.info("LOG TAG: BEFORE_VALIDATION_UIDS_SEMANTIC uids=%s", sorted(list(unique_uids_s)))
+
         return normalize_structure_payload(consolidated)
 
     retry_count = 0
@@ -2310,6 +2342,18 @@ async def extract_question_structure(
             len(question_paper_images)
         )
         raise ValueError("SEMANTIC_EXTRACTION_FAILED: No questions extracted from semantic layer.")
+
+    # Step 5: BEFORE_VISUAL_MERGE (Safe Logging)
+    try:
+        logger.info(
+            "LOG TAG: BEFORE_VISUAL_MERGE semantic_count=%s visual_anchors=%s subparts=%s headers=%s",
+            len(stage2_structure.get("questions") or []),
+            len(visual_entities.get("questions") or []),
+            len(visual_entities.get("subparts") or []),
+            len(visual_entities.get("headers") or [])
+        )
+    except Exception:
+        pass
 
     # Refined Phase 1 call site: pass full_ocr_results so visual-only stubs can be backfilled spatially.
     stage2_structure = _merge_semantic_with_visual_entities(
@@ -2519,6 +2563,32 @@ async def extract_question_structure(
     validation_report["unresolved_flags"] = list(validation_report.get("errors") or [])
     validation_report["section_math_rules"] = list(structure.get("section_math_rules") or [])
 
+    # Step 7: FINAL_DB_WRITE_STATE (Safe Logging)
+    try:
+        q_nums = []
+        q_uids = []
+        for q in (structure.get("questions") or []):
+            try:
+                q_num = q.get("number")
+                if str(q_num).isdigit():
+                    q_nums.append(int(q_num))
+                q_uids.append(q.get("question_uid"))
+            except:
+                pass
+                
+        dupes = len(q_uids) - len(set(q_uids))
+        gaps = 0
+        if q_nums:
+            full_range = set(range(min(q_nums), max(q_nums) + 1))
+            gaps = len(full_range - set(q_nums))
+        
+        logger.info(
+            "LOG TAG: FINAL_DB_WRITE_STATE total_questions=%s total_marks=%s question_numbers=%s question_uids=%s duplicates=%s gaps=%s",
+            len(q_uids), structure.get("total_marks"), q_nums, q_uids, dupes, gaps
+        )
+    except Exception:
+        pass
+
     return {
         **structure,
         "_validation_report": validation_report,
@@ -2527,5 +2597,4 @@ async def extract_question_structure(
     }
 
 
-__all__ = ["extract_question_structure"]
 __all__ = ["extract_question_structure"]

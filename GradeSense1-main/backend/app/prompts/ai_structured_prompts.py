@@ -103,6 +103,7 @@ ALIGNMENT_SCHEMA = {
     "answers": [
         {
             "question_number": 1,
+            "question_uid": "section_slug__q1",
             "sub_part": "a|null",
             "status": "answered|skipped|uncertain",
             "answer_text": "string",
@@ -377,6 +378,8 @@ def build_alignment_prompt(*, question_structure: Dict[str, Any], ocr_text: str 
         "- Confirm that the entire answer sheet was scanned.\n"
         "- Confirm that answers written later in the sheet were not missed.\n"
         "- Confirm that skipped questions were not incorrectly assigned other answers.\n"
+        "- For multi-section papers, match the answer to the correct Section using the provided structure.\n"
+        "- Return the exact 'question_uid' for each matched question from the provided structure.\n"
         "- Do NOT reorder answers based on sequence.\n"
         "\n"
         "Return strict JSON only matching the schema below.\n\n"

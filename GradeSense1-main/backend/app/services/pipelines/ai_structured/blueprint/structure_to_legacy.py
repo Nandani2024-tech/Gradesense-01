@@ -7,7 +7,8 @@ def question_structure_to_legacy_questions(structure: Dict[str, Any]) -> List[Di
         legacy.append(
             {
                 "question_number": int(q.get("number")),
-                "question_uuid": str(q.get("question_uuid") or f"qv2_{int(q.get('number'))}"),
+                "question_uid": str(q.get("question_uid") or f"qv2_{int(q.get('number'))}"),
+                "question_uuid": str(q.get("question_uid") or f"qv2_{int(q.get('number'))}"),
                 "max_marks": _to_float(q.get("marks"), 0.0),
                 "question_text": str(q.get("question_text") or "").strip(),
                 "model_answer": str(q.get("model_answer") or "").strip(),

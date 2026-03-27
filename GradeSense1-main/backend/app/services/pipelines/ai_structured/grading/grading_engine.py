@@ -22,7 +22,32 @@ from app.services.pipelines.ai_structured.grading.score_band import compute_scor
 
 exam_repo = ExamRepo()
 
-# Removed internal IdentityManager as it was doing aggressive normalization
+class IdentityManager:
+    """Standardizes Question IDs from Vision models (e.g., '1', '22a', 'Q 34')."""
+    
+    @staticmethod
+    def normalize_id(qid: str) -> str:
+        if not qid:
+            return ""
+        # Remove whitespace and force upper for legacy keys, but preserve UIDs if they look special
+        s_qid = str(qid).strip()
+        if "__q" in s_qid:
+            # It's a UID, keep as is (or lower/upper consistently)
+            # We'll stick to lowercase for UIDs as that's what build_question_uid uses
+            return s_qid.lower()
+            
+        clean = re.sub(r'\s+', '', s_qid).upper()
+        # Handle '1' or '22A' -> 'Q1' or 'Q22A'
+        if clean and clean[0].isdigit():
+            clean = f"Q{clean}"
+        # Regex to insert dot before first letter following numbers
+        clean = re.sub(r'(Q\d+)([A-Z])', r'\1.\2', clean)
+        return clean
+
+    @staticmethod
+    def get_root_id(qid: str) -> str:
+        """Extracts parent ID for mark aggregation."""
+        return qid.split('.')[0]
 
 class GradingEngine:
     """
@@ -46,8 +71,8 @@ class GradingEngine:
         # logs for this question
         q_logs: List[str] = []
         
-        # Support both 'id' (new), 'question_number' (legacy), AND 'number' (AI structured SSOT)
-        qid = str(question.get("id") or question.get("question_number") or question.get("number") or "Unknown")
+        # Support both 'question_uid' (SSOT), 'id' (new), 'question_number' (legacy), AND 'number' (AI structured)
+        qid = str(question.get("question_uid") or question.get("id") or question.get("question_number") or question.get("number") or "Unknown")
         q_id = qid # For user snippet compatibility
         
         # Support both 'marks' (new) and 'max_marks' (legacy)
@@ -416,9 +441,9 @@ class GradingEngine:
         # Rule 7: Parallel Execution Using Asyncio (Fixes ThreadPool sync mismatches)
         tasks = []
         for q in blueprint_questions:
-            raw_qid = q.get("id") or q.get("question_number") or q.get("number")
-            clean_qid = normalize_question_id(raw_qid)
-            root_id = clean_qid.split('.')[0]
+            raw_qid = q.get("question_uid") or q.get("id") or q.get("question_number") or q.get("number")
+            clean_qid = normalize_question_id(raw_qid) if not q.get("question_uid") else str(raw_qid)
+            root_id = str(clean_qid).split('.')[0]
             
             mapped = normalized_vision.get(clean_qid)
             if mapped is None and root_id != clean_qid:

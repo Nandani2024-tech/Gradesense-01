@@ -23,7 +23,7 @@ def build_fallback_response(exam_id: str, submission_id: str, exc: Exception) ->
     return Submission(
         submission_id=submission_id,
         exam_id=exam_id,
-        status="NEEDS_REVIEW",
+        status="GRADING_FAILED",
         total_score=0.0,
         total_possible=0.0,
         percentage=0.0,
@@ -41,28 +41,33 @@ def validate_blueprint_ids(blueprint: Dict[str, Any]) -> None:
     questions = blueprint.get("questions") or []
     seen_ids = set()
     for q in questions:
-        raw_id = str(q.get("number") or q.get("id") or "")
-        if not raw_id:
-            raise ValueError("invalid_blueprint_identity: missing_id")
+        uid = str(q.get("question_uid") or q.get("uid") or "")
+        legacy_id = str(q.get("number") or q.get("id") or "")
+        
+        if uid:
+            final_id = uid.lower()
+        else:
+            if not legacy_id:
+                raise ValueError("invalid_blueprint_identity: missing_id")
+                
+            if not is_valid_question_id(legacy_id):
+                normalized = normalize_question_id(legacy_id)
+                if not normalized:
+                    raise ValueError(f"invalid_blueprint_identity: malformed_id '{legacy_id}'")
+                final_id = normalized
+            else:
+                final_id = legacy_id
             
-        # Verify it follows the canonical format Q1, Q1.a
-        if not is_valid_question_id(raw_id):
-            # If not already canonical, check if it can be normalized without collision
-            normalized = normalize_question_id(raw_id)
-            if not normalized:
-                raise ValueError(f"invalid_blueprint_identity: malformed_id '{raw_id}'")
-            raw_id = normalized
-            
-        if raw_id in seen_ids:
-            raise ValueError(f"invalid_blueprint_identity: duplicate_id '{raw_id}'")
-        seen_ids.add(raw_id)
+        if final_id in seen_ids:
+            raise ValueError(f"invalid_blueprint_identity: duplicate_id '{final_id}'")
+        seen_ids.add(final_id)
         
         # Check subquestions
         sub_questions = q.get("sub_questions") or q.get("subquestions") or []
         for sq in sub_questions:
-            sq_id = str(sq.get("sub_id") or sq.get("id") or "")
+            sq_id = str(sq.get("sub_id") or sq.get("id") or sq.get("label") or "")
             if not sq_id:
-                raise ValueError(f"invalid_blueprint_identity: missing_sub_id in {raw_id}")
+                raise ValueError(f"invalid_blueprint_identity: missing_sub_id in {final_id}")
 
 async def run_grading_orchestrator(
     exam_id: str,
@@ -93,7 +98,7 @@ async def run_grading_orchestrator(
         submission_repo = SubmissionRepo()
         exam_repo = ExamRepo()
 
-        # Fetch teacher_id for notifications
+        # Fetch teacher_id early for notifications (Task: Failure Handling)
         exam = await exam_repo.find_one_exam({"exam_id": exam_id})
         teacher_id = exam.get("teacher_id") if exam else None
 
