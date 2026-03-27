@@ -8,7 +8,7 @@ from app.core.logging_config import logger
 from app.services.grading import grading_job_service, grading_service
 from app.services import blueprint_service
 from app.repositories import AnalyticsRepo
-from app.utils.debug_logger import current_job_id, write_debug_json
+from app.utils.debug_logger import current_job_id, request_id, write_debug_json
 from app.services.grading_core import run_grading_orchestrator
 from app.models.submission import Submission
 
@@ -26,7 +26,18 @@ async def grading_worker_loop():
             job_type = task.get("job_type")
             data = task.get("data")
             
-            logger.info(f"📦 Worker dequeued task: {job_type}")
+            # Step 3: Request IDs
+            req_id = str(uuid.uuid4())
+            request_id.set(req_id)
+            
+            logger.info(
+                "JOB_PICKED",
+                extra={
+                    "job_type": job_type,
+                    "request_id": req_id,
+                    "status": "picked"
+                }
+            )
             
             if job_type == "batch_grading":
                 await run_grading_pipeline(
@@ -68,6 +79,17 @@ async def run_grading_pipeline(job_id: str, exam_id: str, files_data: List[dict]
     job_token = current_job_id.set(str(job_id) if job_id else str(uuid.uuid4()))
 
     try:
+        # Step 3: Lifecycle logs
+        logger.info(
+            "JOB_START",
+            extra={
+                "job_id": job_id,
+                "request_id": request_id.get(),
+                "exam_id": exam_id,
+                "status": "start"
+            }
+        )
+
         # 1. Update status to processing
         await grading_job_service.mark_job_status(job_id, "processing")
 
@@ -182,7 +204,11 @@ async def run_grading_pipeline(job_id: str, exam_id: str, files_data: List[dict]
 
         for res in results:
             if isinstance(res, Exception):
-                logger.error(f"Worker: gathered task error: {res}")
+                logger.error(
+                    "Task failed during parallel execution",
+                    extra={"request_id": request_id.get()},
+                    exc_info=res
+                )
 
         # 4. Final Job Status Check
         job = await analytics_repo.grading_jobs_collection.find_one({"job_id": job_id})
@@ -199,9 +225,27 @@ async def run_grading_pipeline(job_id: str, exam_id: str, files_data: List[dict]
                     "failed",
                     error=f"{failed} papers failed to process"
                 )
+        
+        logger.info(
+            "JOB_FINISH",
+            extra={
+                "job_id": job_id,
+                "request_id": request_id.get(),
+                "status": "success"
+            }
+        )
 
     except Exception as e:
-        logger.error(f"Worker: Global error in run_grading_pipeline: {e}", exc_info=True)
+        logger.error(
+            "JOB_FAIL",
+            extra={
+                "job_id": job_id,
+                "request_id": request_id.get(),
+                "status": "fail",
+                "error": str(e)
+            },
+            exc_info=True
+        )
         await grading_job_service.mark_job_status(job_id, "failed", error=str(e))
 
     finally:

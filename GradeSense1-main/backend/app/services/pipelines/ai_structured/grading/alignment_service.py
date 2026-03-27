@@ -10,6 +10,7 @@ import uuid
 from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 from app.core.logging_config import logger
+from app.utils.debug_logger import request_id
 from app.utils.identity_manager import normalize_question_id, is_valid_question_id, build_canonical_question_id
 import uuid
 from app.adapters.interfaces import AbstractLLMService, AbstractOCRService
@@ -280,6 +281,16 @@ async def align_answers(
             if (q.get("number") or q.get("id"))
         }
     )
+    logger.info(
+        "alignment_started",
+        extra={
+            "submission_id": submission_id,
+            "request_id": request_id.get(),
+            "stage": "alignment",
+            "status": "start",
+            "expected_questions": len(expected_ids)
+        }
+    )
     logger.info("ALIGNMENT_TRACE: expected_ids=%s", expected_ids)
 
     if use_cache:
@@ -304,12 +315,30 @@ async def align_answers(
                 if ocr_pages:
                     batch_ocr = "\n".join(ocr_pages[start_idx : start_idx + len(batch)]) # type: ignore
 
+                logger.info(
+                    "LLM_CALL_START",
+                    extra={
+                        "submission_id": submission_id,
+                        "request_id": request_id.get(),
+                        "stage": "alignment",
+                        "batch_start": start_idx
+                    }
+                )
                 payload = await _llm_align_answers(
                     question_structure=question_structure,
                     answer_images=batch,
                     llm_service=llm_service,
                     ocr_text=batch_ocr,
                     **kwargs,
+                )
+                logger.info(
+                    "LLM_CALL_SUCCESS",
+                    extra={
+                        "submission_id": submission_id,
+                        "request_id": request_id.get(),
+                        "stage": "alignment",
+                        "batch_start": start_idx
+                    }
                 )
                 # Adjust page indices in the payload to account for batch offset
                 for ans in (payload.get("answers") or []):
@@ -337,7 +366,20 @@ async def align_answers(
     # ADDED LOGGING START
     logger.info("[STEP START] BATCH_ALIGNMENT")
     # ADDED LOGGING END
-    batch_results = await asyncio.gather(*tasks)
+    batch_results_raw = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    batch_results = []
+    for res in batch_results_raw:
+        if isinstance(res, Exception):
+            logger.error(
+                "Alignment batch task failed",
+                extra={"request_id": request_id.get(), "submission_id": submission_id},
+                exc_info=res
+            )
+            # Re-raise or handle as needed. The prompt says "Fail fast on LLM hangs" and "ensure any timeout propagates up".
+            raise res
+        batch_results.append(res)
+
     # ADDED LOGGING START
     logger.info("[STEP SUCCESS] BATCH_ALIGNMENT")
     # ADDED LOGGING END

@@ -7,6 +7,7 @@ from app.adapters.interfaces import AbstractLLMService
 from app.services.grading.answer_normalizer import AnswerNormalizer
 from app.services.grading.rubric_builder import RubricBuilder
 from app.core.logging_config import logger
+from app.utils.debug_logger import request_id
 from app.utils.identity_manager import normalize_question_id, is_valid_question_id
 from app.core.exceptions import CustomServiceException
 from app.models.submission import QuestionScore, SubQuestionScore, GradingResult
@@ -91,6 +92,15 @@ class GradingEngine:
         sub_questions: List[Dict[str, Any]] = question.get("sub_questions") or question.get("subquestions") or []
 
         # ✅ STEP 0 — ENTRY LOG (PER QUESTION)
+        logger.info(
+            "grading_question_start",
+            extra={
+                "question_id": q_id,
+                "request_id": request_id.get(),
+                "stage": "grading",
+                "status": "start"
+            }
+        )
         logger.info(
             "Grading question started",
             extra={
@@ -344,7 +354,7 @@ class GradingEngine:
         # log summary for this question
         q_logs.append(f"Final awarded for {clean_qid}: {final_awarded}/{max_marks}")
         
-        return QuestionScore(
+        res_obj = QuestionScore(
             question_number=qid,
             max_marks=max_marks,
             obtained_marks=final_awarded,
@@ -357,11 +367,32 @@ class GradingEngine:
             concept_coverage=coverage_final if not sub_questions else 0.0,
             grading_mode=grading_mode_final if not sub_questions else "AI_EVALUATED"
         )
+        
+        logger.info(
+            "grading_question_end",
+            extra={
+                "question_id": q_id,
+                "request_id": request_id.get(),
+                "stage": "grading",
+                "status": "success",
+                "score": final_awarded
+            }
+        )
+        return res_obj
 
     async def run_production_grading(self, blueprint: Dict[str, Any], vision_answers: Dict[str, Any]) -> GradingResult:
         """Runs the production grading pipeline asynchronously."""
         # ADDED LOGGING START
         exam_id = blueprint.get("exam_id") or "unknown"
+        logger.info(
+            "grading_started",
+            extra={
+                "exam_id": exam_id,
+                "request_id": request_id.get(),
+                "stage": "grading",
+                "status": "start"
+            }
+        )
         logger.info("[PIPELINE START] AI_GRADING | exam_id=%s | submission_id=N/A", exam_id)
         # ADDED LOGGING END
         
@@ -422,7 +453,9 @@ class GradingEngine:
             if isinstance(res, Exception):
                 q = blueprint_questions[i]
                 qid = str(q.get("id") or q.get("question_number") or q.get("number") or "Unknown")
-                logger.error(f"Grading failed for question {qid}: {res}", exc_info=True)
+                logger.error(f"Grading failed for question {qid}: {res}", 
+                             extra={"request_id": request_id.get()},
+                             exc_info=True)
                 results_list.append(QuestionScore(
                     question_number=qid,
                     max_marks=float(q.get("marks") or q.get("max_marks") or 0),

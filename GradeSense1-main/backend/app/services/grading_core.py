@@ -2,6 +2,8 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
 
 from app.core.logging_config import logger
+from app.utils.debug_logger import request_id
+import uuid
 from app.services.pipelines.ai_structured.grading.grading_engine import GradingEngine
 from app.utils.identity_manager import normalize_question_id, is_valid_question_id
 from app.services.pipelines.ai_structured.engine import align_submission_for_grading, extract_question_structure
@@ -72,9 +74,17 @@ async def run_grading_orchestrator(
     Strict SSOT, SCHEMA_ENFORCED.
     """
     
+    # Step 3: Request ID initialization
+    if not request_id.get():
+        request_id.set(str(uuid.uuid4()))
+
     logger.info(
         "ORCHESTRATOR_ENTRY", 
-        extra={"exam_id": exam_id, "submission_id": submission_id}
+        extra={
+            "exam_id": exam_id, 
+            "submission_id": submission_id,
+            "request_id": request_id.get()
+        }
     )
     logger.info("🚀 SCHEMA_ENFORCED: Using strictly typed orchestrator")
 

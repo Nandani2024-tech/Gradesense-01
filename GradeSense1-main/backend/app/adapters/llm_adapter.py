@@ -1,4 +1,5 @@
 import time
+import asyncio
 from typing import Any, Dict, List, Optional
 from google import genai
 from app.adapters.interfaces import AbstractLLMService
@@ -63,8 +64,15 @@ class GeminiLLMService(AbstractLLMService):
                 chat.system_message = kwargs["system_message"]
             
             msg = UserMessage(text=prompt, file_contents=[ImageContent(img) for img in (images or [])])
-            response = await chat.send_message(msg)
-            
+            try:
+                response = await asyncio.wait_for(
+                    chat.send_message(msg),
+                    timeout=30.0
+                )
+            except asyncio.TimeoutError:
+                logger.error("LLM call timed out", extra={"component": "llm_adapter", "method": "predict"})
+                raise
+
             latency = time.time() - start_time
             logger.info("LLM_RESPONSE model=%s latency=%s", model_name, f"{latency:.3f}s")
             return response
@@ -89,7 +97,14 @@ class GeminiLLMService(AbstractLLMService):
                 chat.system_message = kwargs["system_message"]
             
             msg = UserMessage(text=prompt, file_contents=[ImageContent(img) for img in (images or [])])
-            response = await chat.send_message_structured(msg, response_schema=response_schema)
+            try:
+                response = await asyncio.wait_for(
+                    chat.send_message_structured(msg, response_schema=response_schema),
+                    timeout=30.0
+                )
+            except asyncio.TimeoutError:
+                logger.error("LLM call timed out", extra={"component": "llm_adapter", "method": "predict_structured"})
+                raise
             
             latency = time.time() - start_time
             logger.info("LLM_RESPONSE model=%s latency=%s", model_name, f"{latency:.3f}s")

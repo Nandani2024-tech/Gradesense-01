@@ -6,6 +6,7 @@ from contextvars import ContextVar
 
 # Context-scoped job ID to avoid passing it through 15 method signatures
 current_job_id: ContextVar[str] = ContextVar("current_job_id", default="")
+request_id: ContextVar[str] = ContextVar("request_id", default="")
 
 # Thread-safe in-memory aggregators for parallel LLM grading
 _grading_inputs: Dict[str, Dict[str, Any]] = {}
