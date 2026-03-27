@@ -167,8 +167,8 @@ def _compute_alignment_metrics(
 
     # Task 7 Summary
     ambig_count = sum(1 for a in answers if a.get("mapping_status") == "AMBIGUOUS")
-    missing_count = expected_count - mapped_questions
-    logger.info(f"[MAPPING SUMMARY] valid={valid_count} ambiguous={ambig_count} missing={missing_count} coverage={coverage_ratio:.2f}")
+    missing_count = expected_questions - mapped_questions
+    logger.info(f"[MAPPING SUMMARY] valid={mapped_questions} ambiguous={ambig_count} missing={missing_count} coverage={coverage_ratio:.2f}")
 
     # Confidence Score (Legacy logic preservation where possible)
     # Using simple average for now as the weighted formula was complex

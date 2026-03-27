@@ -411,8 +411,8 @@ class GradingEngine:
         tasks = []
         for q in blueprint_questions:
             raw_qid = q.get("question_uid") or q.get("id") or q.get("question_number") or q.get("number")
-            clean_qid = self.id_manager.normalize_id(raw_qid) if not q.get("question_uid") else str(raw_qid)
-            root_id = self.id_manager.get_root_id(clean_qid)
+            clean_qid = normalize_question_id(raw_qid) if not q.get("question_uid") else str(raw_qid)
+            root_id = str(clean_qid).split('.')[0]
             
             mapped = normalized_vision.get(clean_qid)
             if mapped is None and root_id != clean_qid:

@@ -14,8 +14,10 @@ from app.utils.identity_manager import build_question_uid
 
 
 def _normalize_subquestion(sub: Dict[str, Any]) -> Dict[str, Any]:
+    label = str(sub.get("label") or "").strip()
     return {
-        "label": str(sub.get("label") or "").strip(),
+        "sub_id": str(sub.get("sub_id") or sub.get("id") or label).strip(),
+        "label": label,
         "text": str(sub.get("text") or "").strip(),
         "rubric": str(sub.get("rubric") or "").strip() or None,
         "marks": round(to_float(sub.get("marks"), 0.0), 4),
@@ -29,12 +31,21 @@ def _normalize_subquestion(sub: Dict[str, Any]) -> Dict[str, Any]:
 def normalize_structure_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     questions = payload.get("questions") or []
     normalized_questions: List[Dict[str, Any]] = []
+    seen_uids: Dict[str, int] = {}
     for q in questions:
         if not isinstance(q, dict):
             continue
         qn = to_int(q.get("number"), 0)
         sec = (str(q.get("section") or "").strip() or "default")
-        q_uid = (str(q.get("question_uid") or q.get("uid") or "").strip() or build_question_uid(sec, qn))
+        
+        # Enforce deterministic UID generation (ignore LLM's uid/question_uid)
+        base_uid = build_question_uid(sec, qn)
+        if base_uid in seen_uids:
+            seen_uids[base_uid] += 1
+            final_uid = f"{base_uid}_{seen_uids[base_uid]}"
+        else:
+            seen_uids[base_uid] = 0
+            final_uid = base_uid
 
         if qn <= 0:
             continue
@@ -43,8 +54,8 @@ def normalize_structure_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         normalized_questions.append(
             {
                 "number": qn,
-                "question_uid": q_uid,
-                "uid": q_uid,
+                "question_uid": final_uid,
+                "uid": final_uid,
                 "section": (str(q.get("section") or "").strip() or None),
                 "instruction": (str(q.get("instruction") or "").strip() or None),
                 "question_text": str(q.get("question_text") or "").strip(),

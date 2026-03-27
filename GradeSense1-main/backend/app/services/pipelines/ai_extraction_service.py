@@ -1088,10 +1088,17 @@ def _merge_question_anchors(
         qn = _to_int(row.get("number"), 0)
         if qn <= 0:
             continue
+            
+        sec = row.get("section") or "default"
+        uid = row.get("question_uid") or row.get("uid") or build_question_uid(sec, qn)
+        
         candidates.append(
             {
                 "number": qn,
                 "raw_number": str(row.get("number")),
+                "question_uid": uid,
+                "uid": uid,
+                "section": row.get("section"),
                 "bbox": list(row.get("bbox") or [0, 0, 0, 0]),
                 "page": _to_int(row.get("page"), -1),
                 "confidence": _to_float(row.get("confidence"), 0.0),
@@ -1541,6 +1548,7 @@ def _merge_semantic_with_visual_entities(
     # 4. RESOLVE FINAL QUESTIONS
     final_questions = []
     final_q_by_key = {}
+    used_uids = set()
     
     for key in ordered_keys:
         v_node = visual_map[key]
@@ -1563,16 +1571,29 @@ def _merge_semantic_with_visual_entities(
             final_q["question_text"] = best_cand.get("question_text", "")
             final_q["question_type"] = best_cand.get("question_type", final_q.get("question_type") or "descriptive")
             if best_cand.get("question_uid"):
-                final_q["question_uid"] = best_cand["question_uid"]
-                final_q["uid"] = best_cand["uid"]
+                cand_uid = best_cand["question_uid"]
+                idx = 1
+                unique_uid = cand_uid
+                while unique_uid in used_uids:
+                    unique_uid = f"{cand_uid}_{idx}"
+                    idx += 1
+                final_q["question_uid"] = unique_uid
+                final_q["uid"] = unique_uid
         else:
             final_q["question_text"] = ""
             final_q["question_type"] = final_q.get("question_type") or "descriptive"
             
         if "question_uid" not in final_q:
-            uid = build_question_uid(spatial_sec or "default", qn)
-            final_q["question_uid"] = f"{uid}_{key[0]}_{key[2]}"
-            final_q["uid"] = final_q["question_uid"]
+            base_uid = build_question_uid(spatial_sec or "default", qn)
+            idx = 1
+            unique_uid = base_uid
+            while unique_uid in used_uids:
+                unique_uid = f"{base_uid}_{idx}"
+                idx += 1
+            final_q["question_uid"] = unique_uid
+            final_q["uid"] = unique_uid
+            
+        used_uids.add(final_q["question_uid"])
             
         final_q["section"] = final_q.get("section") or spatial_sec
         final_q["subquestions"] = v_node["subquestions"]

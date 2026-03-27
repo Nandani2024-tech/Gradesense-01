@@ -127,27 +127,18 @@ async def run_grading_pipeline(job_id: str, exam_id: str, files_data: List[dict]
                     # 🚀 Phase 4: ADD MANDATORY LOGGING
                     logger.info("WORKER_PROCESSING", extra={"submission_id": submission_id})
 
-                    try:
-                        result = await run_grading_orchestrator(
-                            exam_id=exam_id,
-                            submission_id=submission_id
-                        )
-                    except Exception as e:
-                        logger.error("❌ ORCHESTRATOR FAILED: %s", str(e))
-                        await grading_job_service.update_job_progress(
-                            job_id,
-                            failed_inc=1,
-                            progress_inc=progress_increment
-                        )
-                        return
+                    result = await run_grading_orchestrator(
+                        exam_id=exam_id,
+                        submission_id=submission_id
+                    )
 
-                    # Orchestrator now returns a safe fallback (NEEDS_REVIEW) even on failure.
+                    # Orchestrator now returns a fallback (GRADING_FAILED) even on failure.
                     # We always proceed to persist this result for observability.
 
                     # Safe logging only for valid results
                     logger.info(
                         "WORKER_ENGINE_RETURN: Engine completed",
-                        extra={"total_awarded": result.total_score}
+                        extra={"total_awarded": result.total_score, "status": result.status}
                     )
 
                     # C. Update submission record with results
@@ -156,14 +147,22 @@ async def run_grading_pipeline(job_id: str, exam_id: str, files_data: List[dict]
                         result=result
                     )
 
-                    # D. Update job counters
-                    await grading_job_service.update_job_progress(
-                        job_id,
-                        successful_inc=1,
-                        progress_inc=progress_increment
-                    )
+                    # D. Update job counters based on status
+                    if result.status == "GRADING_FAILED":
+                        logger.warning("Submission %s failed grading. Marking as failure in job %s", submission_id, job_id)
+                        await grading_job_service.update_job_progress(
+                            job_id,
+                            failed_inc=1,
+                            progress_inc=progress_increment
+                        )
+                    else:
+                        await grading_job_service.update_job_progress(
+                            job_id,
+                            successful_inc=1,
+                            progress_inc=progress_increment
+                        )
 
-                    logger.info(f"Worker: Graded {file_entry['filename']} for job {job_id}")
+                    logger.info(f"Worker: Processed {file_entry['filename']} for job {job_id} status={result.status}")
 
                 except Exception as e:
                     logger.error(
