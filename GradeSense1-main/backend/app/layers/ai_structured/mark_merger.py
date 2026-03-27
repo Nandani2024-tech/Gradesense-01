@@ -1,7 +1,7 @@
 """Mark merging and orchestration utilities."""
 
 from collections import Counter, defaultdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from app.core.logging_config import logger
 from app.infrastructure.serialization.safe_numeric import to_float, to_int
 from app.constants.layers import _EXPLICIT_SOURCES, MARK_REASON_RECONCILED
@@ -18,116 +18,64 @@ from .mark_sources import (
 
 def clean_or_groups_robust(questions: List[Dict[str, Any]], visual_entities: Optional[Dict[str, Any]]) -> Dict[str, List[Tuple[str, int]]]:
     """
-    Robust OR-group construction and cleaning for GradeSense pipeline.
-    Uses (section, number) as primary identity to handle multi-section papers.
+    Standard Phase 1 OR-group construction.
+    Uses ONLY visual.or_pairs as the source of truth.
+    Maps using (number, section) identity.
     """
-    q_by_key = {
-        (str(q.get("section") or "").strip(), to_int(q.get("number"), 0)): q 
-        for q in questions if to_int(q.get("number"), 0) > 0
-    }
-    valid_keys = set(q_by_key.keys())
-
-    # --- PASS 1: Membership Discovery ---
-    edges: List[Tuple[Tuple[str, int], Tuple[str, int]]] = []
-    
-    # Existing OR IDs from semantic extraction (usually already section-scoped by LLM)
-    ai_groups: Dict[str, List[Tuple[str, int]]] = defaultdict(list)
-    for q in questions:
-        key = (str(q.get("section") or "").strip(), to_int(q.get("number"), 0))
-        gid = str(q.get("or_group_id") or "").strip()
-        if key[1] > 0 and gid:
-            ai_groups[gid].append(key)
-            
-    for members in ai_groups.values():
-        uniq = sorted(set(members))
-        for i in range(len(uniq) - 1):
-            edges.append((uniq[i], uniq[i + 1]))
-
-    # Visual connectors from OCR layer (Mapping these is harder without section context)
-    # [FIX 5] Resolve visual or_connectors using page + number matching
-    anchor_sections: Dict[Tuple[int, int], str] = {}
-    for q in (visual_entities or {}).get("questions") or []:
-        anchor_sections[(to_int(q.get("page"), 0), to_int(q.get("number"), 0))] = str(q.get("section") or "").strip()
-
-    for row in (visual_entities or {}).get("or_connectors") or []:
-        if not isinstance(row, dict):
-            continue
-        p1 = to_int(row.get("p1") or row.get("page"), 0)
-        q1_num = to_int(row.get("q1"), 0)
-        p2 = to_int(row.get("p2") or row.get("page"), 0)
-        q2_num = to_int(row.get("q2"), 0)
-        
-        sec1 = anchor_sections.get((p1, q1_num), "")
-        sec2 = anchor_sections.get((p2, q2_num), "")
-        
-        if q1_num > 0 and q2_num > 0 and (sec1, q1_num) != (sec2, q2_num):
-            edges.append(((sec1, q1_num), (sec2, q2_num)))
-
-    if not edges and not ai_groups:
-        return {}
-
-    # Standard Union-Find using tuples as nodes
-    parent: Dict[Tuple[str, int], Tuple[str, int]] = {}
-    def find(x: Tuple[str, int]) -> Tuple[str, int]:
-        parent.setdefault(x, x)
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def union(a: Tuple[str, int], b: Tuple[str, int]) -> None:
-        pa = find(a)
-        pb = find(b)
-        if pa != pb:
-            parent[pb] = pa
-
-    for a, b in edges:
-        union(a, b)
-
-    # Identify initial components
-    groups_raw: Dict[Tuple[str, int], List[Tuple[str, int]]] = defaultdict(list)
-    for node in list(parent.keys()):
-        groups_raw[find(node)].append(node)
-
-    # --- PASS 2: Safety Filtering ---
-    refined_map: Dict[str, List[Tuple[str, int]]] = {}
-    gid_seq = 1
-
-    # Clear existing IDs first
     for q in questions:
         q["or_group_id"] = None
 
-    for _, members in sorted(groups_raw.items(), key=lambda kv: kv[0]):
-        safe_members: List[Tuple[str, int]] = []
-        for key in members:
-            # A) Presence Check
-            if key not in valid_keys:
-                logger.warning("OR_MISSING_QUESTION key=%s", key)
-                continue
-            
-            q = q_by_key[key]
-            
-            # B) Nested OR Prevention
-            if q.get("options"):
-                logger.info("OR_SKIPPED_INTERNAL key=%s", key)
-                continue
-            
-            safe_members.append(key)
-            
-        # C) Orphan Sweep
-        if len(safe_members) < 2:
-            continue
-            
+    or_pairs = (visual_entities or {}).get("or_pairs") or []
+    if not or_pairs:
+        return {}
+
+    # Build identity map for questions
+    q_by_ident = {}
+    for q in questions:
+        num = to_int(q.get("number"), 0)
+        sec = str(q.get("section") or "").strip()
+        if num > 0:
+            q_by_ident[(num, sec)] = q
+
+    # Union-Find for components
+    parent = {}
+    def find(x):
+        parent.setdefault(x, x)
+        if parent[x] != x:
+            parent[x] = find(parent[x])
+        return parent[x]
+
+    def union(a, b):
+        pa, pb = find(a), find(b)
+        if pa != pb:
+            parent[pb] = pa
+
+    for pair in or_pairs:
+        q1_num = to_int(pair.get("q1"), 0)
+        q1_sec = str(pair.get("sec1") or "").strip()
+        q2_num = to_int(pair.get("q2"), 0)
+        q2_sec = str(pair.get("sec2") or "").strip()
+        
+        id1 = (q1_num, q1_sec)
+        id2 = (q2_num, q2_sec)
+        
+        if id1 in q_by_ident and id2 in q_by_ident:
+            union(id1, id2)
+
+    groups = defaultdict(list)
+    for ident in parent:
+        groups[find(ident)].append(ident)
+
+    refined_map = {}
+    gid_seq = 1
+    for root, members in groups.items():
+        if len(members) < 2: continue
         gid = f"visual_or_{gid_seq}"
         gid_seq += 1
-        uniq_safe = sorted(set(safe_members))
-        
-        # Final Assignment to Question Objects
-        for key in uniq_safe:
-            q_by_key[key]["or_group_id"] = gid
-            
-        refined_map[gid] = uniq_safe
-        
+        for ident in members:
+            q_by_ident[ident]["or_group_id"] = gid
+        refined_map[gid] = members
+
     return refined_map
 
 # Alias for backward compatibility if needed, though clean_or_groups_robust is preferred.
@@ -186,7 +134,7 @@ def _initial_mark_pass(
         q = by_key[key]
         base = max(0.0, to_float(base_marks.get(key), 0.0))
         total = base
-        source = "inferred"
+        source = "missing"
         mode = "direct"
 
         if key in q_margin:
@@ -217,10 +165,8 @@ def _initial_mark_pass(
         subparts = _flatten_subquestions(raw_subs, qn)
         sub_audit: List[Dict[str, Any]] = []
         if subparts:
-            explicit_sum = 0.0
-            explicit_idxs: List[int] = []
-            sub_values: List[float] = [0.0] * len(subparts)
-            sub_sources: List[str] = ["inferred"] * len(subparts)
+            sub_values: List[Optional[float]] = [None] * len(subparts)
+            sub_sources: List[str] = ["missing"] * len(subparts)
 
             for idx, sq in enumerate(subparts):
                 lbl = _norm_label(sq.get("label")) or f"s{idx+1}"
@@ -229,8 +175,6 @@ def _initial_mark_pass(
                     val = max(0.0, to_float(sq_margin[skey]["marks"], 0.0))
                     sub_values[idx] = val
                     sub_sources[idx] = "margin"
-                    explicit_sum += val
-                    explicit_idxs.append(idx)
                     evidence_refs[key].append(dict(sq_margin[skey]["evidence"]))
                 elif (
                     to_float(sq.get("marks"), 0.0) > 0
@@ -239,66 +183,40 @@ def _initial_mark_pass(
                     val = max(0.0, to_float(sq.get("marks"), 0.0))
                     sub_values[idx] = val
                     sub_sources[idx] = _norm_source(sq.get("mark_source"))
-                    explicit_sum += val
-                    explicit_idxs.append(idx)
 
             split_info = q_margin.get(key)
-            if not explicit_idxs and split_info:
+            if all(v is None for v in sub_values) and split_info:
                 split_values = split_info.get("split")
                 if not split_values:
                     split_values = _parse_margin_split_text(split_info.get("text"))
                 if split_values and len(split_values) == len(subparts):
                     sub_values = [round(max(0.0, to_float(v, 0.0)), 4) for v in split_values]
                     sub_sources = ["margin" for _ in subparts]
-                    explicit_sum = round(sum(sub_values), 4)
-                    explicit_idxs = list(range(len(subparts)))
-                    if total <= 0 or abs(total - explicit_sum) > 1e-6:
-                        total = explicit_sum
-                        source = "margin"
-                    logger.info(
-                        "[MARK_APPLY] q=%s section=%s reason=margin_split marks=%s",
-                        qn,
-                        sec,
-                        round(total, 4),
-                    )
+                    # explicit_sum = round(sum(v for v in sub_values if v is not None), 4)
+                    # if total is None or total <= 0 or abs(total - explicit_sum) > 1e-6:
+                    #     total = explicit_sum
+                    #     source = "margin"
+                    logger.info("[MARK_APPLY] q=%s section=%s reason=margin_split marks=%s", qn, sec, round(total, 4) if total else 0)
 
-            if total <= 0 and explicit_sum > 0:
-                total = round(explicit_sum, 4)
-                source = "margin" if any(s == "margin" for s in sub_sources) else "inferred"
-
-            if len(explicit_idxs) == 0 and total > 0:
-                even = total / float(len(subparts))
-                sub_values = [even for _ in subparts]
-                sub_sources = [source for _ in subparts]
-                mode = "shared"
-            else:
-                missing = [i for i in range(len(subparts)) if i not in explicit_idxs]
-                if missing and total > explicit_sum:
-                    even = (total - explicit_sum) / float(len(missing))
-                    for idx in missing:
-                        sub_values[idx] = even
-                        sub_sources[idx] = source
-                    mode = "shared"
-
-            # Re-update structure
+            # Re-update structure (NO AUTO-DISTRIBUTION)
             for idx, sq in enumerate(subparts):
-                sq["marks"] = round(sub_values[idx], 4)
+                sq["marks"] = round(sub_values[idx], 4) if sub_values[idx] is not None else None
                 sq["mark_source"] = sub_sources[idx]
                 sub_audit.append(
                     {
                         "label": _norm_label(sq.get("label")) or str(sq.get("label") or ""),
-                        "marks": round(sub_values[idx], 4),
+                        "marks": sq["marks"],
                         "source": sub_sources[idx],
                     }
                 )
             q["subquestions"] = subparts
 
-        q["marks"] = round(total, 4)
+        q["marks"] = round(total, 4) if total is not None else None
         q["mark_source"] = source
         q["distribution_mode"] = mode
         by_key[key] = q
 
-        if abs(base - round(total, 4)) > 1e-6:
+        if total is not None and abs(base - round(total, 4)) > 1e-6:
             changed_questions.add(key)
             logger.info("[MARK_OVERRIDE] q=%s section=%s ai=%s visual=%s", qn, sec, round(base, 4), round(total, 4))
 
@@ -306,13 +224,18 @@ def _initial_mark_pass(
             {
                 "section": sec,
                 "number": qn,
-                "total_marks": round(total, 4),
+                "total_marks": q["marks"],
                 "mark_source": source,
                 "distribution_mode": mode,
                 "confidence": round(_source_confidence(source), 4),
                 "subparts": sub_audit,
             }
         )
+
+
+    # [STRICT PHASE 1] Disable auto-even-distribution or inference.
+    # Marks MUST come from explicit visual evidence.
+    pass
 
 
 def _sync_audit_for_question(
@@ -330,7 +253,8 @@ def _sync_audit_for_question(
     for row in question_audit_tree:
         if row.get("section") == sec and row.get("number") == qn:
             row["total_marks"] = round(to_float(q.get("marks"), 0.0), 4)
-            row["mark_source"] = _norm_source(q.get("mark_source"))
+            q["mark_source"] = _norm_source(q.get("mark_source") or "missing")
+            row["mark_source"] = q["mark_source"]
             row["distribution_mode"] = q.get("distribution_mode")
             conf_val = _source_confidence(q.get("mark_source"))
             row["confidence"] = round(conf_val if conf_val is not None else 0.0, 4)
@@ -346,191 +270,59 @@ def _sync_audit_for_question(
 
 
 def _reconcile_header_marks(
-    *,
     header_total_marks: float,
     header_total_reliable: bool,
     q_keys: List[Tuple[str, int]],
     by_key: Dict[Tuple[str, int], Dict[str, Any]],
     question_audit_tree: List[Dict[str, Any]],
-    changed_questions: set[Tuple[str, int]],
+    changed_questions: Set[Tuple[str, int]],
 ) -> None:
-    current_total = _compute_effective_total([by_key[k] for k in q_keys])
-    target_total = round(float(header_total_marks), 4)
-    delta = round(target_total - current_total, 4)
-
-    # We fill gaps if:
-    # 1. Header is reliable
-    # 2. OR the delta is small (< 15% of total) and we have questions with 0 marks.
-    should_fill = header_total_reliable or (abs(delta) < (target_total * 0.15) and abs(delta) > 1e-6)
-
-    if not should_fill or abs(delta) <= 1e-6:
-        return
-
-    inferred_candidates = [
-        key
-        for key in q_keys
-        if _norm_source((by_key.get(key) or {}).get("mark_source")) not in {"margin", "section_math"}
-    ]
-
-    zero_mark_candidates = [key for key in inferred_candidates if to_float((by_key.get(key) or {}).get("marks"), 0.0) <= 0]
-    pattern = _mode_positive([to_float((by_key.get(key) or {}).get("marks"), 0.0) for key in q_keys]) or 1.0
-
-    if delta > 0:
-        # Priority 1: Fill zero-mark questions first.
-        for key in zero_mark_candidates:
-            if delta <= 1e-6:
-                break
-            q = by_key[key]
-            add = min(pattern, delta)
-            q["marks"] = round(float(add), 4)
-            q["mark_source"] = MARK_REASON_RECONCILED
-            q["distribution_mode"] = "header_total_fill"
-            by_key[key] = q
-            delta = round(delta - add, 4)
-            changed_questions.add(key)
-            logger.info("[MARK_APPLY] q=%s section=%s reason=header_gap_fill marks=%s", key[1], key[0], round(q["marks"], 4))
-            _sync_audit_for_question(key, question_audit_tree, by_key)
-
-        # Priority 2: Distribute remaining delta among other inferred candidates.
-        if delta > 1e-6 and inferred_candidates:
-            extra = delta / float(len(inferred_candidates))
-            for key in inferred_candidates:
-                q = by_key[key]
-                cur = to_float(q.get("marks"), 0.0)
-                q["marks"] = round(cur + extra, 4)
-                q["mark_source"] = MARK_REASON_RECONCILED
-                q["distribution_mode"] = "header_total_spread"
-                by_key[key] = q
-                changed_questions.add(key)
-                _sync_audit_for_question(key, question_audit_tree, by_key)
-            logger.info("[MARK_RECONCILE] spread=%s marks=%s", len(inferred_candidates), round(delta, 4))
-    else:
-        # Reduce marks if over budget.
-        need = abs(delta)
-        for key in reversed(inferred_candidates):
-            if need <= 1e-6:
-                break
-            q = by_key[key]
-            cur = max(0.0, to_float(q.get("marks"), 0.0))
-            if cur <= 0:
-                continue
-            cut = min(cur, need)
-            q["marks"] = round(cur - cut, 4)
-            q["mark_source"] = MARK_REASON_RECONCILED
-            q["distribution_mode"] = "header_total_trim"
-            by_key[key] = q
-            need = round(need - cut, 4)
-            changed_questions.add(key)
-            logger.info("[MARK_APPLY] q=%s section=%s reason=header_trim marks=%s", key[1], key[0], round(q["marks"], 4))
-            _sync_audit_for_question(key, question_audit_tree, by_key)
+    """Header-total reconciliation disabled for Phase 1 compliance."""
+    return
 
 
 def _redistribute_subparts_only(question: Dict[str, Any]) -> bool:
-    subparts = list(question.get("subquestions") or [])
-    if not subparts:
-        return False
-    total = max(0.0, to_float(question.get("marks"), 0.0))
-    if total <= 0:
-        return False
-    explicit_idxs: List[int] = []
-    explicit_sum = 0.0
-    for idx, sq in enumerate(subparts):
-        src = _norm_source(sq.get("mark_source"))
-        val = max(0.0, to_float(sq.get("marks"), 0.0))
-        if val > 0 and src in _EXPLICIT_SOURCES:
-            explicit_idxs.append(idx)
-            explicit_sum += val
-        if float(explicit_sum) > float(total):
-            return False
-    missing = [i for i in range(len(subparts)) if i not in explicit_idxs]
-    if not missing:
-        return False
-    even = (float(total) - float(explicit_sum)) / float(len(missing)) if missing else 0.0
-    for idx in missing:
-        subparts[idx]["marks"] = round(float(even), 4)
-        if _norm_source(subparts[idx].get("mark_source")) not in _EXPLICIT_SOURCES:
-            subparts[idx]["mark_source"] = _norm_source(question.get("mark_source"))
-    # Adjust last for rounding drift.
-    if missing:
-        current_sum = sum(max(0.0, to_float(sq.get("marks"), 0.0)) for sq in subparts)
-        diff = round(float(total - current_sum), 4)
-        if abs(diff) > 1e-6:
-            last = missing[-1]
-            subparts[last]["marks"] = round(float(max(0.0, to_float(subparts[last].get("marks"), 0.0) + diff)), 4)
-    question["subquestions"] = subparts
-    return True
+    """Auto-distribution disabled for Phase 1 compliance."""
+    return False
 
 
 def _reconcile_subpart_marks(question: Dict[str, Any], model_answer_marks: Optional[Dict[str, float]] = None) -> bool:
-    """Ensure subpart sum matches parent marks. If mismatch, scale or distribute diff.
-    If model_answer_marks is provided, use it for auto-correction.
+    """Ensure subpart sum matches parent marks. If mismatch, NO SCALE / NO DISTRIBUTE.
+    Only allows explicitly matched marks.
     """
     subparts = list(question.get("subquestions") or [])
     if not subparts:
         return False
     
     qn = to_int(question.get("number"), 0)
-    parent_marks = max(0.0, to_float(question.get("marks"), 0.0))
-    sub_sum = sum(max(0.0, to_float(sq.get("marks"), 0.0)) for sq in subparts)
+    parent_marks = to_float(question.get("marks"), 0.0)
+    sub_sum = sum(to_float(sq.get("marks"), 0.0) for sq in subparts)
     
     if abs(sub_sum - parent_marks) < 1e-6 and not model_answer_marks:
         return False
         
     if abs(sub_sum - parent_marks) > 1e-6:
         logger.warning(
-            "SUBPART_SUM_MISMATCH q=%s expected=%s inferred=%s",
+            "SUBPART_SUM_MISMATCH q=%s expected=%s sub_sum=%s (NO AUTO-RECONCILE)",
             qn, round(parent_marks, 4), round(sub_sum, 4)
         )
+        return False
     
-    # Priority 1: Model Answer
+    # Priority 1: Model Answer (Still used as it is considered ground truth enrichment)
     if model_answer_marks:
-        logger.info("MARK_REASON_RECONCILED q=%s reason=model_answer marks=%s", qn, round(parent_marks, 4))
         for sq in subparts:
             label = str(sq.get("label") or "").strip()
             if label in model_answer_marks:
                 sq["marks"] = round(to_float(model_answer_marks[label], 0.0), 4)
                 sq["mark_source"] = MARK_REASON_RECONCILED
-                sq["distribution_mode"] = "model_answer"
         question["subquestions"] = subparts
-        # Final check if model answer changed parent
-        new_sub_sum = sum(max(0.0, to_float(sq.get("marks"), 0.0)) for sq in subparts)
+        new_sub_sum = sum(to_float(sq.get("marks"), 0.0) for sq in subparts)
         if abs(new_sub_sum - parent_marks) > 1e-6:
             question["marks"] = round(new_sub_sum, 4)
             question["mark_source"] = MARK_REASON_RECONCILED
-            logger.info("MARK_REASON_RECONCILED q=%s reason=auto_correct marks=%s", qn, round(new_sub_sum, 4))
         return True
 
-    # Priority 2: Standard Reconciliation
-    logger.info(
-        "MARK_RECONCILED q=%s reason=gap_fill marks=%s",
-        qn, round(parent_marks, 4)
-    )
-    
-    if sub_sum < parent_marks:
-        # Distribute missing marks
-        diff = parent_marks - sub_sum
-        per_sub = diff / len(subparts)
-        for sq in subparts:
-            sq["marks"] = round(to_float(sq.get("marks"), 0.0) + per_sub, 4)
-            sq["mark_source"] = MARK_REASON_RECONCILED
-            sq["distribution_mode"] = "subpart_fill"
-    else:
-        # Scale down
-        factor = parent_marks / sub_sum if sub_sum > 0 else 0.0
-        for sq in subparts:
-            sq["marks"] = round(to_float(sq.get("marks"), 0.0) * factor, 4)
-            sq["mark_source"] = MARK_REASON_RECONCILED
-            sq["distribution_mode"] = "scale"
-            
-    # Rounding fix for last subpart
-    new_sum = sum(max(0.0, to_float(sq.get("marks"), 0.0)) for sq in subparts)
-    drift = round(parent_marks - new_sum, 4)
-    if abs(drift) > 1e-6:
-        subparts[-1]["marks"] = round(max(0.0, to_float(subparts[-1].get("marks"), 0.0) + drift), 4)
-
-    question["subquestions"] = subparts
-    question["mark_source"] = MARK_REASON_RECONCILED
-    return True
+    return False
 
 
 def _log_anchor_merge_result(visual_entities: Optional[Dict[str, Any]]) -> None:

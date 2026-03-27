@@ -105,7 +105,7 @@ def _apply_section_pattern_marks(structure: Dict[str, Any]) -> int:
             if not q:
                 continue
             current = max(0.0, to_float(q.get("marks"), 0.0))
-            source = str(q.get("mark_source") or "inferred").strip().lower()
+            source = str(q.get("mark_source") or "missing").strip().lower()
             if current > 0 and source in {"margin", "section_math"}:
                 continue
             q["marks"] = round(per, 4)
@@ -130,7 +130,7 @@ def _propagate_pattern_marks(structure: Dict[str, Any]) -> int:
         if to_float(q.get("marks"), 0.0) > 0:
             continue
         q["marks"] = round(mode_mark, 4)
-        q["mark_source"] = "inferred"
+        q["mark_source"] = "missing"
         q["distribution_mode"] = "section_pattern"
         changed += 1
     return changed
@@ -153,7 +153,7 @@ def _fix_or_group_integrity(structure: Dict[str, Any]) -> int:
                 continue
             q["marks"] = round(shared, 4)
             if str(q.get("mark_source") or "").strip().lower() not in {"margin", "section_math", "instruction"}:
-                q["mark_source"] = "inferred"
+                q["mark_source"] = "missing"
             changed += 1
     return changed
 
@@ -232,7 +232,7 @@ def _rebuild_audit_tree(structure: Dict[str, Any]) -> List[Dict[str, Any]]:
                     {
                         "label": str(sq.get("label") or "").strip(),
                         "marks": round(max(0.0, to_float(sq.get("marks"), 0.0)), 4),
-                        "source": str(sq.get("mark_source") or "inferred").strip().lower(),
+                        "source": str(sq.get("mark_source") or "missing").strip().lower(),
                     }
                     for sq in (q.get("subquestions") or [])
                 ],

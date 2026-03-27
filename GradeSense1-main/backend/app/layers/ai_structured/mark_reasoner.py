@@ -14,7 +14,6 @@ from .mark_sources import (
     _margin_mark_maps,
     _build_section_math_rules,
     _resolve_section_math_blocks,
-    _ensure_section_rule_anchor_coverage,
     _compute_effective_total,
 )
 from .mark_conflict_resolver import (
@@ -85,7 +84,6 @@ def resolve_marks(
     q_margin, sq_margin = _margin_mark_maps(visual_entities)
     section_rules = _build_section_math_rules(normalized, visual_entities)
     section_rules = _reconcile_section_rule_starts(section_rules, q_keys)
-    _ensure_section_rule_anchor_coverage(section_rules, visual_entities)
     _log_anchor_merge_result(visual_entities)
     changed_questions: set[Tuple[str, int]] = set()
 
@@ -109,46 +107,7 @@ def resolve_marks(
         changed_questions=changed_questions,
     )
 
-    # Header-total alignment pass.
-    if header_total_marks and header_total_marks > 0:
-        _reconcile_header_marks(
-            header_total_marks=header_total_marks,
-            header_total_reliable=header_total_reliable,
-            q_keys=q_keys,
-            by_key=by_key,
-            question_audit_tree=question_audit_tree,
-            changed_questions=changed_questions,
-        )
-
-    # Pattern inference for still-missing marks.
-    covered_by_rules: set[Tuple[str, int]] = set()
-    for rule in section_rules:
-        sec = str(rule.get("section") or "").strip()
-        covered_by_rules.update((sec, to_int(qn, 0)) for qn in (rule.get("questions") or []) if to_int(qn, 0) > 0)
-    covered_by_rules.update(section_assignments.keys())
-
-    pattern_mark = _mode_positive([to_float((by_key.get(key) or {}).get("marks"), 0.0) for key in q_keys]) or 1.0
-    for key in q_keys:
-        if key in covered_by_rules:
-            continue
-        q = by_key[key]
-        if to_float(q.get("marks"), 0.0) > 0:
-            continue
-        qtype = str(q.get("question_type") or "").strip().lower()
-        inferred_default = 1.0 if qtype in {"mcq", "fill_blank", "very_short"} else pattern_mark
-        q["marks"] = round(inferred_default, 4)
-        q["mark_source"] = "inferred"
-        q["distribution_mode"] = "section_pattern"
-        by_key[key] = q
-        changed_questions.add(key)
-        logger.info(
-            "[MARK_INFER] q=%s section=%s reason=pattern_inference marks=%s qtype=%s",
-            key[1], key[0],
-            round(q["marks"], 4),
-            qtype or "unknown",
-        )
-        _sync_audit_for_question(key, question_audit_tree, by_key)
-
+    # PASS 2 & 3: Header-total and Pattern inference blocks removed for Phase 1 compliance.
     # OR integrity.
     for gid, members in sorted(or_groups_map.items(), key=lambda kv: kv[0]):
         # members contains (section, number) tuples

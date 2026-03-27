@@ -22,13 +22,14 @@ def _parse_margin_split_text(value: Any) -> Optional[List[float]]:
     if not txt:
         return None
     m = re.match(
-        r"^\s*[\(\[\{]?\s*(\d+(?:\.\d+)?(?:\s*\+\s*\d+(?:\.\d+)?)+)\s*[\)\]\}]?\s*$",
+        r"^\s*[\(\[\{]?\s*(\d+(?:\.\d+)?(?:\s*\+\s*\d+(?:\.\d+)?)+).*",
         txt,
+        re.I
     )
     if not m:
         return None
     parts = [to_float(p, 0.0) for p in re.split(r"\s*\+\s*", m.group(1))]
-    if len(parts) < 2 or any(p <= 0 for p in parts):
+    if len(parts) < 2:
         return None
     return [round(p, 4) for p in parts]
 
@@ -307,45 +308,43 @@ def _build_section_math_rules(structure: Dict[str, Any], visual_entities: Option
     return rules
 
 
-def _ensure_section_rule_anchor_coverage(
-    section_rules: List[Dict[str, Any]],
-    visual_entities: Optional[Dict[str, Any]],
-) -> int:
-    if not section_rules or not isinstance(visual_entities, dict):
-        return 0
-    anchors = list(visual_entities.get("questions") or [])
-    by_num: Dict[int, Dict[str, Any]] = {}
-    for row in anchors:
-        if not isinstance(row, dict):
-            continue
-        qn = to_int(row.get("number"), 0)
-        if qn <= 0 or qn in by_num:
-            continue
-        by_num[qn] = row
+# _ensure_section_rule_anchor_coverage removed for Phase 1 compliance.
+# PASS 1: Remove synthetic anchor generation.
+# Phase 1 requires 1 visual anchor = 1 final question.
+# DO NOT create synthetic questions to cover gaps in section rules.
 
-    synthetic_added = 0
+def _build_section_math_rules_assignments(section_rules: List[Dict[str, Any]]) -> Dict[Tuple[str, int], float]:
+    """Parse section math rules into explicit assignments.
+    Logic:
+    '1-5=10' -> All 1,2,3,4,5 get 2.0 (if 10.0 total)
+    '1+2=5' -> q1 receive marks, q2 receive marks (sequential parsing)
+    """
+    assignments = {}
     for rule in section_rules:
-        start_q = to_int(rule.get("start_question"), 0)
-        count = to_int(rule.get("count"), 0)
-        if start_q <= 0 or count <= 0:
+        sec = str(rule.get("section") or "").strip()
+        raw_qs = rule.get("questions") or []
+        total = to_float(rule.get("total_marks"), 0.0)
+        expr = str(rule.get("expression") or "").strip()
+        
+        if not raw_qs or total <= 0:
             continue
-        expected = list(range(start_q, start_q + count))
-        missing = [qn for qn in expected if qn not in by_num]
-        if not missing:
+            
+        q_nums = [to_int(qn, 0) for qn in raw_qs if to_int(qn, 0) > 0]
+        if not q_nums:
             continue
-        for qn in missing:
-            anchor = {
-                "number": qn,
-                "bbox": list(rule.get("bbox") or [0, 0, 0, 0]),
-                "page": to_int(rule.get("source_page"), 0),
-                "confidence": 0.2,
-                "source": "synthetic",
-            }
-            anchors.append(anchor)
-            by_num[qn] = anchor
-            synthetic_added += 1
-
-    if synthetic_added:
-        anchors.sort(key=lambda r: to_int(r.get("number"), 0))
-        visual_entities["questions"] = anchors
-    return synthetic_added
+            
+        # If expression contains '+', we might have sequential parts like "2 + 3 = 5"
+        parts = []
+        if "+" in expr:
+            parts = [to_float(p.strip(), 0.0) for p in expr.split("+") if p.strip()]
+            
+        if parts and len(parts) == len(q_nums):
+            for i, num in enumerate(q_nums):
+                assignments[(sec, num)] = parts[i]
+        else:
+            # Distribute evenly if no explicit sequence found
+            per_q = total / len(q_nums)
+            for num in q_nums:
+                assignments[(sec, num)] = per_q
+                
+    return assignments
