@@ -1545,6 +1545,90 @@ def _merge_semantic_with_visual_entities(
 
     logger.info("LOG TAG: VISUAL_MERGE_AFTER_SEMANTIC Total matched semantic enrichment candidates=%s", sum(len(v["candidates"]) for v in visual_map.values()))
 
+    # === STRICT ALIGNMENT & FALLBACK PHASE ===
+    logger.info("LOG TAG: SEMANTIC_COUNT_BEFORE_MERGE: %s", len(semantic_questions))
+    
+    # 1. Trace semantic-to-anchor mapping from Phase 3 results
+    # Use only (section, number) identity for matching logic
+    ident_to_keys = defaultdict(list)
+    for k in ordered_keys:
+        v_node = visual_map[k]
+        for cand in v_node.get("candidates") or []:
+            c_ident = (normalize_section(cand.get("section") or "default"), _to_int(cand.get("number"), 0))
+            ident_to_keys[c_ident].append(k)
+
+    # 2. Re-build structures to align exactly with semantic_questions (One-to-One)
+    new_visual_map = {}
+    new_ordered_keys = []
+    anchor_usage_count = defaultdict(int)
+
+    for sq in semantic_questions:
+        sq_num = _to_int(sq.get("number"), 0)
+        sq_sec = normalize_section(sq.get("section") or "default")
+        sq_ident = (sq_sec, sq_num)
+        
+        # Find match: from Phase 3 results or directly by identity fallback
+        matched_keys = ident_to_keys.get(sq_ident, [])
+        target_anchor_key = matched_keys[0] if matched_keys else None
+        
+        if not target_anchor_key:
+            # Primary identity fallback check
+            for k in ordered_keys:
+                if visual_map[k]["number"] == sq_num and normalize_section(visual_map[k].get("section") or "default") == sq_sec:
+                    target_anchor_key = k
+                    break
+
+        if target_anchor_key:
+            # Valid visual anchor exists - re-use or clone
+            if anchor_usage_count[target_anchor_key] == 0:
+                v_node = visual_map[target_anchor_key]
+                logger.info("LOG TAG: SEMANTIC_ANCHOR_REUSED key=%s", sq_ident)
+            else:
+                # MULTIPLE SEMANTIC -> SAME ANCHOR: Deep clone
+                v_node = copy.deepcopy(visual_map[target_anchor_key])
+                v_node["original_anchor"]["source"] = "semantic_clone"
+                # Optional: Confidence normalization for clones
+                v_node["confidence"] = min(_to_float(v_node.get("confidence", 0.5), 0.5), 0.85)
+                logger.info("LOG TAG: SEMANTIC_ANCHOR_CLONED key=%s", sq_ident)
+            
+            v_node["candidates"] = [sq]
+            anchor_usage_count[target_anchor_key] += 1
+            
+            # Key format (section, number) plus a sequence to ensure uniqueness if identities repeat
+            unique_k = (*target_anchor_key, len(new_ordered_keys))
+            new_ordered_keys.append(unique_k)
+            new_visual_map[unique_k] = v_node
+        else:
+            # STRICT FALLBACK: key NOT in visual_map
+            logger.info("LOG TAG: SEMANTIC_FALLBACK_CREATED key=%s", sq_ident)
+            synth_node = {
+                "number": sq_num,
+                "page": -1,
+                "bbox": [0, 0, 0, 0],
+                "confidence": 0.3,
+                "section": sq_sec,
+                "candidates": [sq],
+                "subquestions": copy.deepcopy(sq.get("subquestions", [])),
+                "original_anchor": {
+                    "number": sq_num,
+                    "section": sq_sec,
+                    "page": -1,
+                    "bbox": [0, 0, 0, 0],
+                    "confidence": 0.3,
+                    "source": "semantic_fallback"
+                }
+            }
+            # Key format (page, bbox, sequence)
+            synth_k = (-1, (0, 0, 0, 0), len(new_ordered_keys))
+            new_ordered_keys.append(synth_k)
+            new_visual_map[synth_k] = synth_node
+
+    # Enforce global state change to trigger one-to-one resolution
+    ordered_keys[:] = new_ordered_keys
+    visual_map.clear()
+    visual_map.update(new_visual_map)
+
+
     # 4. RESOLVE FINAL QUESTIONS
     final_questions = []
     final_q_by_key = {}
@@ -1699,7 +1783,7 @@ def _merge_semantic_with_visual_entities(
                 "confidence": _to_float(row.get("confidence"), 0.0),
             })
 
-    logger.info("LOG TAG: VISUAL_MERGE_FINAL_OUTPUT final_questions=%s", len(final_questions))
+    logger.info("LOG TAG: SEMANTIC_COUNT_AFTER_MERGE: %s", len(final_questions))
 
     # Strict assertion
     assert len(final_questions) == len(ordered_keys), "Visual anchor count mismatch"
