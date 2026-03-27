@@ -2,7 +2,7 @@ import os
 from typing import Any, Dict, List, Tuple
 from app.services.pipelines.ai_structured.utils.common import _to_float
 
-ALIGNMENT_COVERAGE_GATE = 0.5
+ALIGNMENT_COVERAGE_GATE = 0.6
 ALIGNMENT_COVERAGE_THRESHOLD = float(os.getenv("AI_STRUCTURED_ALIGNMENT_GATE", str(ALIGNMENT_COVERAGE_GATE)))
 
 def check_alignment_coverage(alignment_result: Dict[str, Any]) -> Tuple[str, str, float, float, float, List[int]]:

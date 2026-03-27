@@ -69,3 +69,26 @@ def build_canonical_question_id(qn_raw: any, sub_raw: any) -> str | None:
             if "." not in base:
                 return f"{base}.{sub_str.upper()}"
     return base
+
+def normalize_question_uid(uid: str) -> str:
+    """
+    Standardize question UIDs to default_q{number} format.
+    """
+    if not uid:
+        return ""
+    
+    uid = str(uid).strip().lower()
+
+    if uid.startswith("default_q"):
+        return uid
+
+    if uid.startswith("q"):
+        # Handle cases like Q1, Q1.A
+        number_part = uid[1:]
+        return f"default_q{number_part}"
+
+    # If it's just a number, prefix it
+    if uid.isdigit():
+        return f"default_q{uid}"
+
+    return uid

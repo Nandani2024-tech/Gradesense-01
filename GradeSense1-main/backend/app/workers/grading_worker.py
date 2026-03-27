@@ -9,6 +9,7 @@ from app.services.grading import grading_job_service, grading_service
 from app.services import blueprint_service
 from app.repositories import AnalyticsRepo
 from app.utils.debug_logger import current_job_id, request_id, write_debug_json
+from app.utils.async_utils import safe_gather
 from app.services.grading_core import run_grading_orchestrator
 from app.models.submission import Submission
 
@@ -39,26 +40,29 @@ async def grading_worker_loop():
                 }
             )
             
-            if job_type == "batch_grading":
-                await run_grading_pipeline(
-                    job_id=data["job_id"],
-                    exam_id=data["exam_id"],
-                    files_data=data["files_data"],
-                    teacher_id=data["teacher_id"],
-                    blueprint=data["blueprint"]
-                )
-            elif job_type == "regrade_all":
-                await run_regrade_all_submissions(
-                    exam_id=data["exam_id"],
-                    user_id=data["user_id"]
-                )
-            elif job_type == "single_submission_grading":
-                await run_single_submission_grading(
-                    exam_id=data["exam_id"],
-                    submission_id=data["submission_id"]
-                )
-            else:
-                logger.error(f"Unknown job_type: {job_type}")
+            try:
+                if job_type == "batch_grading":
+                    await run_grading_pipeline(
+                        job_id=data["job_id"],
+                        exam_id=data["exam_id"],
+                        files_data=data["files_data"],
+                        teacher_id=data["teacher_id"],
+                        blueprint=data["blueprint"]
+                    )
+                elif job_type == "regrade_all":
+                    await run_regrade_all_submissions(
+                        exam_id=data["exam_id"],
+                        user_id=data["user_id"]
+                    )
+                elif job_type == "single_submission_grading":
+                    await run_single_submission_grading(
+                        exam_id=data["exam_id"],
+                        submission_id=data["submission_id"]
+                    )
+                else:
+                    logger.error(f"Unknown job_type: {job_type}")
+            except Exception as e:
+                logger.error("job_failed_in_worker", extra={"job_type": job_type, "error": str(e)}, exc_info=True)
                 
             grading_service.grading_queue.task_done()
             
@@ -197,17 +201,9 @@ async def run_grading_pipeline(job_id: str, exam_id: str, files_data: List[dict]
                         progress_inc=progress_increment
                     )
 
-        # 3. Create parallel tasks
+        # 3. Create parallel tasks using safe_gather
         tasks = [process_single_file(file_entry) for file_entry in files_data]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        for res in results:
-            if isinstance(res, Exception):
-                logger.error(
-                    "Task failed during parallel execution",
-                    extra={"request_id": request_id.get()},
-                    exc_info=res
-                )
+        await safe_gather(tasks)
 
         # 4. Final Job Status Check
         job = await analytics_repo.grading_jobs_collection.find_one({"job_id": job_id})
@@ -281,7 +277,7 @@ async def run_regrade_all_submissions(exam_id: str, user_id: str) -> None:
                     logger.error(f"Regrade failed for {sub_id}: {e}")
 
         tasks = [process_regrade(sub) for sub in submissions]
-        await asyncio.gather(*tasks)
+        await safe_gather(tasks)
         
         logger.info(f"Worker: Finished regrade all submissions for exam {exam_id}")
     except Exception as e:
@@ -309,7 +305,7 @@ async def run_batch_review_grade(submissions: List[dict], exam_id: str, job_id: 
                 logger.error(f"Student review grade failed for {sub_id}: {e}")
 
     tasks = [process_student_sub(sub) for sub in submissions]
-    await asyncio.gather(*tasks)
+    await safe_gather(tasks)
     logger.info(f"Worker: Finished batch review grade for exam {exam_id}")
 
 async def run_single_submission_grading(exam_id: str, submission_id: str):

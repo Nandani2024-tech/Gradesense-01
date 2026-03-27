@@ -6,6 +6,8 @@ RAW BATCH 1/1:
     {
       "number": 1,
       "raw_number": "1",
+      "question_uid": "default_q1",
+      "uid": "default_q1",
       "section": null,
       "instruction": null,
       "question_text": "What is photosynthesis?",
@@ -24,7 +26,7 @@ RAW BATCH 1/1:
             202,
             118,
             220,
-            527
+            409
           ],
           "visual_confidence": 0.9
         }
@@ -35,6 +37,8 @@ RAW BATCH 1/1:
     {
       "number": 2,
       "raw_number": "2",
+      "question_uid": "default_q2",
+      "uid": "default_q2",
       "section": null,
       "instruction": null,
       "question_text": "Define gravity.",
@@ -53,7 +57,7 @@ RAW BATCH 1/1:
             260,
             118,
             278,
-            416
+            340
           ],
           "visual_confidence": 0.9
         }
@@ -64,6 +68,8 @@ RAW BATCH 1/1:
     {
       "number": 3,
       "raw_number": "3",
+      "question_uid": "default_q3",
+      "uid": "default_q3",
       "section": null,
       "instruction": null,
       "question_text": "What is the chemical formula of water?",
@@ -82,7 +88,7 @@ RAW BATCH 1/1:
             318,
             118,
             336,
-            570
+            500
           ],
           "visual_confidence": 0.9
         }
@@ -93,6 +99,8 @@ RAW BATCH 1/1:
     {
       "number": 4,
       "raw_number": "4",
+      "question_uid": "default_q4",
+      "uid": "default_q4",
       "section": null,
       "instruction": null,
       "question_text": "Name the process by which plants lose water through leaves.",
@@ -122,6 +130,8 @@ RAW BATCH 1/1:
     {
       "number": 5,
       "raw_number": "5",
+      "question_uid": "default_q5",
+      "uid": "default_q5",
       "section": null,
       "instruction": null,
       "question_text": "What is the unit of force?",
@@ -140,7 +150,7 @@ RAW BATCH 1/1:
             454,
             118,
             472,
-            490
+            409
           ],
           "visual_confidence": 0.9
         }
@@ -151,6 +161,8 @@ RAW BATCH 1/1:
     {
       "number": 6,
       "raw_number": "6",
+      "question_uid": "default_q6",
+      "uid": "default_q6",
       "section": null,
       "instruction": null,
       "question_text": "Explain the difference between mass and weight.",
@@ -169,7 +181,7 @@ RAW BATCH 1/1:
             512,
             118,
             530,
-            678
+            660
           ],
           "visual_confidence": 0.9
         }
@@ -180,6 +192,8 @@ RAW BATCH 1/1:
     {
       "number": 7,
       "raw_number": "7",
+      "question_uid": "default_q7",
+      "uid": "default_q7",
       "section": null,
       "instruction": null,
       "question_text": "What is an ecosystem?",
@@ -198,7 +212,7 @@ RAW BATCH 1/1:
             570,
             118,
             588,
-            490
+            409
           ],
           "visual_confidence": 0.9
         }
@@ -209,6 +223,8 @@ RAW BATCH 1/1:
     {
       "number": 8,
       "raw_number": "8",
+      "question_uid": "default_q8",
+      "uid": "default_q8",
       "section": null,
       "instruction": null,
       "question_text": "Name one renewable source of energy.",
@@ -227,7 +243,7 @@ RAW BATCH 1/1:
             628,
             118,
             646,
-            624
+            550
           ],
           "visual_confidence": 0.9
         }
@@ -238,6 +254,8 @@ RAW BATCH 1/1:
     {
       "number": 9,
       "raw_number": "9",
+      "question_uid": "default_q9",
+      "uid": "default_q9",
       "section": null,
       "instruction": null,
       "question_text": "What is the boiling point of water (in \u00b0C)?",
@@ -256,7 +274,7 @@ RAW BATCH 1/1:
             686,
             118,
             704,
-            660
+            600
           ],
           "visual_confidence": 0.9
         }
@@ -267,6 +285,8 @@ RAW BATCH 1/1:
     {
       "number": 10,
       "raw_number": "10",
+      "question_uid": "default_q10",
+      "uid": "default_q10",
       "section": null,
       "instruction": null,
       "question_text": "Define evaporation.",
@@ -285,7 +305,7 @@ RAW BATCH 1/1:
             744,
             118,
             762,
-            460
+            390
           ],
           "visual_confidence": 0.9
         }
@@ -307,6 +327,8 @@ FINAL CONSOLIDATED OUTPUT:
     {
       "number": 1,
       "raw_number": "1",
+      "question_uid": "default_q1",
+      "uid": "default_q1",
       "section": null,
       "instruction": null,
       "question_text": "What is photosynthesis?",
@@ -325,7 +347,7 @@ FINAL CONSOLIDATED OUTPUT:
             202,
             118,
             220,
-            527
+            409
           ],
           "visual_confidence": 0.9
         }
@@ -336,6 +358,8 @@ FINAL CONSOLIDATED OUTPUT:
     {
       "number": 2,
       "raw_number": "2",
+      "question_uid": "default_q2",
+      "uid": "default_q2",
       "section": null,
       "instruction": null,
       "question_text": "Define gravity.",
@@ -354,7 +378,7 @@ FINAL CONSOLIDATED OUTPUT:
             260,
             118,
             278,
-            416
+            340
           ],
           "visual_confidence": 0.9
         }
@@ -365,6 +389,8 @@ FINAL CONSOLIDATED OUTPUT:
     {
       "number": 3,
       "raw_number": "3",
+      "question_uid": "default_q3",
+      "uid": "default_q3",
       "section": null,
       "instruction": null,
       "question_text": "What is the chemical formula of water?",
@@ -383,7 +409,7 @@ FINAL CONSOLIDATED OUTPUT:
             318,
             118,
             336,
-            570
+            500
           ],
           "visual_confidence": 0.9
         }
@@ -394,6 +420,8 @@ FINAL CONSOLIDATED OUTPUT:
     {
       "number": 4,
       "raw_number": "4",
+      "question_uid": "default_q4",
+      "uid": "default_q4",
       "section": null,
       "instruction": null,
       "question_text": "Name the process by which plants lose water through leaves.",
@@ -423,6 +451,8 @@ FINAL CONSOLIDATED OUTPUT:
     {
       "number": 5,
       "raw_number": "5",
+      "question_uid": "default_q5",
+      "uid": "default_q5",
       "section": null,
       "instruction": null,
       "question_text": "What is the unit of force?",
@@ -441,7 +471,7 @@ FINAL CONSOLIDATED OUTPUT:
             454,
             118,
             472,
-            490
+            409
           ],
           "visual_confidence": 0.9
         }
@@ -452,6 +482,8 @@ FINAL CONSOLIDATED OUTPUT:
     {
       "number": 6,
       "raw_number": "6",
+      "question_uid": "default_q6",
+      "uid": "default_q6",
       "section": null,
       "instruction": null,
       "question_text": "Explain the difference between mass and weight.",
@@ -470,7 +502,7 @@ FINAL CONSOLIDATED OUTPUT:
             512,
             118,
             530,
-            678
+            660
           ],
           "visual_confidence": 0.9
         }
@@ -481,6 +513,8 @@ FINAL CONSOLIDATED OUTPUT:
     {
       "number": 7,
       "raw_number": "7",
+      "question_uid": "default_q7",
+      "uid": "default_q7",
       "section": null,
       "instruction": null,
       "question_text": "What is an ecosystem?",
@@ -499,7 +533,7 @@ FINAL CONSOLIDATED OUTPUT:
             570,
             118,
             588,
-            490
+            409
           ],
           "visual_confidence": 0.9
         }
@@ -510,6 +544,8 @@ FINAL CONSOLIDATED OUTPUT:
     {
       "number": 8,
       "raw_number": "8",
+      "question_uid": "default_q8",
+      "uid": "default_q8",
       "section": null,
       "instruction": null,
       "question_text": "Name one renewable source of energy.",
@@ -528,7 +564,7 @@ FINAL CONSOLIDATED OUTPUT:
             628,
             118,
             646,
-            624
+            550
           ],
           "visual_confidence": 0.9
         }
@@ -539,6 +575,8 @@ FINAL CONSOLIDATED OUTPUT:
     {
       "number": 9,
       "raw_number": "9",
+      "question_uid": "default_q9",
+      "uid": "default_q9",
       "section": null,
       "instruction": null,
       "question_text": "What is the boiling point of water (in \u00b0C)?",
@@ -557,7 +595,7 @@ FINAL CONSOLIDATED OUTPUT:
             686,
             118,
             704,
-            660
+            600
           ],
           "visual_confidence": 0.9
         }
@@ -568,6 +606,8 @@ FINAL CONSOLIDATED OUTPUT:
     {
       "number": 10,
       "raw_number": "10",
+      "question_uid": "default_q10",
+      "uid": "default_q10",
       "section": null,
       "instruction": null,
       "question_text": "Define evaporation.",
@@ -586,7 +626,7 @@ FINAL CONSOLIDATED OUTPUT:
             744,
             118,
             762,
-            460
+            390
           ],
           "visual_confidence": 0.9
         }

@@ -1,4 +1,7 @@
-import json
+# ⚠️ DEPRECATED: LLM-based grading is disabled in production.
+# This module is retained only for rollback or debugging.
+
+import asyncio
 import re
 from typing import Dict, Any, Optional
 from app.services.grading.score_validator import ScoreValidator

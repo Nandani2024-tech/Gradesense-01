@@ -8,11 +8,15 @@ import os
 import re
 import uuid
 from collections import Counter, defaultdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, cast
 from app.core.logging_config import logger
 from app.utils.debug_logger import request_id
-from app.utils.identity_manager import normalize_question_id, is_valid_question_id, build_canonical_question_id
-import uuid
+from app.utils.identity_manager import (
+    normalize_question_id, 
+    is_valid_question_id, 
+    build_canonical_question_id,
+    normalize_question_uid
+)
 from app.adapters.interfaces import AbstractLLMService, AbstractOCRService
 from app.infrastructure.ocr.provider.patterns import ANSWER_MCQ_RE, ANSWER_QUESTION_RE
 from app.constants.layers import (
@@ -27,11 +31,79 @@ from app.infrastructure.cache import get_alignment_cache, set_alignment_cache
 from app.prompts.ai_structured_prompts import build_alignment_prompt
 from app.infrastructure.serialization.json_helpers import parse_tolerant_json
 from app.infrastructure.serialization.safe_numeric import safe_float
+from app.utils.async_utils import safe_gather
 
 
 # ALIGNMENT_COVERAGE_GATE moved to constants.py
 
 
+class AlignmentError(Exception):
+    """Raised when alignment coverage is too low."""
+    pass
+
+def extract_text_block(text: str, start_pattern: str) -> str:
+    """
+    Extract text starting from a pattern until the next question pattern.
+    """
+    try:
+        start_idx = text.find(start_pattern)
+        if start_idx == -1:
+            return ""
+        
+        # Look for the next question marker (e.g. Q\d+)
+        content_after = text[start_idx + len(start_pattern):]
+        next_match = re.search(r"Q\d+", content_after)
+        if next_match:
+            return content_after[:next_match.start()].strip()
+            
+        return content_after[:1000].strip()
+    except Exception:
+        return ""
+
+def fallback_alignment(ocr_text: str, questions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Deterministic fallback using OCR pattern matching.
+    """
+    results = []
+    for q in questions:
+        # We need the displayed number, usually in q.get("question_number")
+        q_num = q.get("question_number") or q.get("number")
+        if not q_num:
+            continue
+            
+        pattern = f"Q{q_num}"
+        if pattern in ocr_text:
+            extracted = extract_text_block(ocr_text, pattern)
+            results.append({
+                "question_uid": q.get("question_uid"),
+                "question_number": q_num,
+                "answer_text": extracted,
+                "status": "answered",
+                "confidence": 0.5
+            })
+    return results
+
+
+def extract_question_numbers(text: str):
+    """
+    Extract question numbers like Q1, 1., 2), etc.
+    """
+    patterns = [
+        r"Q\d+",
+        r"\b\d+\.",
+        r"\b\d+\)"
+    ]
+
+    found = set()
+
+    for pattern in patterns:
+        matches = re.findall(pattern, text)
+        for m in matches:
+            num = re.sub(r"\D", "", m)
+            if num:
+                found.add(normalize_question_uid(f"Q{num}"))
+
+    return list(found)
 
 
 def _extract_option_letter(text: str) -> Optional[str]:
@@ -57,8 +129,6 @@ def _is_objective_question(question: Dict[str, Any]) -> bool:
     return qtype in {"mcq", "fill_blank"}
 
 
-
-
 def _normalize_alignment_answers(payload: Dict[str, Any], expected_uids: List[str]) -> List[Dict[str, Any]]:
     answers = []
     allowed_types = {"mcq", "written", "blank"}
@@ -68,21 +138,14 @@ def _normalize_alignment_answers(payload: Dict[str, Any], expected_uids: List[st
         if not isinstance(row, dict):
             continue
             
-        qn_raw = row.get("question_number")
-        sub_raw = row.get("sub_part")
+        # ✅ STEP 1 — UID NORMALIZATION (STRICT)
+        raw_uid = row.get("question_uid") or row.get("question_id") or ""
+        normalized_uid = normalize_question_uid(str(raw_uid))
         
-        # Task 2/Phase 3: Use Canonical ID Bridge
-        qid = build_canonical_question_id(qn_raw, sub_raw)
-        
-        # Phase 3: No-None Key Invariant
-        # VALID -> Q{n} or Q{n}.{a}
-        # INVALID -> UNMAPPED_<uuid>
-        if qid:
-            canonical_id = qid
-            mapping_status = "VALID"
-        else:
-            canonical_id = f"UNMAPPED_{uuid.uuid4().hex}"
-            mapping_status = "MISSING"
+        # ✅ STEP 4 — REMOVE UNMAPPED KEYS
+        if normalized_uid not in expected_set:
+            logger.warning("DROPPED_INVALID_UIDS: %s", normalized_uid)
+            continue
 
         detected_type = str(row.get("detected_type") or "written").strip().lower()
         if detected_type not in allowed_types:
@@ -90,33 +153,18 @@ def _normalize_alignment_answers(payload: Dict[str, Any], expected_uids: List[st
             
         ans_text = str(row.get("answer_text") or "").strip()
         row_status = str(row.get("status") or "answered").strip().lower()
-        if row_status == "skipped":
-            ans_text = ""
-            
-        # Task 5: Confidence System
-        conf_score = max(0.0, min(1.0, safe_float(row.get("confidence"), 0.0)))
-        if conf_score > 0.85:
-            conf_level = "HIGH"
-        elif conf_score >= 0.6:
-            conf_level = "MEDIUM"
-        else:
-            conf_level = "LOW"
+        
+        # confidence
+        conf_score = max(0.0, min(1.0, safe_float(row.get("confidence"), 0.5)))
 
-        # Phase 3 Hardened structure
         ans = {
-            "canonical_id": canonical_id,
-            "raw_question_id": qid, # The original ID if valid, else None
-            "question_number": qn_raw, # Restored for backward compatibility
-            "sub_part": sub_raw,       # Restored for backward compatibility
-            "raw_question_number": qn_raw,
-            "answer_id": str(uuid.uuid4())[:8],
+            "canonical_id": normalized_uid, # Strictly use normalized UID as key
+            "question_uid": normalized_uid,
             "answer_text": ans_text,
             "detected_type": detected_type,
             "page_index": int(str(row.get("page_index"))) if str(row.get("page_index", "")).isdigit() else None,
-            "bbox": row.get("bbox") if isinstance(row.get("bbox"), list) else None,
-            "confidence": max(0.0, min(1.0, safe_float(row.get("confidence"), 0.0))),
-            "question_uid": str(row.get("question_uid") or ""),
-            "_is_expected": str(row.get("question_uid")) in expected_set,
+            "confidence": conf_score,
+            "status": row_status,
         }
         answers.append(ans)
     return answers
@@ -229,8 +277,6 @@ async def _llm_align_answers(
         raise e
 
 
-
-
 async def align_answers(
     *,
     submission_id: str,
@@ -250,6 +296,17 @@ async def align_answers(
     ]
     # Keep expected_numbers for backward compatibility or metrics
     expected_numbers = expected_uids 
+
+    logger.info(
+        "alignment_started",
+        extra={
+            "submission_id": submission_id,
+            "request_id": request_id.get(),
+            "stage": "alignment",
+            "status": "start",
+            "expected_questions": len(expected_uids)
+        }
+    )
     logger.info("ALIGNMENT_TRACE: expected_uids=%s", expected_uids)
 
     if use_cache:
@@ -257,125 +314,132 @@ async def align_answers(
         if cached:
             return cached
 
-    # Batched alignment: Ollama vision models struggle with 10+ images and long outputs.
-    # We batch by 4 pages to maintain high attention and avoid context truncation.
+    # STEP 3: BUILD NORMALIZED BLUEPRINT INDEX (Lookup map only)
+    questions = cast(List[Dict[str, Any]], question_structure.get("questions") or [])
+    blueprint_index = {
+        normalize_question_uid(str(q.get("question_uid") or q.get("question_id") or "")): q
+        for q in questions
+    }
+    # Filter out empty keys
+    blueprint_index = {k: v for k, v in blueprint_index.items() if k}
+
+    # Batched alignment
     batch_size = 4
     concurrency = int(os.getenv("ALIGNMENT_BATCH_CONCURRENCY", "5"))
     semaphore = asyncio.Semaphore(concurrency)
 
-    # OCR splitting for batched association
+    # OCR splitting
     ocr_pages = ocr_text.split("\n") if ocr_text else []
 
     async def _process_batch(start_idx: int, batch: List[str]) -> List[Dict[str, Any]]:
+        batch_index = start_idx // batch_size
         async with semaphore:
             try:
-                # Associated OCR slice for this batch
                 batch_ocr = ""
                 if ocr_pages:
-                    batch_ocr = "\n".join(ocr_pages[start_idx : start_idx + len(batch)]) # type: ignore
+                    batch_ocr = "\n".join(ocr_pages[start_idx : start_idx + len(batch)])
 
                 logger.info(
-                    "LLM_CALL_START",
-                    extra={
-                        "submission_id": submission_id,
-                        "request_id": request_id.get(),
-                        "stage": "alignment",
-                        "batch_start": start_idx
-                    }
+                    "alignment_batch_text_debug",
+                    extra={"batch_index": batch_index, "text_preview": batch_ocr[:500]}
                 )
-                payload = await _llm_align_answers(
-                    question_structure=question_structure,
-                    answer_images=batch,
-                    llm_service=llm_service,
-                    ocr_text=batch_ocr,
-                    **kwargs,
-                )
+
+                # STEP 4: FILTER BLUEPRINT PER BATCH
+                detected_questions = extract_question_numbers(batch_ocr)
+                normalized_detected = [normalize_question_uid(q) for q in detected_questions]
+                
+                filtered_questions = [
+                    blueprint_index[q]
+                    for q in normalized_detected
+                    if q in blueprint_index
+                ]
+
+                # HARD LIMIT FILTERED BLUEPRINT
+                MAX_QUESTIONS_PER_BATCH = 8
+                if len(filtered_questions) > MAX_QUESTIONS_PER_BATCH:
+                    filtered_questions = filtered_questions[:MAX_QUESTIONS_PER_BATCH]
+
+                # FALLBACK STRATEGY if no questions detected
+                if not filtered_questions:
+                    BATCH_FALLBACK_SIZE = 5
+                    all_qs = question_structure.get("questions") or []
+                    if all_qs:
+                        fallback_start = (batch_index * BATCH_FALLBACK_SIZE) % len(all_qs)
+                        filtered_questions = all_qs[fallback_start : fallback_start + BATCH_FALLBACK_SIZE]
+
                 logger.info(
-                    "LLM_CALL_SUCCESS",
+                    "alignment_blueprint_filtered",
                     extra={
-                        "submission_id": submission_id,
-                        "request_id": request_id.get(),
-                        "stage": "alignment",
-                        "batch_start": start_idx
+                        "batch_index": batch_index,
+                        "detected_questions": normalized_detected,
+                        "filtered_size": len(filtered_questions),
                     }
                 )
-                # Adjust page indices in the payload to account for batch offset
+
+                filtered_blueprint = {"questions": filtered_questions}
+                
+                # ✅ STEP 6 — LLM TIMEOUT HANDLING
+                try:
+                    payload = await _llm_align_answers(
+                        question_structure=filtered_blueprint,
+                        answer_images=batch,
+                        llm_service=llm_service,
+                        ocr_text=batch_ocr,
+                        **kwargs,
+                    )
+                except (asyncio.TimeoutError, Exception) as e:
+                    logger.error("LLM failure or timeout — switching to fallback: %s", str(e))
+                    # ✅ STEP 3 — DETERMINISTIC FALLBACK
+                    fallback_results = fallback_alignment(batch_ocr, filtered_questions)
+                    payload = {"answers": fallback_results}
+
+                # Adjust page indices
                 for ans in (payload.get("answers") or []):
                     if isinstance(ans, dict) and str(ans.get("page_index", "")).isdigit():
                         ans["page_index"] = int(ans["page_index"]) + start_idx
                 
                 normalized = _normalize_alignment_answers(payload, expected_uids)
-                logger.info("ALIGNMENT_TRACE: batch=%d payload_answers_count=%d normalized_answers_count=%d", 
-                            start_idx // batch_size + 1, len(payload.get("answers") or []), len(normalized))
-                if not normalized and payload.get("answers"):
-                    logger.warning("ALIGNMENT_TRACE: all answers filtered out for batch %d. raw_first_qn=%s", 
-                                   start_idx // batch_size + 1, (payload.get("answers")[0].get("question_number") if payload.get("answers") else "N/A"))
-                
                 return normalized
+                
             except Exception as exc:
-                # SSOT ENFORCEMENT: No OCR fallback allowed
-                logger.error("[STEP FAILED] BATCH_ALIGNMENT | submission_id=%s | error=%s", submission_id, exc)
-                raise ValueError(f"Alignment batch failed for submission {submission_id}: {exc}")
+                logger.error("[STEP FAILED] BATCH_ALIGNMENT | error=%s", exc)
+                raise exc
 
     tasks = []
     for i in range(0, len(answer_images), batch_size):
-        batch = answer_images[i : i + batch_size] # type: ignore
+        batch = answer_images[i : i + batch_size]
         tasks.append(_process_batch(i, batch))
 
-    # ADDED LOGGING START
-    logger.info("[STEP START] BATCH_ALIGNMENT")
-    # ADDED LOGGING END
-    batch_results_raw = await asyncio.gather(*tasks, return_exceptions=True)
-    
-    batch_results = []
-    for res in batch_results_raw:
-        if isinstance(res, Exception):
-            logger.error(
-                "Alignment batch task failed",
-                extra={"request_id": request_id.get(), "submission_id": submission_id},
-                exc_info=res
-            )
-            # Re-raise or handle as needed. The prompt says "Fail fast on LLM hangs" and "ensure any timeout propagates up".
-            raise res
-        batch_results.append(res)
+    # Replacement of asyncio.gather with safe_gather
+    batch_results = await safe_gather(tasks)
 
-    # ADDED LOGGING START
-    logger.info("[STEP SUCCESS] BATCH_ALIGNMENT")
-    # ADDED LOGGING END
     all_answers: List[Dict[str, Any]] = []
     for res in batch_results:
         all_answers.extend(res)
 
-    # ADDED LOGGING START
-    logger.info("[STEP START] METRICS_COMPUTATION")
-    # ADDED LOGGING END
-    metrics = _compute_alignment_metrics(all_answers, expected_uids, page_count=len(answer_images))
-    # ADDED LOGGING START
-    logger.info("[STEP SUCCESS] METRICS_COMPUTATION")
-    # ADDED LOGGING END
-
-    # Phase 3 Step 3: Transform to Dict Keyed by canonical_id
+    # Step 3: Transform to Dict Keyed by canonical_id (Normalized UID)
     aligned_answers: Dict[str, Any] = {}
     for ans in all_answers:
         cid = ans.get("canonical_id")
-        if not cid:
-            cid = f"UNMAPPED_{uuid.uuid4().hex}"
-            ans["canonical_id"] = cid
-        
-        aligned_answers[cid] = ans
+        if cid:
+            aligned_answers[cid] = ans
 
-    # Step 4: Invariant Guard (MANDATORY)
-    assert isinstance(aligned_answers, dict), "Aligned answers must be a dict"
-    assert all(
-        key is not None and isinstance(key, str)
-        for key in aligned_answers.keys()
-    ), "CRITICAL: None or invalid key detected in aligned_answers"
+    # ✅ STEP 5 — ALIGNMENT VALIDATION GATE
+    valid_keys = set(aligned_answers.keys()) & set(expected_uids)
+    coverage = len(valid_keys) / len(expected_uids) if expected_uids else 1.0
+    
+    # ✅ STEP 8 — LOGGING (MANDATORY)
+    logger.info("ALIGNMENT_FINAL_KEYS: %s", list(aligned_answers.keys()))
+    logger.info("ALIGNMENT_COVERAGE: %.2f", coverage)
+    
+    if coverage < 0.6:
+        logger.error("PIPELINE_BLOCKED: Alignment coverage too low (%.2f < 0.6)", coverage)
+        raise AlignmentError(f"Alignment coverage too low: {coverage:.2f}")
 
-    # Step 5: Logging Fix
-    logger.info(f"Aligned submission keys: {list(aligned_answers.keys())}")
-
+    metrics = _compute_alignment_metrics(all_answers, expected_uids, page_count=len(answer_images))
+    
     result = {
-        "answers": aligned_answers, # Now a DICT
+        "answers": aligned_answers,
         **metrics,
     }
 
@@ -385,4 +449,4 @@ async def align_answers(
     return result
 
 
-__all__ = ["ALIGNMENT_COVERAGE_GATE", "align_answers"]
+__all__ = ["AlignmentError", "align_answers"]

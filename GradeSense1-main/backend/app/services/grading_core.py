@@ -1,3 +1,4 @@
+import re
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone
 
@@ -14,6 +15,10 @@ from app.repositories import SubmissionRepo, ExamRepo
 from app.models.submission import Submission, Answer, GradingResult, QuestionScore
 from pydantic import ValidationError
 from app.services.notifications.notifications_service import create_notification
+
+class InvalidKeyFormatError(Exception):
+    """Raised when question IDs are not in the canonical 'default_qX' format."""
+    pass
 
 def build_fallback_response(exam_id: str, submission_id: str, exc: Exception) -> Submission:
     """
@@ -68,6 +73,8 @@ def validate_blueprint_ids(blueprint: Dict[str, Any]) -> None:
             sq_id = str(sq.get("sub_id") or sq.get("id") or sq.get("label") or "")
             if not sq_id:
                 raise ValueError(f"invalid_blueprint_identity: missing_sub_id in {final_id}")
+
+
 
 async def run_grading_orchestrator(
     exam_id: str,
@@ -146,20 +153,24 @@ async def run_grading_orchestrator(
             structure=blueprint,
             llm_service=llm_service
         )
+
+        # ✅ PHASE 2.2 DEBUG LOGS
+        logger.info("DEBUG_GRADING_INPUT_KEYS: %s", list(aligned_result_raw.get("answers", {}).keys()))
+        logger.info("DEBUG_BLUEPRINT_KEYS: %s", [q.get("question_uid") for q in blueprint.get("questions") or []])
         
-        # SCHEMA_ENFORCED: Convert to Answer models (Task 2 & 5)
+        # SCHEMA_ENFORCED: Use canonical IDs directly (Task 1 & 2)
         answers: List[Answer] = []
-        # Phase 3: aligned_result_raw["answers"] is now a DICT
         aligned_answers_dict = aligned_result_raw.get("answers") or {}
-        
-        # Step 4: Invariant Guard (MANDATORY)
-        assert isinstance(aligned_answers_dict, dict), "Aligned answers must be a dict"
-        assert all(
-            key is not None and isinstance(key, str)
-            for key in aligned_answers_dict.keys()
-        ), "CRITICAL: None or invalid key detected in aligned_answers"
-        
+        logger.info("DEBUG_KEYS_FOR_GRADING: %s", list(aligned_answers_dict.keys()))
+
+        # ✅ TASK 5: STRICT ASSERTION (FAIL FAST)
+        for key in aligned_answers_dict.keys():
+            if re.match(r"^Q\d+", str(key)):
+                logger.error("FORMAT_VIOLATION: Detected non-canonical key '%s'", key)
+                raise InvalidKeyFormatError(f"Keys transformed into Q1 format: {key}")
+
         for cid, raw_ans in aligned_answers_dict.items():
+            # SCHEMA_ENFORCED: Convert to Answer models (Task 2 & 5)
             answers.append(Answer(
                 question_number=str(raw_ans.get("raw_question_number") or cid or ""),
                 sub_label=str(raw_ans.get("sub_part") or ""),
@@ -217,6 +228,18 @@ async def run_grading_orchestrator(
                 "combined_text": ans.answer_text,
                 "confidence_score": ans.confidence_score
             })
+
+        # ✅ TASK 4: VALIDATION GUARD (IMPORTANT)
+        blueprint_keys = {str(q.get("question_uid")) for q in blueprint.get("questions") or []}
+        aligned_keys = set(vision_answers.keys())
+        
+        mismatch = blueprint_keys - aligned_keys
+        extra = aligned_keys - blueprint_keys
+        
+        if mismatch or extra:
+            logger.warning("KEY_MISMATCH_DETECTED")
+            logger.info("missing_in_alignment: %s", list(mismatch))
+            logger.info("extra_keys: %s", list(extra))
 
         # 6. Grade using the GradingEngine
         logger.info(f"🧠 Starting GradingEngine: submission_id={submission_id}")

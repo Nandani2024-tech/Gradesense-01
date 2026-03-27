@@ -7,6 +7,55 @@ from app.services.llm import LlmChat, UserMessage, ImageContent, LLMConfig
 from app.core.logging_config import logger
 
 
+# --- RELIABILITY HARDENING (PHASE 3) ---
+LLM_CONCURRENCY_LIMIT = 5
+llm_semaphore = asyncio.Semaphore(LLM_CONCURRENCY_LIMIT)
+
+failure_count = 0
+FAILURE_THRESHOLD = 5
+CIRCUIT_OPEN = False
+MAX_RETRIES = 3
+
+
+async def safe_llm_call(call_coro):
+    """
+    Wraps an LLM call with a global semaphore, retry logic, and a circuit breaker.
+    """
+    global failure_count, CIRCUIT_OPEN
+
+    if CIRCUIT_OPEN:
+        logger.error("circuit_open", extra={"failure_count": failure_count})
+        raise RuntimeError("LLM circuit breaker is OPEN")
+
+    async with llm_semaphore:
+        for attempt in range(MAX_RETRIES):
+            try:
+                result = await call_coro()
+                
+                # Success: reset circuit breaker
+                failure_count = 0
+                CIRCUIT_OPEN = False
+                return result
+
+            except Exception as e:
+                # Logic: wait_for TimeoutError or API errors should trigger retry
+                logger.warning(
+                    "llm_retry",
+                    extra={"attempt": attempt + 1, "error": str(e)}
+                )
+                
+                if attempt == MAX_RETRIES - 1:
+                    # Final failure: update circuit breaker
+                    failure_count += 1
+                    if failure_count >= FAILURE_THRESHOLD:
+                        CIRCUIT_OPEN = True
+                    raise
+                
+                # Exponential backoff
+                await asyncio.sleep(2 ** attempt)
+# ---------------------------------------
+
+
 class GeminiLLMService(AbstractLLMService):
     """Gemini implementation of the LLM service."""
 
@@ -64,11 +113,15 @@ class GeminiLLMService(AbstractLLMService):
                 chat.system_message = kwargs["system_message"]
             
             msg = UserMessage(text=prompt, file_contents=[ImageContent(img) for img in (images or [])])
-            try:
-                response = await asyncio.wait_for(
+            
+            async def do_call():
+                return await asyncio.wait_for(
                     chat.send_message(msg),
                     timeout=30.0
                 )
+
+            try:
+                response = await safe_llm_call(do_call)
             except asyncio.TimeoutError:
                 logger.error("LLM call timed out", extra={"component": "llm_adapter", "method": "predict"})
                 raise
@@ -97,13 +150,17 @@ class GeminiLLMService(AbstractLLMService):
                 chat.system_message = kwargs["system_message"]
             
             msg = UserMessage(text=prompt, file_contents=[ImageContent(img) for img in (images or [])])
-            try:
-                response = await asyncio.wait_for(
+            
+            async def do_call_structured():
+                return await asyncio.wait_for(
                     chat.send_message_structured(msg, response_schema=response_schema),
-                    timeout=30.0
+                    timeout=45.0
                 )
+
+            try:
+                response = await safe_llm_call(do_call_structured)
             except asyncio.TimeoutError:
-                logger.error("LLM call timed out", extra={"component": "llm_adapter", "method": "predict_structured"})
+                logger.error("LLM call timed out (predict_structured)", extra={"component": "llm_adapter", "method": "predict_structured"})
                 raise
             
             latency = time.time() - start_time
