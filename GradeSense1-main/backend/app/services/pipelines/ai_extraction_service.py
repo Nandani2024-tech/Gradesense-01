@@ -1374,6 +1374,7 @@ def _merge_semantic_with_visual_entities(
 
     final_questions = []
     used_uids = set()
+    matched_semantic_indices = set()
     
     # 2. CORE VISUAL-FIRST LOOP (1 visual anchor = 1 final question)
     for anchor in visual_anchors:
@@ -1387,9 +1388,10 @@ def _merge_semantic_with_visual_entities(
         
         # 3. Find BEST semantic match (must match number and page, highest overlap wins)
         best_semantic = None
+        best_idx = -1
         max_overlap = -1.0
         
-        for sq in semantic_questions:
+        for idx, sq in enumerate(semantic_questions):
             s_num = _to_int(sq.get("number"), 0)
             evs = sq.get("image_evidence") or []
             s_page = _to_int(evs[0].get("page_index"), -1) if evs else -1
@@ -1400,6 +1402,7 @@ def _merge_semantic_with_visual_entities(
                 if overlap > max_overlap:
                     max_overlap = overlap
                     best_semantic = sq
+                    best_idx = idx
                     
         # 4. Construct Final Question
         final_q = {
@@ -1423,8 +1426,9 @@ def _merge_semantic_with_visual_entities(
             final_q["section"] = best_semantic.get("section") or spatial_sec
             final_q["subquestions"] = copy.deepcopy(best_semantic.get("subquestions") or [])
             final_q["ai_confidence"] = best_semantic.get("ai_confidence") or best_semantic.get("confidence")
+            matched_semantic_indices.add(best_idx)
             
-        # 5. STRICT UID ENFORCEMENT
+        # 5. UID ENFORCEMENT
         sec_norm = normalize_section(final_q["section"])
         uid = f"{sec_norm}_{qn}"
         if uid in used_uids:
@@ -1457,9 +1461,46 @@ def _merge_semantic_with_visual_entities(
 
         final_questions.append(final_q)
 
-    # 7. FINAL ASSERTION (MANDATORY)
-    logger.info("[VISUAL_MERGE] anchors=%s semantic_matched=%s final=%s", len(visual_anchors), len([q for q in final_questions if q.get("question_text")]), len(final_questions))
-    assert len(final_questions) == len(visual_anchors), f"[PHASE1_ERROR] final_count({len(final_questions)}) != visual_count({len(visual_anchors)})"
+    # 7. SEMANTIC FALLBACK (Preserve semantic questions without visual anchors)
+    for idx, sq in enumerate(semantic_questions):
+        if idx in matched_semantic_indices:
+            continue
+            
+        qn = _to_int(sq.get("number"), 0)
+        if qn <= 0: continue
+        
+        sec_raw = sq.get("section") or "default"
+        sec_norm = normalize_section(sec_raw)
+        uid = f"{sec_norm}_{qn}"
+        
+        # Avoid duplication if UID already exists from visual layer
+        if uid in used_uids:
+            logger.warning("[VISUAL_MERGE] Skipping semantic fallback for UID=%s (already exists)", uid)
+            continue
+            
+        final_q = {
+            "number": qn,
+            "raw_number": str(qn),
+            "page": -1,
+            "bbox": [0, 0, 0, 0],
+            "confidence": 0.0,
+            "question_text": sq.get("question_text", ""),
+            "question_type": sq.get("question_type") or "descriptive",
+            "section": sec_raw,
+            "subquestions": copy.deepcopy(sq.get("subquestions") or []),
+            "ai_confidence": sq.get("ai_confidence") or sq.get("confidence"),
+            "image_evidence": [],
+            "marks": None,
+            "mark_source": "missing",
+            "source": "semantic_fallback",
+            "question_uid": uid,
+            "uid": uid
+        }
+        final_questions.append(final_q)
+        used_uids.add(uid)
+
+    logger.info("[VISUAL_MERGE] anchors=%s semantic_matched=%s final=%s", 
+                len(visual_anchors), len(matched_semantic_indices), len(final_questions))
 
     merged_result = {
         "questions": sorted(final_questions, key=lambda q: (str(q.get("section") or ""), _to_int(q.get("number"), 0))),
@@ -1468,7 +1509,9 @@ def _merge_semantic_with_visual_entities(
         "total_marks": 0.0,
     }
     
-    return normalize_structure_payload(merged_result)
+    # PHASE 2: Return merged structure AS-IS to prevent double normalization.
+    # Final normalization happens at the end of the pipeline.
+    return merged_result
 
 
 def _clip_to_expected_question_count(
