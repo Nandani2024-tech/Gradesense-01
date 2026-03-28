@@ -1321,16 +1321,14 @@ def _semantic_structure_from_visual_entities(visual_entities: Dict[str, Any]) ->
             }
         )
 
-    return normalize_structure_payload(
-        {
-            "questions": questions,
-            "section_math_blocks": [],
-            "total_questions": len(questions),
-            "total_marks": 0.0,
-            "effective_total_marks": 0.0,
-            "numbering_contiguous": False,
-        }
-    )
+    return {
+        "questions": questions,
+        "section_math_blocks": [],
+        "total_questions": len(questions),
+        "total_marks": 0.0,
+        "effective_total_marks": 0.0,
+        "numbering_contiguous": False,
+    }
 def _merge_semantic_with_visual_entities(
     stage2_structure: Dict[str, Any],
     visual_entities: Dict[str, Any],
@@ -1439,25 +1437,7 @@ def _merge_semantic_with_visual_entities(
         final_q["uid"] = uid
         used_uids.add(uid)
         
-        # 6. ATTACH MARGIN MARKS (STRICT seq matching)
-        margin_marks = (visual_entities or {}).get("margin_marks") or []
-        for m_row in margin_marks:
-            if _to_int(m_row.get("q"), 0) == qn and _to_int(m_row.get("page"), 0) == p_idx:
-                m_val = _to_float(m_row.get("marks"), 0.0)
-                m_split = m_row.get("split") # should be [2,3] from mark_sources.py
-                
-                if m_split and final_q.get("subquestions"):
-                    logger.info("[MARK_MAPPING] q=%s split=%s logic=sequential", qn, m_split)
-                    for i, sv in enumerate(m_split):
-                        if i < len(final_q["subquestions"]):
-                            final_q["subquestions"][i]["marks"] = sv
-                            final_q["subquestions"][i]["mark_source"] = "margin"
-                    final_q["marks"] = sum(m_split)
-                    final_q["mark_source"] = "margin"
-                else:
-                    final_q["marks"] = m_val
-                    final_q["mark_source"] = "margin"
-                break
+
 
         final_questions.append(final_q)
 
@@ -2130,7 +2110,7 @@ async def extract_question_structure(
         # Checkpoint D: BEFORE VALIDATION (Log full UID list)
         logger.info("LOG TAG: BEFORE_VALIDATION_UIDS_SEMANTIC uids=%s", sorted(list(unique_uids_s)))
 
-        return normalize_structure_payload(consolidated)
+        return consolidated
 
     retry_count = 0
     stage2_structure: Dict[str, Any]
@@ -2232,6 +2212,8 @@ async def extract_question_structure(
     structure = reasoned.get("resolved_structure") or stage2_structure
     question_audit_tree = list(reasoned.get("question_audit_tree") or [])
 
+
+
     # Layer 5: consistency validator with repair tasks.
     validation_report = validate_structure_stage3(
         structure,
@@ -2293,6 +2275,9 @@ async def extract_question_structure(
                 )
                 reconstructed_structure = reconstructed_reasoned.get("resolved_structure") or reconstructed_semantic
                 reconstructed_audit = list(reconstructed_reasoned.get("question_audit_tree") or [])
+                
+
+
                 reconstructed_validation = validate_structure_stage3(
                     reconstructed_structure,
                     header_total_marks=header_total_marks,
@@ -2319,6 +2304,9 @@ async def extract_question_structure(
         repaired_structure = repair_result.get("repaired_structure") or structure
         repaired_audit = list(repair_result.get("question_audit_tree") or question_audit_tree)
         repairs_applied = list(repair_result.get("repairs_applied") or [])
+        
+
+
         repaired_validation = validate_structure_stage3(
             repaired_structure,
             header_total_marks=header_total_marks,
