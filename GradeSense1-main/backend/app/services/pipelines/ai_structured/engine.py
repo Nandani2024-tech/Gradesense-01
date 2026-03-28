@@ -78,6 +78,7 @@ async def extract_and_persist(
                 model_name=model_name,
                 llm_service=llm_service,
                 model_answer_map=model_answer_map,
+                model_answer_images=model_answer_images,
             )
             set_cached_structure(
                 exam_id, int(locked_exam.get("blueprint_version", 0) or 0), extraction_hash_seed,
@@ -142,6 +143,14 @@ async def extract_and_persist(
                 "total_marks": effective_total if effective_total > 0 else _to_float(locked_exam.get("total_marks"), 0.0),
                 "effective_total_marks": effective_total,
                 "or_groups_map": snapshot.get("or_groups_map"),
+                "model_answer_file_id": locked_exam.get("model_answer_file_id"),
+                "model_answer_pages": len(model_answer_images or []),
+                "has_model_answer": bool(model_answer_images),
+                "model_answer_processing": False,
+                "model_answer_text_status": "completed" if model_answer_images else "none",
+                "model_answer_text_chars": len(normalized.get("model_answer_text") or ""),
+                "processing_lock_at": datetime.utcnow(),
+                "processing_lock_owner": owner,
                 "attempt_rules": snapshot.get("attempt_rules"),
                 "model_name": model_name,
                 "prompt_version": PROMPT_VERSION,

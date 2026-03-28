@@ -16,6 +16,7 @@ async def perform_extraction(
     model_name: str = "qwen2.5:latest",
     llm_service: Optional["AbstractLLMService"] = None,
     model_answer_map: Optional[Dict[str, Any]] = None,
+    model_answer_images: Optional[List[str]] = None,
     raw_ocr_text: Optional[str] = None,
     max_retries: int = 3,
 ) -> Tuple[Dict[str, Any], Dict[str, Any], str, int]:
@@ -29,6 +30,7 @@ async def perform_extraction(
         model_name=model_name,
         llm_service=llm_service,
         model_answer_map=model_answer_map,
+        model_answer_images=model_answer_images,
     )
     return result, result.get("_validation_report") or {}, result.get("_raw_ocr_text", ""), result.get("_retry_count", 0)
 

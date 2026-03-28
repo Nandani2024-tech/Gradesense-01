@@ -20,6 +20,7 @@ def _normalize_subquestion(sub: Dict[str, Any]) -> Dict[str, Any]:
         "label": label,
         "text": str(sub.get("text") or "").strip(),
         "rubric": str(sub.get("rubric") or "").strip() or None,
+        "model_answer": str(sub.get("model_answer") or "").strip() or None,
         "marks": round(to_float(sub.get("marks"), 0.0), 4),
         "mark_source": "missing",
         "mark_confidence": round(to_float(sub.get("mark_confidence"), 0.0), 4),
@@ -59,6 +60,7 @@ def normalize_structure_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "section": (str(q.get("section") or "").strip() or None),
                 "instruction": (str(q.get("instruction") or "").strip() or None),
                 "question_text": str(q.get("question_text") or "").strip(),
+                "model_answer": str(q.get("model_answer") or "").strip() or None,
                 "question_type": str(q.get("question_type") or "descriptive").strip().lower(),
                 "marks": round(to_float(q.get("marks"), 0.0), 4),
                 "options": list(q.get("options") or []) or None,
@@ -142,6 +144,9 @@ def normalize_structure_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         "total_marks": total_marks,
         "effective_total_marks": effective_total_marks,
         "numbering_contiguous": bool(payload.get("numbering_contiguous", False)),
+        "model_answers": payload.get("model_answers"),
+        "model_answer_map": payload.get("model_answer_map"),
+        "model_answer_text": payload.get("model_answer_text"),
     }
 
 

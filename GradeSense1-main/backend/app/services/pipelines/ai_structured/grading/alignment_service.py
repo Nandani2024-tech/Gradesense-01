@@ -250,16 +250,16 @@ async def _llm_align_answers(
 ) -> Dict[str, Any]:
     prompt = build_alignment_prompt(question_structure=question_structure, ocr_text=ocr_text)
     
-    # OCR-FIRST: Minimize image usage
+    # OCR-FIRST: Send reasonable batch of images
     images_to_send = answer_images
     if ocr_text:
         logger.info(
             "ALIGNMENT MODE: OCR-FIRST | ocr_length=%d | images_used=%d",
             len(ocr_text),
-            1 if answer_images else 0
+            len(answer_images)
         )
-        # Send 1 image max for fallback if OCR exists
-        images_to_send = answer_images[:1] if answer_images else [] # type: ignore
+        # Send all images in batch to ensure handwriting can be verified if OCR is unclear
+        images_to_send = answer_images # type: ignore
     else:
         logger.info(
             "ALIGNMENT MODE: VISION-ONLY | images_used=%d",
@@ -267,6 +267,7 @@ async def _llm_align_answers(
         )
 
     kwargs.setdefault("max_tokens", 8192)
+    kwargs.setdefault("timeout", 120) # Explicitly set longer timeout for heavy alignment
     try:
         raw = await llm_service.predict(prompt, images=images_to_send, **kwargs)
         logger.info("ALIGNMENT_TRACE: raw_llm_response_start=%s", raw[:500])
@@ -348,20 +349,30 @@ async def align_answers(
                 detected_questions = extract_question_numbers(batch_ocr)
                 normalized_detected = [normalize_question_uid(q) for q in detected_questions]
                 
-                filtered_questions = [
-                    blueprint_index[q]
-                    for q in normalized_detected
-                    if q in blueprint_index
-                ]
+                filtered_questions = []
+                for q_slug in normalized_detected:
+                    # 1. Direct match
+                    if q_slug in blueprint_index:
+                        filtered_questions.append(blueprint_index[q_slug])
+                        continue
+                    
+                    # 2. Section-insensitive match (e.g. default_q39 matches section_d_q39)
+                    if q_slug.startswith("default_q"):
+                        target_num = q_slug.replace("default_q", "")
+                        for uid, q_obj in blueprint_index.items():
+                            if uid.endswith(f"_q{target_num}"):
+                                filtered_questions.append(q_obj)
+                                break
 
                 # HARD LIMIT FILTERED BLUEPRINT
-                MAX_QUESTIONS_PER_BATCH = 8
+                MAX_QUESTIONS_PER_BATCH = 15 # Increased from 8 to be more robust
                 if len(filtered_questions) > MAX_QUESTIONS_PER_BATCH:
                     filtered_questions = filtered_questions[:MAX_QUESTIONS_PER_BATCH]
 
                 # FALLBACK STRATEGY if no questions detected
                 if not filtered_questions:
-                    BATCH_FALLBACK_SIZE = 5
+                    # Use a larger fallback window proportional to total questions
+                    BATCH_FALLBACK_SIZE = 8 # Increased from 5
                     all_qs = question_structure.get("questions") or []
                     if all_qs:
                         fallback_start = (batch_index * BATCH_FALLBACK_SIZE) % len(all_qs)
@@ -373,6 +384,7 @@ async def align_answers(
                         "batch_index": batch_index,
                         "detected_questions": normalized_detected,
                         "filtered_size": len(filtered_questions),
+                        "filtered_uids": [q.get("question_uid") for q in filtered_questions]
                     }
                 )
 

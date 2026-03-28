@@ -1662,7 +1662,19 @@ async def _extract_model_answers(
         return {}
 
     logger.info("MODEL_ANSWER_EXTRACTION starting on %s images", len(images))
-    ctx = "\n".join([f"Q{q.get('number')}: {q.get('marks')} marks" for q in questions])
+    def _build_ctx(items: List[Dict[str, Any]], prefix: str = "") -> List[str]:
+        lines = []
+        for it in items:
+            num = it.get("number") or it.get("label")
+            marks = it.get("marks")
+            lines.append(f"{prefix}Q{num}: {marks} marks")
+            subqs = it.get("subquestions")
+            if subqs and isinstance(subqs, list):
+                lines.extend(_build_ctx(subqs, prefix + "  "))
+        return lines
+
+    ctx_lines = _build_ctx(questions)
+    ctx = "\n".join(ctx_lines)
     prompt = f"""You are an expert at extracting model answers/solutions from images.
 Below is the question structure (number and marks).
 Extract the model answer text for each question.
@@ -2351,6 +2363,23 @@ async def extract_question_structure(
         # Maintain top-level for backward compatibility if needed, but the user explicitly requested nested
         structure["model_answer_map"] = ma_results.get("model_answer_map")
         structure["model_answer_text"] = ma_results.get("model_answer_text")
+        
+        # Mapping extracted model answers to individual questions for DeterministicGrader
+        ma_map = ma_results.get("model_answer_map") or {}
+        
+        def _recursive_map_ma(items: List[Dict[str, Any]]):
+            for item in items:
+                # Use number or label as key
+                num_str = str(item.get("number") or item.get("label") or "")
+                if num_str in ma_map:
+                    item["model_answer"] = ma_map[num_str]
+                
+                # Handle nested subquestions or OR-groups
+                subqs = item.get("subquestions")
+                if subqs and isinstance(subqs, list):
+                    _recursive_map_ma(subqs)
+        
+        _recursive_map_ma(structure.get("questions") or [])
 
     if infer_topics:
         topics_list = await _infer_topics(subject_name or "General", exam_name or "Exam", structure.get("questions") or [], llm_service)
@@ -2397,4 +2426,5 @@ async def extract_question_structure(
     }
 
 
+__all__ = ["extract_question_structure"]
 __all__ = ["extract_question_structure"]
