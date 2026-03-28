@@ -191,7 +191,7 @@ def _reanchor_numbering(structure: Dict[str, Any], visual_entities: Optional[Dic
     return changed
 
 
-def _drop_out_of_range_questions(structure: Dict[str, Any], validation_report: Dict[str, Any]) -> int:
+def _flag_out_of_range_questions(structure: Dict[str, Any], validation_report: Dict[str, Any]) -> int:
     expected: Optional[int] = None
     for err in (validation_report.get("errors") or []):
         m = re.search(r"question_count_mismatch:actual=\d+\s+expected=(\d+)", str(err or ""))
@@ -201,11 +201,70 @@ def _drop_out_of_range_questions(structure: Dict[str, Any], validation_report: D
     if not expected or expected <= 0:
         return 0
 
-    rows = list(structure.get("questions") or [])
-    kept = [q for q in rows if 1 <= to_int((q or {}).get("number"), 0) <= expected]
-    changed = len(rows) - len(kept)
-    if changed > 0:
-        structure["questions"] = sorted(kept, key=lambda q: to_int((q or {}).get("number"), 0))
+    changed = 0
+    for q in (structure.get("questions") or []):
+        qn = to_int((q or {}).get("number"), 0)
+        if qn > expected or qn <= 0:
+            if "_flags" not in q:
+                q["_flags"] = {}
+            q["_flags"]["out_of_range"] = True
+            changed += 1
+    return changed
+
+
+def _ensure_lossless_anchors(structure: Dict[str, Any]) -> int:
+    """Ensures every semantic question has at least a fallback visual anchor."""
+    changed = 0
+    for q in (structure.get("questions") or []):
+        # Mandatory: ensure _flags exists for all questions
+        if "_flags" not in q:
+            q["_flags"] = {}
+
+        evidence = q.get("image_evidence") or []
+        if not evidence or not any(ev.get("page_index") is not None for ev in evidence):
+            # Create synthetic anchor
+            q["image_evidence"] = [{
+                "page_index": -1,
+                "bbox": [0, 0, 0, 0],
+                "source": "semantic_fallback"
+            }]
+            changed += 1
+    return changed
+
+
+def _detect_numbering_anomalies(structure: Dict[str, Any]) -> int:
+    """Detects and flags sequence gaps in question numbering per section."""
+    changed = 0
+    sections: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for q in (structure.get("questions") or []):
+        sec = str(q.get("section") or "default").strip()
+        sections[sec].append(q)
+
+    for sec_name, members in sections.items():
+        if not members:
+            continue
+        
+        # We assume members are already sorted or we process them in the order they appear.
+        # Requirement: Track question numbering sequence. Reset if section changes.
+        last_num = None
+        for q in members:
+            # Ensure _flags exists
+            if "_flags" not in q:
+                q["_flags"] = {}
+                
+            curr_num = to_int(q.get("number"), 0)
+            if curr_num <= 0:
+                continue
+                
+            if last_num is not None:
+                if curr_num > last_num + 1:
+                    q["_flags"]["out_of_range"] = True
+                    logger.warning("[OUT_OF_RANGE_DETECTED] section=%s number=%s expected=%s", 
+                                   sec_name, curr_num, last_num + 1)
+                    changed += 1
+            
+            last_num = curr_num
+            
     return changed
 
 
@@ -275,6 +334,10 @@ def apply_structure_repairs(
     tasks = list(validation_report.get("repair_tasks") or [])
     applied: List[Dict[str, Any]] = []
 
+    # CRITICAL: Capture initial question count for lossless assertion
+    initial_questions = list(normalized.get("questions") or [])
+    initial_count = len(initial_questions)
+
     if "duplicate_subparts" in tasks:
         count = _dedupe_subparts(normalized)
         applied.append({"task": "duplicate_subparts", "changes": int(count)})
@@ -286,11 +349,17 @@ def apply_structure_repairs(
         logger.info("REPAIR_APPLIED task=subpart_sum_mismatch changes=%s", count)
 
     if "numbering_explosion" in tasks:
-        dropped = _drop_out_of_range_questions(normalized, validation_report)
-        count = _reanchor_numbering(normalized, visual_entities)
-        total_changes = int(dropped + count)
+        flags = _flag_out_of_range_questions(normalized, validation_report)
+        reanchors = _reanchor_numbering(normalized, visual_entities)
+        total_changes = int(flags + reanchors)
         applied.append({"task": "numbering_explosion", "changes": total_changes})
         logger.info("REPAIR_APPLIED task=numbering_explosion changes=%s", total_changes)
+
+    # ALWAYS enforce lossless anchors for every question
+    anchors_added = _ensure_lossless_anchors(normalized)
+    if anchors_added:
+        applied.append({"task": "lossless_anchors", "changes": int(anchors_added)})
+        logger.info("REPAIR_APPLIED task=lossless_anchors changes=%s", anchors_added)
 
     if "section_math_inconsistency" in tasks or "missing_marks" in tasks:
         count = _apply_section_pattern_marks(normalized)
@@ -306,6 +375,17 @@ def apply_structure_repairs(
         count = _fix_or_group_integrity(normalized)
         applied.append({"task": "or_group_integrity", "changes": int(count)})
         logger.info("REPAIR_APPLIED task=or_group_integrity changes=%s", count)
+
+    # ALWAYS detect numbering anomalies per section (Phase 2 hardening)
+    anomalies = _detect_numbering_anomalies(normalized)
+    if anomalies:
+        applied.append({"task": "numbering_anomalies", "changes": int(anomalies)})
+        logger.info("REPAIR_APPLIED task=numbering_anomalies changes=%s", anomalies)
+
+    # MANDATORY LOSSLESS ASSERTION
+    final_questions = normalized.get("questions") or []
+    assert len(final_questions) == initial_count, \
+        f"CRITICAL: Semantic question loss detected. Initial: {initial_count}, Final: {len(final_questions)}"
 
     return {
         "repaired_structure": normalize_structure_payload(normalized),

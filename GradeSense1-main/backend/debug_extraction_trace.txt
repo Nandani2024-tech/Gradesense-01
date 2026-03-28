@@ -6,319 +6,99 @@ RAW BATCH 1/1:
     {
       "number": 1,
       "raw_number": "1",
-      "question_uid": "default_q1",
-      "uid": "default_q1",
-      "section": null,
+      "question_uid": "section_a_q1",
+      "uid": "section_a_q1",
+      "section": "SECTION A",
       "instruction": null,
-      "question_text": "What is photosynthesis?",
+      "question_text": "Define gravity",
       "question_text_source": "llm",
-      "question_type": "short",
-      "marks": 0.0,
-      "mark_source": "inferred",
+      "question_type": "very_short",
+      "marks": null,
+      "mark_source": "missing",
       "mark_confidence": 0.0,
       "options": null,
       "subquestions": [],
-      "or_group_id": null,
       "image_evidence": [
         {
           "page_index": 0,
           "bbox": [
-            202,
-            118,
-            220,
-            409
+            35,
+            310,
+            478,
+            339
           ],
-          "visual_confidence": 0.9
+          "visual_confidence": 0.95
         }
       ],
-      "ai_confidence": 0.95,
-      "confidence": 0.95
+      "ai_confidence": 0.98,
+      "confidence": 0.98
     },
     {
       "number": 2,
       "raw_number": "2",
-      "question_uid": "default_q2",
-      "uid": "default_q2",
-      "section": null,
+      "question_uid": "section_a_q2",
+      "uid": "section_a_q2",
+      "section": "SECTION A",
       "instruction": null,
-      "question_text": "Define gravity.",
-      "question_text_source": "llm",
-      "question_type": "short",
-      "marks": 0.0,
-      "mark_source": "inferred",
-      "mark_confidence": 0.0,
-      "options": null,
-      "subquestions": [],
-      "or_group_id": null,
-      "image_evidence": [
-        {
-          "page_index": 0,
-          "bbox": [
-            260,
-            118,
-            278,
-            340
-          ],
-          "visual_confidence": 0.9
-        }
-      ],
-      "ai_confidence": 0.95,
-      "confidence": 0.95
-    },
-    {
-      "number": 3,
-      "raw_number": "3",
-      "question_uid": "default_q3",
-      "uid": "default_q3",
-      "section": null,
-      "instruction": null,
-      "question_text": "What is the chemical formula of water?",
+      "question_text": "Define force",
       "question_text_source": "llm",
       "question_type": "very_short",
-      "marks": 0.0,
-      "mark_source": "inferred",
+      "marks": null,
+      "mark_source": "missing",
       "mark_confidence": 0.0,
       "options": null,
       "subquestions": [],
-      "or_group_id": null,
       "image_evidence": [
         {
           "page_index": 0,
           "bbox": [
-            318,
-            118,
-            336,
-            500
+            35,
+            360,
+            455,
+            389
           ],
-          "visual_confidence": 0.9
+          "visual_confidence": 0.95
         }
       ],
-      "ai_confidence": 0.95,
-      "confidence": 0.95
-    },
-    {
-      "number": 4,
-      "raw_number": "4",
-      "question_uid": "default_q4",
-      "uid": "default_q4",
-      "section": null,
-      "instruction": null,
-      "question_text": "Name the process by which plants lose water through leaves.",
-      "question_text_source": "llm",
-      "question_type": "short",
-      "marks": 0.0,
-      "mark_source": "inferred",
-      "mark_confidence": 0.0,
-      "options": null,
-      "subquestions": [],
-      "or_group_id": null,
-      "image_evidence": [
-        {
-          "page_index": 0,
-          "bbox": [
-            376,
-            118,
-            414,
-            824
-          ],
-          "visual_confidence": 0.9
-        }
-      ],
-      "ai_confidence": 0.95,
-      "confidence": 0.95
-    },
-    {
-      "number": 5,
-      "raw_number": "5",
-      "question_uid": "default_q5",
-      "uid": "default_q5",
-      "section": null,
-      "instruction": null,
-      "question_text": "What is the unit of force?",
-      "question_text_source": "llm",
-      "question_type": "very_short",
-      "marks": 0.0,
-      "mark_source": "inferred",
-      "mark_confidence": 0.0,
-      "options": null,
-      "subquestions": [],
-      "or_group_id": null,
-      "image_evidence": [
-        {
-          "page_index": 0,
-          "bbox": [
-            454,
-            118,
-            472,
-            409
-          ],
-          "visual_confidence": 0.9
-        }
-      ],
-      "ai_confidence": 0.95,
-      "confidence": 0.95
-    },
-    {
-      "number": 6,
-      "raw_number": "6",
-      "question_uid": "default_q6",
-      "uid": "default_q6",
-      "section": null,
-      "instruction": null,
-      "question_text": "Explain the difference between mass and weight.",
-      "question_text_source": "llm",
-      "question_type": "short",
-      "marks": 0.0,
-      "mark_source": "inferred",
-      "mark_confidence": 0.0,
-      "options": null,
-      "subquestions": [],
-      "or_group_id": null,
-      "image_evidence": [
-        {
-          "page_index": 0,
-          "bbox": [
-            512,
-            118,
-            530,
-            660
-          ],
-          "visual_confidence": 0.9
-        }
-      ],
-      "ai_confidence": 0.95,
-      "confidence": 0.95
-    },
-    {
-      "number": 7,
-      "raw_number": "7",
-      "question_uid": "default_q7",
-      "uid": "default_q7",
-      "section": null,
-      "instruction": null,
-      "question_text": "What is an ecosystem?",
-      "question_text_source": "llm",
-      "question_type": "short",
-      "marks": 0.0,
-      "mark_source": "inferred",
-      "mark_confidence": 0.0,
-      "options": null,
-      "subquestions": [],
-      "or_group_id": null,
-      "image_evidence": [
-        {
-          "page_index": 0,
-          "bbox": [
-            570,
-            118,
-            588,
-            409
-          ],
-          "visual_confidence": 0.9
-        }
-      ],
-      "ai_confidence": 0.95,
-      "confidence": 0.95
-    },
-    {
-      "number": 8,
-      "raw_number": "8",
-      "question_uid": "default_q8",
-      "uid": "default_q8",
-      "section": null,
-      "instruction": null,
-      "question_text": "Name one renewable source of energy.",
-      "question_text_source": "llm",
-      "question_type": "very_short",
-      "marks": 0.0,
-      "mark_source": "inferred",
-      "mark_confidence": 0.0,
-      "options": null,
-      "subquestions": [],
-      "or_group_id": null,
-      "image_evidence": [
-        {
-          "page_index": 0,
-          "bbox": [
-            628,
-            118,
-            646,
-            550
-          ],
-          "visual_confidence": 0.9
-        }
-      ],
-      "ai_confidence": 0.95,
-      "confidence": 0.95
-    },
-    {
-      "number": 9,
-      "raw_number": "9",
-      "question_uid": "default_q9",
-      "uid": "default_q9",
-      "section": null,
-      "instruction": null,
-      "question_text": "What is the boiling point of water (in \u00b0C)?",
-      "question_text_source": "llm",
-      "question_type": "very_short",
-      "marks": 0.0,
-      "mark_source": "inferred",
-      "mark_confidence": 0.0,
-      "options": null,
-      "subquestions": [],
-      "or_group_id": null,
-      "image_evidence": [
-        {
-          "page_index": 0,
-          "bbox": [
-            686,
-            118,
-            704,
-            600
-          ],
-          "visual_confidence": 0.9
-        }
-      ],
-      "ai_confidence": 0.95,
-      "confidence": 0.95
+      "ai_confidence": 0.98,
+      "confidence": 0.98
     },
     {
       "number": 10,
       "raw_number": "10",
-      "question_uid": "default_q10",
-      "uid": "default_q10",
-      "section": null,
+      "question_uid": "section_b_q10",
+      "uid": "section_b_q10",
+      "section": "SECTION B",
       "instruction": null,
-      "question_text": "Define evaporation.",
+      "question_text": "Explain relativity",
       "question_text_source": "llm",
       "question_type": "short",
-      "marks": 0.0,
-      "mark_source": "inferred",
+      "marks": null,
+      "mark_source": "missing",
       "mark_confidence": 0.0,
       "options": null,
       "subquestions": [],
-      "or_group_id": null,
       "image_evidence": [
         {
           "page_index": 0,
           "bbox": [
-            744,
-            118,
-            762,
-            390
+            36,
+            560,
+            534,
+            589
           ],
-          "visual_confidence": 0.9
+          "visual_confidence": 0.95
         }
       ],
-      "ai_confidence": 0.95,
-      "confidence": 0.95
+      "ai_confidence": 0.98,
+      "confidence": 0.98
     }
   ],
   "section_math_blocks": [],
-  "total_questions": 10,
+  "total_questions": 3,
   "total_marks": 0.0,
   "effective_total_marks": 0.0,
-  "numbering_contiguous": true
+  "numbering_contiguous": false
 }
 
 FINAL CONSOLIDATED OUTPUT:
@@ -327,316 +107,96 @@ FINAL CONSOLIDATED OUTPUT:
     {
       "number": 1,
       "raw_number": "1",
-      "question_uid": "default_q1",
-      "uid": "default_q1",
-      "section": null,
+      "question_uid": "section_a_q1",
+      "uid": "section_a_q1",
+      "section": "SECTION A",
       "instruction": null,
-      "question_text": "What is photosynthesis?",
+      "question_text": "Define gravity",
       "question_text_source": "llm",
-      "question_type": "short",
-      "marks": 0.0,
-      "mark_source": "inferred",
+      "question_type": "very_short",
+      "marks": null,
+      "mark_source": "missing",
       "mark_confidence": 0.0,
       "options": null,
       "subquestions": [],
-      "or_group_id": null,
       "image_evidence": [
         {
           "page_index": 0,
           "bbox": [
-            202,
-            118,
-            220,
-            409
+            35,
+            310,
+            478,
+            339
           ],
-          "visual_confidence": 0.9
+          "visual_confidence": 0.95
         }
       ],
-      "ai_confidence": 0.95,
-      "confidence": 0.95
+      "ai_confidence": 0.98,
+      "confidence": 0.98
     },
     {
       "number": 2,
       "raw_number": "2",
-      "question_uid": "default_q2",
-      "uid": "default_q2",
-      "section": null,
+      "question_uid": "section_a_q2",
+      "uid": "section_a_q2",
+      "section": "SECTION A",
       "instruction": null,
-      "question_text": "Define gravity.",
-      "question_text_source": "llm",
-      "question_type": "short",
-      "marks": 0.0,
-      "mark_source": "inferred",
-      "mark_confidence": 0.0,
-      "options": null,
-      "subquestions": [],
-      "or_group_id": null,
-      "image_evidence": [
-        {
-          "page_index": 0,
-          "bbox": [
-            260,
-            118,
-            278,
-            340
-          ],
-          "visual_confidence": 0.9
-        }
-      ],
-      "ai_confidence": 0.95,
-      "confidence": 0.95
-    },
-    {
-      "number": 3,
-      "raw_number": "3",
-      "question_uid": "default_q3",
-      "uid": "default_q3",
-      "section": null,
-      "instruction": null,
-      "question_text": "What is the chemical formula of water?",
+      "question_text": "Define force",
       "question_text_source": "llm",
       "question_type": "very_short",
-      "marks": 0.0,
-      "mark_source": "inferred",
+      "marks": null,
+      "mark_source": "missing",
       "mark_confidence": 0.0,
       "options": null,
       "subquestions": [],
-      "or_group_id": null,
       "image_evidence": [
         {
           "page_index": 0,
           "bbox": [
-            318,
-            118,
-            336,
-            500
+            35,
+            360,
+            455,
+            389
           ],
-          "visual_confidence": 0.9
+          "visual_confidence": 0.95
         }
       ],
-      "ai_confidence": 0.95,
-      "confidence": 0.95
-    },
-    {
-      "number": 4,
-      "raw_number": "4",
-      "question_uid": "default_q4",
-      "uid": "default_q4",
-      "section": null,
-      "instruction": null,
-      "question_text": "Name the process by which plants lose water through leaves.",
-      "question_text_source": "llm",
-      "question_type": "short",
-      "marks": 0.0,
-      "mark_source": "inferred",
-      "mark_confidence": 0.0,
-      "options": null,
-      "subquestions": [],
-      "or_group_id": null,
-      "image_evidence": [
-        {
-          "page_index": 0,
-          "bbox": [
-            376,
-            118,
-            414,
-            824
-          ],
-          "visual_confidence": 0.9
-        }
-      ],
-      "ai_confidence": 0.95,
-      "confidence": 0.95
-    },
-    {
-      "number": 5,
-      "raw_number": "5",
-      "question_uid": "default_q5",
-      "uid": "default_q5",
-      "section": null,
-      "instruction": null,
-      "question_text": "What is the unit of force?",
-      "question_text_source": "llm",
-      "question_type": "very_short",
-      "marks": 0.0,
-      "mark_source": "inferred",
-      "mark_confidence": 0.0,
-      "options": null,
-      "subquestions": [],
-      "or_group_id": null,
-      "image_evidence": [
-        {
-          "page_index": 0,
-          "bbox": [
-            454,
-            118,
-            472,
-            409
-          ],
-          "visual_confidence": 0.9
-        }
-      ],
-      "ai_confidence": 0.95,
-      "confidence": 0.95
-    },
-    {
-      "number": 6,
-      "raw_number": "6",
-      "question_uid": "default_q6",
-      "uid": "default_q6",
-      "section": null,
-      "instruction": null,
-      "question_text": "Explain the difference between mass and weight.",
-      "question_text_source": "llm",
-      "question_type": "short",
-      "marks": 0.0,
-      "mark_source": "inferred",
-      "mark_confidence": 0.0,
-      "options": null,
-      "subquestions": [],
-      "or_group_id": null,
-      "image_evidence": [
-        {
-          "page_index": 0,
-          "bbox": [
-            512,
-            118,
-            530,
-            660
-          ],
-          "visual_confidence": 0.9
-        }
-      ],
-      "ai_confidence": 0.95,
-      "confidence": 0.95
-    },
-    {
-      "number": 7,
-      "raw_number": "7",
-      "question_uid": "default_q7",
-      "uid": "default_q7",
-      "section": null,
-      "instruction": null,
-      "question_text": "What is an ecosystem?",
-      "question_text_source": "llm",
-      "question_type": "short",
-      "marks": 0.0,
-      "mark_source": "inferred",
-      "mark_confidence": 0.0,
-      "options": null,
-      "subquestions": [],
-      "or_group_id": null,
-      "image_evidence": [
-        {
-          "page_index": 0,
-          "bbox": [
-            570,
-            118,
-            588,
-            409
-          ],
-          "visual_confidence": 0.9
-        }
-      ],
-      "ai_confidence": 0.95,
-      "confidence": 0.95
-    },
-    {
-      "number": 8,
-      "raw_number": "8",
-      "question_uid": "default_q8",
-      "uid": "default_q8",
-      "section": null,
-      "instruction": null,
-      "question_text": "Name one renewable source of energy.",
-      "question_text_source": "llm",
-      "question_type": "very_short",
-      "marks": 0.0,
-      "mark_source": "inferred",
-      "mark_confidence": 0.0,
-      "options": null,
-      "subquestions": [],
-      "or_group_id": null,
-      "image_evidence": [
-        {
-          "page_index": 0,
-          "bbox": [
-            628,
-            118,
-            646,
-            550
-          ],
-          "visual_confidence": 0.9
-        }
-      ],
-      "ai_confidence": 0.95,
-      "confidence": 0.95
-    },
-    {
-      "number": 9,
-      "raw_number": "9",
-      "question_uid": "default_q9",
-      "uid": "default_q9",
-      "section": null,
-      "instruction": null,
-      "question_text": "What is the boiling point of water (in \u00b0C)?",
-      "question_text_source": "llm",
-      "question_type": "very_short",
-      "marks": 0.0,
-      "mark_source": "inferred",
-      "mark_confidence": 0.0,
-      "options": null,
-      "subquestions": [],
-      "or_group_id": null,
-      "image_evidence": [
-        {
-          "page_index": 0,
-          "bbox": [
-            686,
-            118,
-            704,
-            600
-          ],
-          "visual_confidence": 0.9
-        }
-      ],
-      "ai_confidence": 0.95,
-      "confidence": 0.95
+      "ai_confidence": 0.98,
+      "confidence": 0.98
     },
     {
       "number": 10,
       "raw_number": "10",
-      "question_uid": "default_q10",
-      "uid": "default_q10",
-      "section": null,
+      "question_uid": "section_b_q10",
+      "uid": "section_b_q10",
+      "section": "SECTION B",
       "instruction": null,
-      "question_text": "Define evaporation.",
+      "question_text": "Explain relativity",
       "question_text_source": "llm",
       "question_type": "short",
-      "marks": 0.0,
-      "mark_source": "inferred",
+      "marks": null,
+      "mark_source": "missing",
       "mark_confidence": 0.0,
       "options": null,
       "subquestions": [],
-      "or_group_id": null,
       "image_evidence": [
         {
           "page_index": 0,
           "bbox": [
-            744,
-            118,
-            762,
-            390
+            36,
+            560,
+            534,
+            589
           ],
-          "visual_confidence": 0.9
+          "visual_confidence": 0.95
         }
       ],
-      "ai_confidence": 0.95,
-      "confidence": 0.95
+      "ai_confidence": 0.98,
+      "confidence": 0.98
     }
   ],
   "section_math_blocks": [],
-  "total_questions": 10,
+  "total_questions": 3,
   "total_marks": 0.0,
   "effective_total_marks": 0.0,
   "bottom_total_marks": 0.0,

@@ -1049,7 +1049,8 @@ def _extract_structured_question_anchors(structure: Dict[str, Any]) -> List[Dict
     anchors: List[Dict[str, Any]] = []
     for q in (structure or {}).get("questions") or []:
         qn = _to_int(q.get("number"), 0)
-        q_uid = q.get("question_uid") or q.get("uid") or build_question_uid(q.get("section") or "default", qn)
+        sec = str(q.get("section") or "default").strip()
+        q_uid = q.get("question_uid") or q.get("uid") or build_question_uid(sec, qn)
         if not qn:
             continue
         best: Optional[Dict[str, Any]] = None
@@ -1064,6 +1065,7 @@ def _extract_structured_question_anchors(structure: Dict[str, Any]) -> List[Dict
             if best is None or conf > best["confidence"]:
                 best = {
                     "number": qn,
+                    "section": sec,
                     "question_uid": q_uid,
                     "uid": q_uid,
                     "bbox": bbox,
@@ -1071,8 +1073,19 @@ def _extract_structured_question_anchors(structure: Dict[str, Any]) -> List[Dict
                     "confidence": conf,
                     "source": "structured",
                 }
-        if best:
-            anchors.append(best)
+        if not best:
+            # Create a placeholder anchor even if no evidence
+            best = {
+                "number": qn,
+                "section": sec,
+                "question_uid": q_uid,
+                "uid": q_uid,
+                "bbox": [0, 0, 0, 0],
+                "page": -1,
+                "confidence": 0.0,
+                "source": "structured_placeholder",
+            }
+        anchors.append(best)
     return anchors
 
 
@@ -1082,41 +1095,75 @@ def _merge_question_anchors(
     structured_anchors: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     """
-    STRICT PHASE 1: Only visual anchors are allowed. 
-    OCR and Structured anchors can only enrich existing visual anchors.
+    STRICT Phase 4.5: Ensure NO anchor is lost during anchor merge.
+    Identity key = (normalize_section(section), number)
+    Structured/Semantic is the master source of truth.
     """
     logger.info("[ANCHOR_MERGE_START] visual=%s ocr=%s structured=%s", 
                 len(visual_questions), len(ocr_anchors or []), len(structured_anchors or []))
     
-    final_anchors = []
-    
-    # 1. Map other sources by UID for fast lookup
-    ocr_map = { (a.get("question_uid") or a.get("uid")): a for a in (ocr_anchors or []) if (a.get("question_uid") or a.get("uid")) }
-    struc_map = { (a.get("question_uid") or a.get("uid")): a for a in (structured_anchors or []) if (a.get("question_uid") or a.get("uid")) }
+    def normalize_section(section):
+        return (str(section) or "default").strip().lower()
 
-    # 2. Iterate ONLY over visual anchors
+    # Step 1 — Build Anchor Map from visual_questions
+    anchor_map = {}
     for v in visual_questions:
-        if not isinstance(v, dict): continue
-        uid = v.get("question_uid") or v.get("uid")
-        if not uid: continue
-        
-        merged = dict(v)
-        merged["source"] = v.get("source") or "visual"
-        
-        # Enrich with OCR data if UID matches
-        if uid in ocr_map:
-            o = ocr_map[uid]
-            # Use OCR bbox if Vision bbox is empty/degenerate
-            if not any(merged.get("bbox") or []):
-                merged["bbox"] = o.get("bbox")
-            merged["ocr_confidence"] = o.get("confidence")
-            
-        # Enrich with Structured data if UID matches
-        if uid in struc_map:
-            s = struc_map[uid]
-            merged["structured_confidence"] = s.get("confidence")
+        if not isinstance(v, dict):
+            continue
+        num = _to_int(v.get("number"), 0)
+        sec = normalize_section(v.get("section"))
+        if num > 0:
+            key = (sec, num)
+            anchor_map[key] = dict(v)
+            anchor_map[key]["source"] = v.get("source") or "visual"
 
+    # Step 2 — Merge Semantic Questions (master source)
+    final_anchors = []
+    ocr_map = { (a.get("question_uid") or a.get("uid")): a for a in (ocr_anchors or []) if (a.get("question_uid") or a.get("uid")) }
+
+    for s in structured_anchors:
+        if not isinstance(s, dict):
+            continue
+        num = _to_int(s.get("number"), 0)
+        sec = normalize_section(s.get("section"))
+        key = (sec, num)
+        uid = s.get("question_uid") or s.get("uid")
+        
+        if key in anchor_map:
+            # Enrich visual anchor
+            merged = anchor_map[key]
+            merged["question"] = s
+            if uid in ocr_map:
+                o = ocr_map[uid]
+                # Use OCR bbox if Vision bbox is empty/degenerate
+                if not any(merged.get("bbox") or []):
+                    merged["bbox"] = o.get("bbox")
+                merged["ocr_confidence"] = o.get("confidence")
+            logger.info("[ANCHOR_ENTRY] key=%s source=%s has_question=True", key, merged["source"])
+        else:
+            # Step 2.1 — DO NOT DROP — CREATE SYNTHETIC ANCHOR
+            merged = {
+                "number": num,
+                "section": s.get("section") or "default",
+                "question_uid": uid,
+                "uid": uid,
+                "page": _to_int(s.get("page"), -1),
+                "bbox": s.get("bbox") or [0, 0, 0, 0],
+                "source": "synthetic",
+                "question": s
+            }
+            logger.info("[ANCHOR_ENTRY] key=%s source=synthetic has_question=True", key)
+        
         final_anchors.append(merged)
+
+    # Step 4 — Logging requirements
+    logger.info("[ANCHOR_KEY_MAP] keys=%s", list(anchor_map.keys()))
+    logger.info("[ANCHOR_FINAL_COUNT] total=%s", len(final_anchors))
+    
+    # Step 5 — Soft Assertion
+    if len(final_anchors) != len(structured_anchors):
+        logger.error("[ANCHOR_INTEGRITY_BROKEN] final=%s structured=%s",
+                     len(final_anchors), len(structured_anchors))
 
     logger.info("[ANCHOR_MERGE_END] final_anchors=%s", len(final_anchors))
     return final_anchors
