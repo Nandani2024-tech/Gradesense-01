@@ -19,6 +19,7 @@ class SubQuestionScore(BaseModel):
     missing_concepts: List[str] = Field(default_factory=list)
     concept_coverage: float = 0.0
     grading_mode: Optional[str] = "AI_EVALUATED" # "AI_EVALUATED", "DETERMINISTIC_FALLBACK"
+    or_group_id: Optional[str] = None
 
 class QuestionScore(BaseModel):
     model_config = ConfigDict(extra="ignore")

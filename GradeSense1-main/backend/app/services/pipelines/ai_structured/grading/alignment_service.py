@@ -175,6 +175,7 @@ def _compute_alignment_metrics(
     answers: List[Dict[str, Any]],
     expected_uids: List[str],
     page_count: int,
+    blueprint_index: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     expected_set = set(expected_uids)
     key_counter: Counter[Tuple[int, Optional[str]]] = Counter()
@@ -208,11 +209,38 @@ def _compute_alignment_metrics(
         if count > 1
     ]
 
-    expected_questions = len(expected_set)
+    # Step 5: OR-Aware Coverage
+    # Group UIDs by or_group_id to identify unique "choice slots"
+    or_slots = defaultdict(list)
+    standalone_uids = []
+    
+    for uid in expected_uids:
+        q_info = (blueprint_index or {}).get(uid) or {}
+        ogid = q_info.get("or_group_id")
+        if ogid:
+            or_slots[ogid].append(uid)
+        else:
+            standalone_uids.append(uid)
+            
+    # Calculate effective questions
+    effective_expected_count = len(standalone_uids) + len(or_slots)
+    
+    # Calculate effective mapped questions
+    mapped_uids = set(mapped_question_set)
+    effective_mapped_count = 0
+    for uid in standalone_uids:
+        if uid in mapped_uids:
+            effective_mapped_count += 1
+    for ogid, members in or_slots.items():
+        if any(m in mapped_uids for m in members):
+            effective_mapped_count += 1
+
+    expected_questions = effective_expected_count
     answered_questions_valid = len({uid for uid in answered_uid_set if uid in expected_set})
-    mapped_questions = len(mapped_question_set)
+    mapped_questions = effective_mapped_count
 
     coverage_ratio = (mapped_questions / float(expected_questions)) if expected_questions else 0.0
+    # For alignment_coverage, use raw answered_questions_valid as a proxy for effort
     alignment_coverage = (mapped_questions / float(answered_questions_valid)) if answered_questions_valid else 0.0
 
     # Task 7 Summary
@@ -441,7 +469,7 @@ async def align_answers(
         logger.error("PIPELINE_BLOCKED: Alignment coverage too low (%.2f < 0.6)", coverage)
         raise AlignmentError(f"Alignment coverage too low: {coverage:.2f}")
 
-    metrics = _compute_alignment_metrics(all_answers, expected_uids, page_count=len(answer_images))
+    metrics = _compute_alignment_metrics(all_answers, expected_uids, page_count=len(answer_images), blueprint_index=blueprint_index)
     
     result = {
         "answers": aligned_answers,

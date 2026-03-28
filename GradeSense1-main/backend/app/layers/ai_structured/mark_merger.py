@@ -15,6 +15,8 @@ from .mark_sources import (
     _source_confidence,
 )
 
+from .validation import compute_effective_total
+
 
 def clean_or_groups_robust(questions: List[Dict[str, Any]], visual_entities: Optional[Dict[str, Any]]) -> Dict[str, List[Tuple[str, int]]]:
     """
@@ -29,13 +31,37 @@ def clean_or_groups_robust(questions: List[Dict[str, Any]], visual_entities: Opt
     if not or_pairs:
         return {}
 
-    # Build identity map for questions
-    q_by_ident = {}
+    # Build identity map for questions and subparts (Recursive Step 3)
+    q_by_ident = {}  # key: (num, sec, label)
+    
+    def _index_q_recursive(subs: List[Dict[str, Any]], num: int, sec: str, prefix: str = ""):
+        for i, s in enumerate(subs):
+            lbl = _norm_label(s.get("label")) or f"s{i+1}"
+            full_lbl = f"{prefix}{lbl}" if prefix else lbl
+            q_by_ident[(num, sec, full_lbl)] = s
+            children = s.get("subquestions") or []
+            if children:
+                _index_q_recursive(children, num, sec, prefix=f"{full_lbl}.")
+
     for q in questions:
         num = to_int(q.get("number"), 0)
         sec = str(q.get("section") or "").strip()
         if num > 0:
-            q_by_ident[(num, sec)] = q
+            q_by_ident[(num, sec, None)] = q
+            _index_q_recursive(q.get("subquestions") or [], num, sec)
+
+    def _resolve_ident(num: int, sec: str, lbl: Optional[str]) -> Optional[Tuple[int, str, Optional[str]]]:
+        """Relaxed identity resolver for OR pairs."""
+        target = (num, sec, lbl)
+        if target in q_by_ident:
+            return target
+        
+        # Section relaxation: look for any section matching this number and label
+        for (n, s, l) in q_by_ident.keys():
+            if n == num and l == lbl:
+                logger.info("[OR_RELAX_MATCH] q=%s label=%s matched to section=%s (requested=%s)", num, lbl, s, sec)
+                return (n, s, l)
+        return None
 
     # Union-Find for components
     parent = {}
@@ -51,15 +77,18 @@ def clean_or_groups_robust(questions: List[Dict[str, Any]], visual_entities: Opt
             parent[pb] = pa
 
     for pair in or_pairs:
-        q1_num = to_int(pair.get("q1"), 0)
+        q1_num = to_int(pair.get("q1") or pair.get("q_no1"), 0)
         q1_sec = str(pair.get("sec1") or "").strip()
-        q2_num = to_int(pair.get("q2"), 0)
+        q1_lbl = _norm_label(pair.get("label1"))
+
+        q2_num = to_int(pair.get("q2") or pair.get("q_no2"), 0)
         q2_sec = str(pair.get("sec2") or "").strip()
+        q2_lbl = _norm_label(pair.get("label2"))
         
-        id1 = (q1_num, q1_sec)
-        id2 = (q2_num, q2_sec)
+        id1 = _resolve_ident(q1_num, q1_sec, q1_lbl)
+        id2 = _resolve_ident(q2_num, q2_sec, q2_lbl)
         
-        if id1 in q_by_ident and id2 in q_by_ident:
+        if id1 and id2:
             union(id1, id2)
 
     groups = defaultdict(list)
@@ -70,7 +99,7 @@ def clean_or_groups_robust(questions: List[Dict[str, Any]], visual_entities: Opt
     gid_seq = 1
     for root, members in groups.items():
         if len(members) < 2: continue
-        gid = f"visual_or_{gid_seq}"
+        gid = f"v_or_{gid_seq}"
         gid_seq += 1
         for ident in members:
             q_by_ident[ident]["or_group_id"] = gid
@@ -184,6 +213,20 @@ def _initial_mark_pass(
                     val = max(0.0, to_float(sq.get("marks"), 0.0))
                     sub_values[idx] = val
                     sub_sources[idx] = _norm_source(sq.get("mark_source"))
+                else:
+                    # [Step 2 Fallback] Try inline extraction from text
+                    sq_text = str(sq.get("text") or sq.get("question_text") or "").strip()
+                    instr = _extract_instruction_mark(None, sq_text)
+                    if instr is not None:
+                        sub_values[idx] = instr
+                        sub_sources[idx] = "instruction"
+                        logger.info("[MARK_APPLY_SQ] q=%s.%s reason=instruction marks=%s", qn, lbl, instr)
+                    elif to_float(sq.get("marks"), 0.0) > 0:
+                        # FALLBACK to semantic marks (Trusted Phase 5 mode)
+                        val = max(0.0, to_float(sq.get("marks"), 0.0))
+                        sub_values[idx] = val
+                        sub_sources[idx] = "semantic_fallback"
+                        logger.info("[MARK_APPLY_SQ] q=%s.%s reason=semantic_fallback marks=%s", qn, lbl, val)
 
             split_info = q_margin.get(key)
             if all(v is None for v in sub_values) and split_info:
@@ -297,7 +340,9 @@ def _reconcile_subpart_marks(question: Dict[str, Any], model_answer_marks: Optio
     
     qn = to_int(question.get("number"), 0)
     parent_marks = to_float(question.get("marks"), 0.0)
-    sub_sum = sum(to_float(sq.get("marks"), 0.0) for sq in subparts)
+    
+    # Step 3 Refinement: Use OR-aware summation from validation.py
+    sub_sum = compute_effective_total(question)
     
     if abs(sub_sum - parent_marks) < 1e-6 and not model_answer_marks:
         return False

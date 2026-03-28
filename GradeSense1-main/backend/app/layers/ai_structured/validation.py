@@ -21,7 +21,8 @@ def _normalize_subquestion(sub: Dict[str, Any]) -> Dict[str, Any]:
         "rubric": str(sub.get("rubric") or "").strip() or None,
         "model_answer": str(sub.get("model_answer") or sub.get("rubric") or "").strip(),
         "marks": round(to_float(sub.get("marks"), 0.0), 4),
-        "mark_source": "missing",
+        "or_group_id": (str(sub.get("or_group_id") or "").strip() or None),
+        "mark_source": str(sub.get("mark_source") or "missing").strip().lower(),
         "mark_confidence": round(to_float(sub.get("mark_confidence"), 0.0), 4),
         "confidence": round(to_float(sub.get("confidence"), 0.0), 4),
         "image_evidence": list(sub.get("image_evidence") or []),
@@ -180,23 +181,60 @@ def compute_attempt_rules(questions: List[Dict[str, Any]]) -> Dict[str, Dict[str
     return rules
 
 
-def compute_effective_total(questions: List[Dict[str, Any]]) -> float:
+def compute_effective_total(question: Dict[str, Any]) -> float:
+    """
+    Computes the logically effective total for a single question based on subparts.
+    If multiple subparts share an or_group_id, only the max marks in that group is counted.
+    If no subparts, falls back to the question's own marks.
+    """
+    subquestions = question.get("subquestions") or []
+    if not subquestions:
+        return to_float(question.get("marks"), 0.0)
+
+    # Constraint: Only group if or_group_id is present and not empty.
+    # Preserve simple sum behavior if no subparts have an or_group_id.
+    has_any_or = False
+    groups: Dict[str, List[float]] = defaultdict(list)
+    non_or_marks = 0.0
+
+    for sq in subquestions:
+        marks = to_float(sq.get("marks"), 0.0)
+        gid = str(sq.get("or_group_id") or "").strip()
+        if gid:
+            groups[gid].append(marks)
+            has_any_or = True
+        else:
+            non_or_marks += marks
+
+    if not has_any_or:
+        return round(sum(to_float(sq.get("marks"), 0.0) for sq in subquestions), 4)
+
+    total = non_or_marks
+    for gid, marks_list in groups.items():
+        total += max(marks_list, default=0.0)
+
+    return round(total, 4)
+
+
+def compute_paper_effective_total(questions: List[Dict[str, Any]]) -> float:
+    """
+    Computes the effective total for the whole paper, considering choice questions (OR groups).
+    Uses compute_effective_total(q) for each individual question's marks.
+    """
     grouped: Dict[Optional[str], List[Dict[str, Any]]] = defaultdict(list)
     for q in questions:
         grouped[q.get("or_group_id")].append(q)
 
     def _q_marks(q: Dict[str, Any]) -> float:
         parent = to_float(q.get("marks"), 0.0)
-        if parent > 0:
-            return parent
-        # If parent marks explicitly 0 or missing, sum subquestions
-        sub_sum = sum(to_float(sq.get("marks"), 0.0) for sq in (q.get("subquestions") or []))
+        # Use OR-aware summation for subparts
+        sub_sum = compute_effective_total(q)
         return max(parent, sub_sum)
 
     total = 0.0
     for gid, qs in grouped.items():
         if gid:
-            # For OR groups, the effective max marks for the group is the max of its members.
+            # Paper-level OR groups (e.g. Q1 OR Q2).
             total += max((_q_marks(q) for q in qs), default=0.0)
         else:
             total += sum(_q_marks(q) for q in qs)
@@ -232,7 +270,7 @@ def validate_structure(
     visual_evidence_missing: List[int] = []
     for q in questions:
         parent_marks = to_float(q.get("marks"), 0.0)
-        sub_sum = sum(to_float(sq.get("marks"), 0.0) for sq in (q.get("subquestions") or []))
+        sub_sum = compute_effective_total(q)
         if parent_marks > 0 and sub_sum > parent_marks + 1e-6:
             subpart_overflow.append(
                 {
@@ -245,7 +283,7 @@ def validate_structure(
         if len(evidence) == 0:
             visual_evidence_missing.append(int(q.get("number")))
 
-    effective_total_marks = compute_effective_total(questions)
+    effective_total_marks = compute_paper_effective_total(questions)
 
     errors: List[str] = []
     warnings: List[str] = []
@@ -312,8 +350,8 @@ def validate_reconstruction_guardrails(
 
     prev_numbers = [int(q["number"]) for q in prev_norm["questions"]]
     next_numbers = [int(q["number"]) for q in next_norm["questions"]]
-    prev_total = compute_effective_total(prev_norm["questions"])
-    next_total = compute_effective_total(next_norm["questions"])
+    prev_total = compute_paper_effective_total(prev_norm["questions"])
+    next_total = compute_paper_effective_total(next_norm["questions"])
 
     errors: List[str] = []
     if sorted(set(prev_numbers)) != sorted(set(next_numbers)):

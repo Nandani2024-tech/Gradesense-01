@@ -2,6 +2,7 @@ import asyncio
 import json
 import re
 from typing import List, Dict, Any, Optional, Set, Tuple
+from collections import Counter, defaultdict
 from app.services.grading.llm_evaluator import LlmEvaluator
 from app.adapters.interfaces import AbstractLLMService
 from app.services.grading.answer_normalizer import AnswerNormalizer
@@ -338,8 +339,22 @@ class GradingEngine:
                     concepts_detected=detected,
                     missing_concepts=missing,
                     concept_coverage=concept_coverage,
-                    grading_mode=sq_grading_mode
+                    grading_mode=sq_grading_mode,
+                    or_group_id=sq.get("or_group_id") # Task 5 persistence
                 ))
+            
+            # Step 5: OR-Aware Subpart Aggregation for Parent
+            or_group_scores = defaultdict(float)
+            standalone_total = 0.0
+            
+            for score in sub_scores:
+                ogid = getattr(score, "or_group_id", None) or next((s.get("or_group_id") for s in sub_questions if str(s.get("sub_id") or s.get("id")) == score.sub_id), None)
+                if ogid:
+                    or_group_scores[ogid] = max(or_group_scores[ogid], score.obtained_marks)
+                else:
+                    standalone_total += score.obtained_marks
+            
+            total_awarded = standalone_total + sum(or_group_scores.values())
             
             # ✅ STEP 5 — SUMMARY LOG (PER QUESTION, NOT FUNCTION)
             logger.info(
@@ -568,32 +583,45 @@ class GradingEngine:
                 # However, our engine returned them in a dict before.
                 # Since we want SCHEMA_ENFORCED, we strictly follow QuestionScore.
 
-        # Rule 9: Dynamic Score Aggregation (Root-ID level)
-        # Task 2: Enforce correct accumulation
-        total_awarded = 0.0
-        total_possible = 0.0
+        # Rule 9: OR-Aware Dynamic Score Aggregation (Step 5)
+        # 1. Group results by OR group
+        or_group_awarded = defaultdict(float)
+        or_group_possible = defaultdict(float)
+        standalone_awarded = 0.0
+        standalone_possible = 0.0
         
         main_q_awarded: Dict[str, float] = {}
         main_q_possible: Dict[str, float] = {}
         
+        # We need to map questons to their or_group_id from the blueprint
+        blueprint_or_map = {
+             str(q.get("question_uid") or q.get("id") or q.get("question_number") or q.get("number")).strip().lower(): q.get("or_group_id")
+             for q in blueprint_questions
+        }
+
         for res in results_list:
-            # Task 4: Lock aggregation source of truth
-            # final_score is res.obtained_marks (already validated/banded in _grade_worker)
-            final_score = res.obtained_marks
-            max_marks = res.max_marks
-            qid = res.question_number
+            qid = str(res.question_number).strip().lower()
+            ogid = blueprint_or_map.get(qid)
             
-            # Sub-question awareness for aggregation
-            root_id = str(qid).split('.')[0]
-            main_q_awarded[root_id] = main_q_awarded.get(root_id, 0.0) + final_score
-            main_q_possible[root_id] = main_q_possible.get(root_id, 0.0) + max_marks
-            
-            # Task 2: Accumulate totals
-            total_awarded += final_score
-            total_possible += max_marks
-            
-            # Task 5: Aggregation logs
-            all_logs.append(f"[AGGREGATION] {qid} → score={final_score:.2f} max={max_marks:.2f} running_total={total_awarded:.2f}")
+            if ogid:
+                or_group_awarded[ogid] = max(or_group_awarded[ogid], res.obtained_marks)
+                or_group_possible[ogid] = max(or_group_possible[ogid], res.max_marks)
+            else:
+                standalone_awarded += res.obtained_marks
+                standalone_possible += res.max_marks
+                
+            # Legacy root-id level aggregation for display/audit
+            root_id = qid.split('.')[0]
+            main_q_awarded[root_id] = main_q_awarded.get(root_id, 0.0) + res.obtained_marks
+            main_q_possible[root_id] = main_q_possible.get(root_id, 0.0) + res.max_marks
+
+        total_awarded = standalone_awarded + sum(or_group_awarded.values())
+        total_possible = standalone_possible + sum(or_group_possible.values())
+        
+        # Task 2: Accumulate totals
+        all_logs.append(f"[AGGREGATION] standalone_awarded={standalone_awarded:.2f} or_groups={len(or_group_awarded)}")
+        for ogid in or_group_awarded:
+            all_logs.append(f"[AGGREGATION_OR] group={ogid} → awarded={or_group_awarded[ogid]:.2f} max={or_group_possible[ogid]:.2f}")
 
         # Final rounding for persistence safety
         total_awarded = float(f"{total_awarded:.2f}")

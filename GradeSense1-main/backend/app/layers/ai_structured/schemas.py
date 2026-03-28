@@ -41,6 +41,7 @@ class SubQuestionV2(BaseModel):
     mark_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     image_evidence: List[EvidenceRef] = Field(default_factory=list)
+    or_group_id: Optional[str] = None
 
 
 class QuestionV2(BaseModel):

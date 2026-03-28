@@ -116,28 +116,75 @@ def resolve_marks(
         changed_questions=changed_questions,
     )
 
-    # PASS 2 & 3: Header-total and Pattern inference blocks removed for Phase 1 compliance.
     # OR integrity.
     for gid, members in sorted(or_groups_map.items(), key=lambda kv: kv[0]):
-        # members contains (section, number) tuples
-        shared = 0.0
-        for key in members:
-            shared = max(shared, to_float((by_key.get(key) or {}).get("marks"), 0.0))
+        # Step 3: Support 3-tuple hierarchical identities (num, sec, label)
+        shared_max = 0.0
+        
+        # Pass 1: Find max mark in group
+        for ident in members:
+            # Handle both legacy (sec, num) and Step 3 (num, sec, label)
+            if len(ident) == 3:
+                num, sec, lbl = ident
+            else:
+                sec, num = ident
+                lbl = None
             
-        for key in members:
-            q = by_key.get(key)
+            q = by_key.get((sec, num))
             if not q:
                 continue
-            old = max(0.0, to_float(q.get("marks"), 0.0))
-            if abs(old - shared) > 1e-6:
-                q["marks"] = round(shared, 4)
-                q["mark_source"] = _norm_source(q.get("mark_source") or "inferred")
-                q["distribution_mode"] = str(q.get("distribution_mode") or "direct")
-                by_key[key] = q
-                changed_questions.add(key)
-                logger.info("[MARK_APPLY] q=%s section=%s reason=or_group marks=%s", key[1], key[0], round(shared, 4))
-                _sync_audit_for_question(key, question_audit_tree, by_key)
-        logger.info("OR_GROUP_RESOLVED group=%s members=%s effective_marks=%s", gid, members, round(shared, 4))
+            
+            val = 0.0
+            if lbl:
+                # Subpart mark
+                for sq in (q.get("subquestions") or []):
+                    if (sq.get("label") or "").strip() == lbl:
+                        val = to_float(sq.get("marks"), 0.0)
+                        break
+            else:
+                # Question mark
+                val = to_float(q.get("marks"), 0.0)
+            
+            shared_max = max(shared_max, val)
+
+        # Pass 2: Propagate max mark
+        if shared_max <= 0:
+            continue
+
+        for ident in members:
+            if len(ident) == 3:
+                num, sec, lbl = ident
+            else:
+                sec, num = ident
+                lbl = None
+                
+            q = by_key.get((sec, num))
+            if not q:
+                continue
+                
+            updated = False
+            if lbl:
+                for sq in (q.get("subquestions") or []):
+                    if (sq.get("label") or "").strip() == lbl:
+                        if abs(to_float(sq.get("marks"), 0.0) - shared_max) > 1e-6:
+                            sq["marks"] = round(shared_max, 4)
+                            sq["mark_source"] = "or_group"
+                            updated = True
+                        break
+            else:
+                old = to_float(q.get("marks"), 0.0)
+                if abs(old - shared_max) > 1e-6:
+                    q["marks"] = round(shared_max, 4)
+                    q["mark_source"] = "or_group"
+                    q["distribution_mode"] = "direct"
+                    changed_questions.add((sec, num))
+                    updated = True
+            
+            if updated:
+                logger.info("[OR_REASON_APPLY] gid=%s item=%s marks=%s", gid, ident, round(shared_max, 4))
+                _sync_audit_for_question((sec, num), question_audit_tree, by_key)
+
+        logger.info("OR_GROUP_RESOLVED group=%s members=%s shared_max=%s", gid, members, round(shared_max, 4))
 
     # Final reconciliation pass for all questions
     for key in q_keys:
