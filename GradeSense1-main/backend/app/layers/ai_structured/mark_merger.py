@@ -75,6 +75,7 @@ def clean_or_groups_robust(questions: List[Dict[str, Any]], visual_entities: Opt
         for ident in members:
             q_by_ident[ident]["or_group_id"] = gid
         refined_map[gid] = members
+        logger.info("[OR_GROUP_FINALIZED] gid=%s members=%s", gid, members)
 
     return refined_map
 
