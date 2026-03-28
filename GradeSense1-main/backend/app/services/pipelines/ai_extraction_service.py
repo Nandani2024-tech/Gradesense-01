@@ -335,7 +335,7 @@ def _normalize_visual_payload(payload: Dict[str, Any], page_offset: int, page_co
         "subparts": [],
         "margin_marks": [],
         "section_math": [],
-        "or_connectors": [],
+        "or_pairs": [],
         "headers": [],
         "header_total": None,
     }
@@ -426,7 +426,7 @@ def _normalize_visual_payload(payload: Dict[str, Any], page_offset: int, page_co
         q2 = _to_int(row.get("q2"), 0)
         if q1 <= 0 or q2 <= 0:
             continue
-        out["or_connectors"].append(
+        out["or_pairs"].append(
             {
                 "q1": q1,
                 "q2": q2,
@@ -827,7 +827,6 @@ def _normalize_batch_payload(
             "mark_confidence": 0.0,
             "options": list(q.get("options") or []) or None,
             "subquestions": subquestions,
-            "or_group_id": None,
             "image_evidence": evidence,
             "ai_confidence": round(ai_conf, 4),
             "confidence": round(ai_conf, 4),
@@ -1214,53 +1213,6 @@ def _extract_header_total_from_images(
     return None, False, 0.0, None
 
 
-def _build_or_groups_from_visual(visual_entities: Dict[str, Any]) -> Dict[int, str]:
-    edges: List[Tuple[int, int]] = []
-    for row in (visual_entities or {}).get("or_connectors") or []:
-        if not isinstance(row, dict):
-            continue
-        q1 = _to_int(row.get("q1"), 0)
-        q2 = _to_int(row.get("q2"), 0)
-        if q1 > 0 and q2 > 0 and q1 != q2:
-            edges.append((min(q1, q2), max(q1, q2)))
-    if not edges:
-        return {}
-
-    parent: Dict[int, int] = {}
-
-    def find(x: int) -> int:
-        parent.setdefault(x, x)
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def union(a: int, b: int) -> None:
-        pa = find(a)
-        pb = find(b)
-        if pa != pb:
-            parent[pb] = pa
-
-    for a, b in edges:
-        union(a, b)
-
-    comps: Dict[int, List[int]] = defaultdict(list)
-    for node in list(parent.keys()):
-        comps[find(node)].append(node)
-
-    out: Dict[int, str] = {}
-    gid_seq = 1
-    for _, members in sorted(comps.items(), key=lambda kv: min(kv[1])):
-        uniq = sorted(set(int(m) for m in members if int(m) > 0))
-        if len(uniq) < 2:
-            continue
-        gid = f"visual_or_{gid_seq}"
-        gid_seq += 1
-        for qn in uniq:
-            out[qn] = gid
-    return out
-
-
 def _semantic_structure_from_visual_entities(visual_entities: Dict[str, Any]) -> Dict[str, Any]:
     questions: List[Dict[str, Any]] = []
     sub_by_q: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
@@ -1308,7 +1260,6 @@ def _semantic_structure_from_visual_entities(visual_entities: Dict[str, Any]) ->
                 "mark_confidence": 0.0,
                 "options": None,
                 "subquestions": sorted(sub_by_q.get(qn) or [], key=lambda sq: str(sq.get("label") or "")),
-                "or_group_id": None,
                 "image_evidence": [
                     {
                         "page_index": _to_int(row.get("page"), 0),
@@ -1343,6 +1294,7 @@ def _merge_semantic_with_visual_entities(
     visual_anchors = (visual_entities or {}).get("questions") or []
     
     logger.info("[VISUAL_MERGE_START] anchors=%s semantic=%s", len(visual_anchors), len(semantic_questions))
+    logger.info("[OR_GROUP_REMOVED] legacy or_group assignments cleared in merge layer")
 
     # 1. Header Contexts for spatial section assignment
     header_contexts = []
@@ -1792,7 +1744,7 @@ async def extract_question_structure(
                 "subparts": [],
                 "margin_marks": [],
                 "section_math": [],
-                "or_connectors": [],
+                "or_pairs": [],
                 "headers": [],
                 "header_total": None,
             }
@@ -1812,7 +1764,7 @@ async def extract_question_structure(
             "subparts": [],
             "margin_marks": [],
             "section_math": [],
-            "or_connectors": [],
+            "or_pairs": [],
             "headers": [],
             "header_total": None,
         }
@@ -1821,7 +1773,7 @@ async def extract_question_structure(
             merged["subparts"].extend(chunk_payload.get("subparts") or [])
             merged["margin_marks"].extend(chunk_payload.get("margin_marks") or [])
             merged["section_math"].extend(chunk_payload.get("section_math") or [])
-            merged["or_connectors"].extend(chunk_payload.get("or_connectors") or [])
+            merged["or_pairs"].extend(chunk_payload.get("or_pairs") or [])
             merged["headers"].extend(chunk_payload.get("headers") or [])
             if not merged.get("header_total") and chunk_payload.get("header_total"):
                 merged["header_total"] = chunk_payload.get("header_total")
@@ -1830,7 +1782,7 @@ async def extract_question_structure(
     visual_entities: Dict[str, Any]
     try:
         visual_entities = await _extract_all_visual_chunks()
-        if not any(visual_entities.get(k) for k in ("questions", "section_math", "margin_marks", "or_connectors")):
+        if not any(visual_entities.get(k) for k in ("questions", "section_math", "margin_marks", "or_pairs")):
             raise RuntimeError("empty_visual_payload")
     except Exception as exc:
         logger.warning("VISUAL_ENTITIES_FAILED error=%s", exc)
@@ -1843,7 +1795,7 @@ async def extract_question_structure(
                 "subparts": [],
                 "margin_marks": [],
                 "section_math": [],
-                "or_connectors": [],
+                "or_pairs": [],
                 "headers": [],
                 "header_total": None,
             }
@@ -1855,18 +1807,18 @@ async def extract_question_structure(
         return round(float(sum(vals) / float(len(vals))), 4)
 
     logger.info(
-        "VISUAL_EVIDENCE_CONF questions=%s subparts=%s margin_marks=%s section_math=%s or_connectors=%s headers=%s avg_q=%.3f avg_sp=%.3f avg_mm=%.3f avg_sm=%.3f avg_or=%.3f avg_hd=%.3f",
+        "VISUAL_EVIDENCE_CONF questions=%s subparts=%s margin_marks=%s section_math=%s or_pairs=%s headers=%s avg_q=%.3f avg_sp=%.3f avg_mm=%.3f avg_sm=%.3f avg_or=%.3f avg_hd=%.3f",
         len((visual_entities or {}).get("questions") or []),
         len((visual_entities or {}).get("subparts") or []),
         len((visual_entities or {}).get("margin_marks") or []),
         len((visual_entities or {}).get("section_math") or []),
-        len((visual_entities or {}).get("or_connectors") or []),
+        len((visual_entities or {}).get("or_pairs") or []),
         len((visual_entities or {}).get("headers") or []),
         _avg_conf((visual_entities or {}).get("questions") or []),
         _avg_conf((visual_entities or {}).get("subparts") or []),
         _avg_conf((visual_entities or {}).get("margin_marks") or []),
         _avg_conf((visual_entities or {}).get("section_math") or []),
-        _avg_conf((visual_entities or {}).get("or_connectors") or []),
+        _avg_conf((visual_entities or {}).get("or_pairs") or []),
         _avg_conf((visual_entities or {}).get("headers") or []),
     )
 
