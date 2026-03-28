@@ -73,6 +73,7 @@ def normalize_structure_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
                 "mark_source": str(q.get("mark_source") or "missing").strip().lower(),
                 "mark_confidence": round(to_float(q.get("mark_confidence"), 0.0), 4),
                 "confidence": round(to_float(q.get("confidence"), to_float(q.get("ai_confidence"), 0.0)), 4),
+                "_flags": dict(q.get("_flags") or {}),
             }
         )
 
