@@ -5,13 +5,21 @@ class UIDCollisionError(Exception):
     """Raised when identically numbered questions appear in the same section, causing UID collision."""
     pass
 
+class MissingUIDError(Exception):
+    """Raised when question_uid is missing, violating canonical identity."""
+    pass
+
+class MissingSectionError(Exception):
+    """Raised when question section is undefined, preventing deterministic UID."""
+    pass
+
 def normalize_section(section: str) -> str:
     """
     Standardizes section names: lowercase, remove special characters, 
     replace spaces and hyphens with underscores.
     """
     if not section:
-        return "default"
+        raise MissingSectionError("Section normalization failed: section string is empty or None.")
     
     # Normalize unicode (to handle accented chars if any)
     text = unicodedata.normalize('NFKD', str(section)).encode('ascii', 'ignore').decode('ascii')
@@ -23,7 +31,10 @@ def normalize_section(section: str) -> str:
     text = re.sub(r'[^a-z0-9\s-]', '', text)
     text = re.sub(r'[\s-]+', '_', text).strip('_')
     
-    return text or "default"
+    if not text:
+        raise MissingSectionError("Section normalization resulted in empty string.")
+        
+    return text
 
 def build_question_uid(section: str, number: int) -> str:
     """
@@ -70,25 +81,28 @@ def build_canonical_question_id(qn_raw: any, sub_raw: any) -> str | None:
                 return f"{base}.{sub_str.upper()}"
     return base
 
+from typing import Any, Dict, List
+
 def normalize_question_uid(uid: str) -> str:
     """
-    Standardize question UIDs to default_q{number} format.
+    Standardize question UIDs.
+    MUTATION DISABLED: Must act as strict pass-through to enforce SSOT constraint.
     """
     if not uid:
         return ""
     
-    uid = str(uid).strip().lower()
+    return str(uid).strip().lower()
 
-    if uid.startswith("default_q"):
-        return uid
-
-    if uid.startswith("q"):
-        # Handle cases like Q1, Q1.A
-        number_part = uid[1:]
-        return f"default_q{number_part}"
-
-    # If it's just a number, prefix it
-    if uid.isdigit():
-        return f"default_q{uid}"
-
-    return uid
+def assign_question_uids(questions: List[Dict[str, Any]]) -> None:
+    """Enforces single source of truth for UID mapping across pipeline"""
+    for q in questions:
+        sec = q.get("section")
+        if not sec:
+            raise MissingSectionError(f"Question {q.get('number')} missing explicit section.")
+            
+        num = q.get("number")
+        if not num: 
+            continue
+        uid = build_question_uid(sec, num)
+        q["question_uid"] = uid
+        q["uid"] = uid

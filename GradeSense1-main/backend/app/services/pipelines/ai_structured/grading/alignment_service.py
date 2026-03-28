@@ -14,8 +14,7 @@ from app.utils.debug_logger import request_id
 from app.utils.identity_manager import (
     normalize_question_id, 
     is_valid_question_id, 
-    build_canonical_question_id,
-    normalize_question_uid
+    build_canonical_question_id
 )
 from app.adapters.interfaces import AbstractLLMService, AbstractOCRService
 from app.infrastructure.ocr.provider.patterns import ANSWER_MCQ_RE, ANSWER_QUESTION_RE
@@ -101,7 +100,7 @@ def extract_question_numbers(text: str):
         for m in matches:
             num = re.sub(r"\D", "", m)
             if num:
-                found.add(normalize_question_uid(f"Q{num}"))
+                found.add(f"Q{num}")
 
     return list(found)
 
@@ -138,9 +137,11 @@ def _normalize_alignment_answers(payload: Dict[str, Any], expected_uids: List[st
         if not isinstance(row, dict):
             continue
             
-        # ✅ STEP 1 — UID NORMALIZATION (STRICT)
-        raw_uid = row.get("question_uid") or row.get("question_id") or ""
-        normalized_uid = normalize_question_uid(str(raw_uid))
+        # ✅ STEP 1 — UID PASSTHROUGH (STRICT)
+        raw_uid = row.get("question_uid")
+        if not raw_uid:
+            raise ValueError(f"Alignment fast-fail: missing question_uid in answer map: {row}")
+        normalized_uid = raw_uid
         
         # ✅ STEP 4 — REMOVE UNMAPPED KEYS
         if normalized_uid not in expected_set:
@@ -318,8 +319,9 @@ async def align_answers(
     # STEP 3: BUILD NORMALIZED BLUEPRINT INDEX (Lookup map only)
     questions = cast(List[Dict[str, Any]], question_structure.get("questions") or [])
     blueprint_index = {
-        normalize_question_uid(str(q.get("question_uid") or q.get("question_id") or "")): q
+        str(q.get("question_uid")): q
         for q in questions
+        if q.get("question_uid")
     }
     # Filter out empty keys
     blueprint_index = {k: v for k, v in blueprint_index.items() if k}
@@ -347,22 +349,13 @@ async def align_answers(
 
                 # STEP 4: FILTER BLUEPRINT PER BATCH
                 detected_questions = extract_question_numbers(batch_ocr)
-                normalized_detected = [normalize_question_uid(q) for q in detected_questions]
+                normalized_detected = list(detected_questions)
                 
                 filtered_questions = []
                 for q_slug in normalized_detected:
-                    # 1. Direct match
+                    # 1. Direct match ONLY
                     if q_slug in blueprint_index:
                         filtered_questions.append(blueprint_index[q_slug])
-                        continue
-                    
-                    # 2. Section-insensitive match (e.g. default_q39 matches section_d_q39)
-                    if q_slug.startswith("default_q"):
-                        target_num = q_slug.replace("default_q", "")
-                        for uid, q_obj in blueprint_index.items():
-                            if uid.endswith(f"_q{target_num}"):
-                                filtered_questions.append(q_obj)
-                                break
 
                 # HARD LIMIT FILTERED BLUEPRINT
                 MAX_QUESTIONS_PER_BATCH = 15 # Increased from 8 to be more robust

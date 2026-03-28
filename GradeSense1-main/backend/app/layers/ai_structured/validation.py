@@ -8,8 +8,7 @@ from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.infrastructure.serialization.safe_numeric import to_float, to_int
-from app.utils.identity_manager import build_question_uid
-
+from app.utils.identity_manager import UIDCollisionError, MissingUIDError
 
 
 
@@ -38,15 +37,15 @@ def normalize_structure_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
             continue
         qn = to_int(q.get("number"), 0)
         sec = (str(q.get("section") or "").strip() or "default")
+        # Pass-through UI enforcement (NO GENERATION ALLOWED)
+        final_uid = q.get("question_uid")
+        if not final_uid:
+            raise MissingUIDError(f"Missing question_uid for question {qn}")
         
-        # Enforce deterministic UID generation (ignore LLM's uid/question_uid)
-        base_uid = build_question_uid(sec, qn)
-        if base_uid in seen_uids:
-            seen_uids[base_uid] += 1
-            final_uid = f"{base_uid}_{seen_uids[base_uid]}"
-        else:
-            seen_uids[base_uid] = 0
-            final_uid = base_uid
+        if final_uid in seen_uids:
+            raise UIDCollisionError(f"Duplicate UID detected: {final_uid}")
+        
+        seen_uids[final_uid] = 1
 
         if qn <= 0:
             continue

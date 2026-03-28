@@ -478,7 +478,7 @@ def _extract_partial_payload(raw_text: str) -> Optional[Dict[str, Any]]:
                 if not isinstance(q, dict):
                     continue
                 qn = _to_int(q.get("number"), 0)
-                sec = (str(q.get("section") or "").strip() or "default")
+                sec = str(q.get("section") or "").strip()
                 uid = build_question_uid(sec, qn) if qn else None
                 if not uid:
                     continue
@@ -509,7 +509,7 @@ def _extract_partial_payload(raw_text: str) -> Optional[Dict[str, Any]]:
         # Question object style.
         if isinstance(parsed, dict) and _looks_like_question_dict(parsed):
             qn = _to_int(parsed.get("number"), 0)
-            sec = (str(parsed.get("section") or "").strip() or "default")
+            sec = str(parsed.get("section") or "").strip()
             uid = build_question_uid(sec, qn) if qn else None
             if uid:
                 if uid not in questions_by_uid:
@@ -810,7 +810,8 @@ def _normalize_batch_payload(
 
         # identity: generate globally unique question_uid (canonical)
         sec = (str(q.get("section") or "").strip() or None)
-        q_uid = build_question_uid(sec or "default", qn)
+        sec_name = sec.strip() if sec else "default"
+        q_uid = build_question_uid(sec_name, qn)
 
         question_obj = {
             "number": qn,
@@ -1296,9 +1297,85 @@ def _merge_semantic_with_visual_entities(
     logger.info("[VISUAL_MERGE_START] anchors=%s semantic=%s", len(visual_anchors), len(semantic_questions))
     logger.info("[OR_GROUP_REMOVED] legacy or_group assignments cleared in merge layer")
 
+    # [PHASE 8.1] DETERMINISTIC SECTION RESOLUTION SYSTEM
+    def _find_nearest_header_section(q, headers):
+        if not headers:
+            return None
+
+        # Robust extraction for both semantic_questions and final_questions
+        q_page = q.get("page_index")
+        if q_page is None:
+            q_page = q.get("page")
+        if q_page is None and q.get("image_evidence"):
+            q_page = _to_int(q["image_evidence"][0].get("page_index"), -1)
+            
+        q_y = q.get("_spatial", {}).get("bbox", [None, None, None, None])[1]
+        if q_y is None and q.get("image_evidence") and q["image_evidence"][0].get("bbox"):
+            q_y = q["image_evidence"][0]["bbox"][1]
+
+        if q_page is None or q_page < 0 or q_y is None:
+            return None
+
+        best_match = None
+        best_distance = float("inf")
+
+        for h in headers:
+            h_page = h.get("page_index")
+            if h_page is None:
+                h_page = _to_int(h.get("page"), -1)
+            if h_page != q_page:
+                continue
+
+            h_bbox = h.get("bbox")
+            if not h_bbox or len(h_bbox) < 2:
+                continue
+                
+            h_y = h_bbox[1]
+
+            if h_y <= q_y:
+                distance = q_y - h_y
+                if distance < best_distance:
+                    best_distance = distance
+                    best_match = h.get("text")
+
+        return best_match
+
+    def _infer_section_from_layout(q, spatial_context):
+        return None
+
+    def _resolve_section(q, headers, spatial_context):
+        if q.get("section"):
+            return q["section"]
+
+        header_section = _find_nearest_header_section(q, headers)
+        if header_section:
+            return header_section
+
+        spatial_section = _infer_section_from_layout(q, spatial_context)
+        if spatial_section:
+            return spatial_section
+
+        return "default"
+
+    raw_headers = (visual_entities or {}).get("headers") or []
+    
+    # Apply Section Resolution to all semantic questions BEFORE any UID-related steps
+    for q in semantic_questions:
+        resolved = _resolve_section(q, raw_headers, visual_entities)
+        
+        if not resolved:
+            raise ValueError(f"[SECTION_RESOLUTION_FAILED] Question {q.get('number')} has no resolvable section")
+            
+        if not q.get("section"):
+            logger.warning(
+                f"[SECTION_RESOLVED] q={q.get('number')} → {resolved} (fallback applied)"
+            )
+            
+        q["section"] = resolved
+        
     # 1. Header Contexts for spatial section assignment
     header_contexts = []
-    for h in sorted((visual_entities or {}).get("headers") or [], 
+    for h in sorted(raw_headers, 
                     key=lambda x: (_to_int(x.get("page"), 0), (x.get("bbox") or [0])[0])):
         h_text = str(h.get("text") or "").strip()
         h_page = _to_int(h.get("page"), 0)
@@ -1306,11 +1383,13 @@ def _merge_semantic_with_visual_entities(
         header_contexts.append({"page": h_page, "ymin": h_ymin, "instruction": h_text})
 
     def _get_spatial_section(page: int, ymin: float) -> str:
-        sec = "default"
+        sec = ""
         for ctx in header_contexts:
             if ctx["page"] < page or (ctx["page"] == page and ctx["ymin"] < ymin):
                 sec = ctx["instruction"]
             else: break
+        if not sec:
+            return None
         return normalize_section(sec)
 
     def _calculate_overlap(b1, b2):
@@ -1323,7 +1402,7 @@ def _merge_semantic_with_visual_entities(
         return overlap / max(1e-5, area1)
 
     final_questions = []
-    used_uids = set()
+    used_keys = set()
     matched_semantic_indices = set()
     
     # 2. CORE VISUAL-FIRST LOOP (1 visual anchor = 1 final question)
@@ -1367,7 +1446,8 @@ def _merge_semantic_with_visual_entities(
             "subquestions": [],
             "image_evidence": [{"page_index": p_idx, "bbox": a_bbox, "visual_confidence": _to_float(anchor.get("confidence"), 0.0)}],
             "marks": None,
-            "mark_source": "missing"
+            "mark_source": "missing",
+            "_spatial": {"page": p_idx, "bbox": a_bbox}
         }
         
         if best_semantic:
@@ -1378,16 +1458,14 @@ def _merge_semantic_with_visual_entities(
             final_q["ai_confidence"] = best_semantic.get("ai_confidence") or best_semantic.get("confidence")
             matched_semantic_indices.add(best_idx)
             
-        # 5. UID ENFORCEMENT
-        sec_norm = normalize_section(final_q["section"])
-        uid = f"{sec_norm}_{qn}"
-        if uid in used_uids:
+        # 5. COLLISION CHECK (Deferred UID Generation)
+        sec_norm = normalize_section(final_q["section"]) if final_q["section"] else None
+        key = (sec_norm, qn)
+        if key in used_keys:
             # FATAL ERROR as per hard constraint 4
-            raise ValueError(f"[PHASE1_ERROR] Duplicate UID detected: {uid}. Strict 1:1 anchor rule violated.")
+            raise ValueError(f"[PHASE1_ERROR] Duplicate question detected: section {sec_norm}, number {qn}. Strict 1:1 anchor rule violated.")
         
-        final_q["question_uid"] = uid
-        final_q["uid"] = uid
-        used_uids.add(uid)
+        used_keys.add(key)
         
 
 
@@ -1401,13 +1479,13 @@ def _merge_semantic_with_visual_entities(
         qn = _to_int(sq.get("number"), 0)
         if qn <= 0: continue
         
-        sec_raw = sq.get("section") or "default"
-        sec_norm = normalize_section(sec_raw)
-        uid = f"{sec_norm}_{qn}"
+        sec_raw = str(sq.get("section") or "").strip()
+        sec_norm = normalize_section(sec_raw) if sec_raw else None
+        key = (sec_norm, qn)
         
-        # Avoid duplication if UID already exists from visual layer
-        if uid in used_uids:
-            logger.warning("[VISUAL_MERGE] Skipping semantic fallback for UID=%s (already exists)", uid)
+        # Avoid duplication if question already exists from visual layer
+        if key in used_keys:
+            logger.warning("[VISUAL_MERGE] Skipping semantic fallback for sec=%s, num=%s (already exists)", sec_norm, qn)
             continue
             
         final_q = {
@@ -1425,13 +1503,17 @@ def _merge_semantic_with_visual_entities(
             "marks": None,
             "mark_source": "missing",
             "source": "semantic_fallback",
-            "question_uid": uid,
-            "uid": uid
+            "_spatial": {"page": -1, "bbox": [0, 0, 0, 0]}
         }
         final_questions.append(final_q)
-        used_uids.add(uid)
+        used_keys.add(key)
 
-    logger.info("[VISUAL_MERGE] anchors=%s semantic_matched=%s final=%s", 
+    # [PHASE 8.1] Final Guarantee: No question leaves merge layer with section=None
+    for f_q in final_questions:
+        if not f_q.get("section"):
+            f_q["section"] = _resolve_section(f_q, raw_headers, visual_entities)
+
+    logger.info("[VISUAL_MERGE_COMPLETE] anchors=%s semantic_matched=%s final=%s", 
                 len(visual_anchors), len(matched_semantic_indices), len(final_questions))
 
     merged_result = {
@@ -2102,13 +2184,16 @@ async def extract_question_structure(
     except Exception:
         pass
 
-    # Refined Phase 1 call site: pass full_ocr_results so visual-only stubs can be backfilled spatially.
     stage2_structure = _merge_semantic_with_visual_entities(
         stage2_structure,
         visual_entities,
         page_ocr_texts=page_ocr_texts,
         full_ocr_results=full_ocr_results,
     )
+    
+    # NEW IDENTITY ENFORCEMENT: Central UID generation
+    from app.utils.identity_manager import assign_question_uids
+    assign_question_uids(stage2_structure.get("questions") or [])
     
     for q in stage2_structure.get("questions") or []:
         if q.get("number") == 1:
@@ -2221,6 +2306,8 @@ async def extract_question_structure(
                 )
                 reconstructed_semantic = _normalize_batch_payload(reconstructed_raw, page_offset=0)
                 reconstructed_semantic = _merge_semantic_with_visual_entities(reconstructed_semantic, visual_entities)
+                from app.utils.identity_manager import assign_question_uids
+                assign_question_uids(reconstructed_semantic.get("questions") or [])
                 reconstructed_reasoned = resolve_marks(
                     reconstructed_semantic,
                     visual_entities=visual_entities,
