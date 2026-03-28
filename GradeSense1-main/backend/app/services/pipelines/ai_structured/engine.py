@@ -9,6 +9,7 @@ from app.core.exceptions import CustomServiceException
 from app.models.submission import QuestionScore, SubQuestionScore
 import uuid
 from app.services.llm_provider import get_llm_service
+from app.services.llm import GEMINI_MODEL
 from app.infrastructure.ocr.provider import get_ocr_provider
 from app.services.pipelines.ai_structured.grading.alignment_service import align_answers
 
@@ -30,7 +31,7 @@ from app.services.storage.gridfs_helpers import get_exam_question_paper_images
 
 logger = pipeline_logger(__name__)
 
-DEFAULT_MODEL_NAME = "gemini-2.5-flash"
+DEFAULT_MODEL_NAME = GEMINI_MODEL
 OVERALL_REVIEW_THRESHOLD = float(os.getenv("AI_STRUCTURED_REVIEW_THRESHOLD", "0.6"))
 
 @with_logging
@@ -159,7 +160,16 @@ async def extract_and_persist(
             }
         }
 
+        logger.info("PRE_PERSIST_STRUCTURE question_count=%s content_keys=%s", len(legacy_questions), list(normalized.keys()))
+        # Log a snippet of the first question's model answer for verification
+        if legacy_questions:
+            first_q = legacy_questions[0]
+            logger.info("DEBUG_FIRST_QUESTION uid=%s model_answer_snippet=%s", 
+                        first_q.get("question_uid"), 
+                        str(first_q.get("model_answer") or "")[:50])
+
         await persist_extracted_structure(exam_id, legacy_questions, exam_update_payload, next_version)
+        logger.info("POST_PERSIST_STRUCTURE_COMPLETE exam_id=%s", exam_id)
 
         # Persist model answers if extracted
         if model_answer_images and (structure.get("model_answer_map") or structure.get("model_answer_text")):

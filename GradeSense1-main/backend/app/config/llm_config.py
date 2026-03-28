@@ -12,7 +12,8 @@ logger = logging.getLogger("gradesense")
 # These can be overridden via environment variables.
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GEMINI_MODEL_NAME = os.environ.get("GEMINI_MODEL_NAME", "gemini-2.5-flash")
+GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL_NAME = os.environ.get("GEMINI_MODEL_NAME", GEMINI_MODEL)
 LLM_PROVIDER = "gemini"
 
 # LLM Generation Parameters

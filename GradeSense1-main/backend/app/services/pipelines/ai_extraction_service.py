@@ -1578,7 +1578,7 @@ async def _call_visual_extraction_llm(
 async def _extract_student_info(
     images: List[str],
     llm_service: "AbstractLLMService",
-    model_name: str = "gemini-2.0-flash",
+    model_name: str = "gemini-2.5-flash",
 ) -> Dict[str, Any]:
     """Extract student ID and Name from the first page using OCR (non-LLM)."""
     if not images:
@@ -1635,7 +1635,7 @@ async def _extract_model_answers(
     images: List[str],
     questions: List[Dict[str, Any]],
     llm_service: "AbstractLLMService",
-    model_name: str = "gemini-2.0-flash",
+    model_name: str = "gemini-2.5-flash",
 ) -> Dict[str, Any]:
     """Extract model answers and map them to question numbers."""
     if not images or not questions:
@@ -1674,15 +1674,18 @@ Return ONLY valid JSON:
   "overall_text": "Full extracted text..."
 }}"""
     try:
+        logger.info("MODEL_ANSWER_LLM_PROMPT_BUILT context_len=%s", len(ctx))
         raw = await llm_service.predict(
             prompt=prompt,
             images=images,
             model_name=model_name,
             temperature=0,
         )
+        logger.info("MODEL_ANSWER_RAW_LLM_RESPONSE len=%s", len(raw or ""))
         payload = _parse_json_object(raw)
         ans_list = payload.get("answers") or []
         ans_map = {str(a.get("number")): str(a.get("text") or "").strip() for a in ans_list if a.get("number")}
+        logger.info("MODEL_ANSWER_MAP_EXTRACTED keys=%s overall_text_len=%s", list(ans_map.keys()), len(str(payload.get("overall_text") or "")))
         return {
             "model_answer_map": ans_map,
             "model_answer_text": str(payload.get("overall_text") or "").strip(),
@@ -2339,11 +2342,11 @@ async def extract_question_structure(
 
     # Layer 7: Unified Peripherals (Student Info, Model Answers, Topics)
     if extract_student_info and answer_paper_images:
-        student_info = await _extract_student_info(answer_paper_images, llm_service, model_name="gemini-2.0-flash")
+        student_info = await _extract_student_info(answer_paper_images, llm_service, model_name="gemini-2.5-flash")
         structure["student_info"] = student_info
 
     if model_answer_images:
-        ma_results = await _extract_model_answers(model_answer_images, structure.get("questions") or [], llm_service, model_name="gemini-2.0-flash")
+        ma_results = await _extract_model_answers(model_answer_images, structure.get("questions") or [], llm_service, model_name="gemini-2.5-flash")
         structure["model_answers"] = {
             "map": ma_results.get("model_answer_map"),
             "text": ma_results.get("model_answer_text")
@@ -2354,20 +2357,27 @@ async def extract_question_structure(
         
         # Mapping extracted model answers to individual questions for DeterministicGrader
         ma_map = ma_results.get("model_answer_map") or {}
+        logger.info("MODEL_ANSWER_RECURSIVE_MAPPING_START ma_map_keys=%s", list(ma_map.keys()))
         
-        def _recursive_map_ma(items: List[Dict[str, Any]]):
+        def _recursive_map_ma(items: List[Dict[str, Any]], depth: int = 0):
             for item in items:
                 # Use number or label as key
-                num_str = str(item.get("number") or item.get("label") or "")
+                num_obj = item.get("number") or item.get("label")
+                num_str = str(num_obj or "")
+                
                 if num_str in ma_map:
                     item["model_answer"] = ma_map[num_str]
+                    logger.info("MODEL_ANSWER_MAPPED depth=%s key=%s length=%s", depth, num_str, len(item["model_answer"]))
+                else:
+                    logger.warning("MODEL_ANSWER_NOT_FOUND_IN_MAP depth=%s key=%s (num_obj=%s)", depth, num_str, num_obj)
                 
                 # Handle nested subquestions or OR-groups
                 subqs = item.get("subquestions")
                 if subqs and isinstance(subqs, list):
-                    _recursive_map_ma(subqs)
+                    _recursive_map_ma(subqs, depth + 1)
         
         _recursive_map_ma(structure.get("questions") or [])
+        logger.info("MODEL_ANSWER_RECURSIVE_MAPPING_COMPLETE")
 
     if infer_topics:
         topics_list = await _infer_topics(subject_name or "General", exam_name or "Exam", structure.get("questions") or [], llm_service)

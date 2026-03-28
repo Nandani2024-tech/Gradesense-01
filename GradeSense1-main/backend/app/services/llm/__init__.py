@@ -1,5 +1,5 @@
 from .llm_service import LlmChat, UserMessage, ImageContent
-from app.config.llm_config import GEMINI_API_KEY, GEMINI_MODEL_NAME, get_llm_api_key, LLMConfig, get_llm_service
+from app.config.llm_config import GEMINI_API_KEY, GEMINI_MODEL_NAME, GEMINI_MODEL, get_llm_api_key, LLMConfig, get_llm_service
 
 async def call_llm_async(prompt: str, images: list = None, config: LLMConfig = None, api_key: str = None) -> str:
     """Convenience wrapper for async LLM calls using the centralized factory."""
@@ -15,4 +15,4 @@ async def call_llm_async(prompt: str, images: list = None, config: LLMConfig = N
         api_key=api_key or GEMINI_API_KEY
     )
 
-__all__ = ["LlmChat", "UserMessage", "ImageContent", "LLMConfig", "call_llm_async", "get_llm_api_key", "get_llm_service"]
+__all__ = ["LlmChat", "UserMessage", "ImageContent", "LLMConfig", "call_llm_async", "get_llm_api_key", "get_llm_service", "GEMINI_MODEL"]

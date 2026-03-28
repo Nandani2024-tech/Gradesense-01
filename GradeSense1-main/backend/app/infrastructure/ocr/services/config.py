@@ -3,7 +3,7 @@
 import os
 
 # Gemini configuration
-GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash-latest")
+GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash")
 DEFAULT_OCR_SYSTEM_MESSAGE = (
     "You are an OCR engine. Return text and approximate coordinates "
     "for all visible words and lines."

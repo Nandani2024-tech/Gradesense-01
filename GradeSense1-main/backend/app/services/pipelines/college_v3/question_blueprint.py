@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.llm.config import get_llm_api_key
 from app.core.logging_config import logger
+from app.services.llm import GEMINI_MODEL
 from app.adapters.interfaces import AbstractLLMService
 from app.services.blueprint import compute_blueprint_health
 
@@ -136,7 +137,7 @@ Return ONLY JSON:
                 response = await llm_service.predict(
                     prompt=full_prompt,
                     images=[],
-                    model_name="gemini-2.5-flash",
+                    model_name=GEMINI_MODEL,
                     temperature=0
                 )
                 response_text = response or ""

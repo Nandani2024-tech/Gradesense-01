@@ -70,19 +70,20 @@ async def _process_question_paper_async(exam_id: str):
 
             async def run_model_answer():
                 if model_images:
+                    logger.info("[QP-ASYNC] Starting redundant model answer extraction check")
                     ma_text, ma_map = await extract_model_answer_content(
                         model_answer_images=model_images,
                         questions=questions,
                         llm_service=llm_service
                     )
                     if ma_text or ma_map:
-                        logger.info(f"[QP-ASYNC] Model answer text and map extracted successfully for exam {exam_id}")
+                        logger.info(f"[QP-ASYNC] Model answer text and map extracted successfully for exam {exam_id}. Map size: {len(ma_map)}")
                         await db.exam_files.update_one(
                             {"exam_id": exam_id, "file_type": "model_answer"},
-                            {"$set": {"model_answer_text": ma_text, "model_answer_map": ma_map}}
+                            {"$set": {"model_answer_text": ma_text, "model_answer_map": ma_map, "updated_at_redundant": datetime.now(timezone.utc).isoformat()}}
                         )
                     else:
-                        logger.warning(f"[QP-ASYNC] Model answer extraction returned empty text or map for exam {exam_id}")
+                        logger.warning(f"[QP-ASYNC] Model answer extraction (redundant) returned empty text or map for exam {exam_id}")
 
             async def run_mark_validation():
                 if MARK_VALIDATION_ENABLED:

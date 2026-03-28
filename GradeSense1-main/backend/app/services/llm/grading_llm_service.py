@@ -6,6 +6,7 @@ from typing import List, Dict, Any, Optional
 from app.services.llm.config import get_llm_api_key
 from app.adapters.interfaces import AbstractLLMService
 from app.core.logging_config import logger
+from app.services.llm import GEMINI_MODEL
 
 from app.prompts.llm_prompts import (
     CATEGORIZE_ERRORS_SYSTEM_PROMPT_v1,
@@ -40,7 +41,7 @@ class GradingLLMService:
                 prompt=prompt,
                 system_message=CATEGORIZE_ERRORS_SYSTEM_PROMPT_v1,
                 images=[],
-                model_name="gemini-2.5-flash",
+                model_name=GEMINI_MODEL,
                 temperature=0
             )
             response_text = (response_text or "").strip()
@@ -67,7 +68,7 @@ class GradingLLMService:
                 prompt=prompt,
                 system_message=ANALYTICS_SYSTEM_PROMPT_v1,
                 images=[],
-                model_name="gemini-2.5-flash",
+                model_name=GEMINI_MODEL,
                 temperature=0
             )
             return response or ""

@@ -48,12 +48,12 @@ async def extract_model_answer_content(
     logger.info("LEGACY_MA_EXTRACTION_REDIRECT starting")
     try:
         # Use the internal helper from ai_extraction_service to ensure consistency
-        # Note: We pass gemini-2.0-flash by default for efficiency as in the new pipeline
+        # Note: We pass gemini-2.5-flash by default for efficiency as in the new pipeline
         res = await _extract_model_answers(
             images=model_answer_images,
             questions=questions,
             llm_service=llm_service,
-            model_name="gemini-2.0-flash"
+            model_name="gemini-2.5-flash"
         )
         return res.get("model_answer_text") or "", res.get("model_answer_map") or {}
     except Exception as e:

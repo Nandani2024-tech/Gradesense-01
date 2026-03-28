@@ -1,5 +1,6 @@
 from typing import List, Dict, Any, Optional
 from app.core.logging_config import logger
+from app.services.llm import GEMINI_MODEL
 from app.adapters.interfaces import AbstractLLMService
 from app.services.pipelines.ai_extraction_service import _infer_topics
 
@@ -20,13 +21,13 @@ class TopicExtractionService:
 
         logger.info("LEGACY_TOPIC_INFERENCE_REDIRECT starting")
         try:
-            # Note: We pass gemini-2.5-flash by default as in the new pipeline
+            # Note: We pass GEMINI_MODEL by default as in the new pipeline
             return await _infer_topics(
                 subject_name=subject_name,
                 exam_name=exam_name,
                 questions=questions,
                 llm_service=llm_service,
-                model_name="gemini-2.5-flash"
+                model_name=GEMINI_MODEL
             )
         except Exception as e:
             logger.error(f"LEGACY_TOPIC_INFERENCE_FAILED: {e}")

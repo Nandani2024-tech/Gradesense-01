@@ -3,7 +3,7 @@ import asyncio
 from typing import Any, Dict, List, Optional
 from google import genai
 from app.adapters.interfaces import AbstractLLMService
-from app.services.llm import LlmChat, UserMessage, ImageContent, LLMConfig
+from app.services.llm import LlmChat, UserMessage, ImageContent, LLMConfig, GEMINI_MODEL
 from app.core.logging_config import logger
 
 
@@ -14,46 +14,11 @@ llm_semaphore = asyncio.Semaphore(LLM_CONCURRENCY_LIMIT)
 failure_count = 0
 FAILURE_THRESHOLD = 5
 CIRCUIT_OPEN = False
-MAX_RETRIES = 3
 
-
-async def safe_llm_call(call_coro):
-    """
-    Wraps an LLM call with a global semaphore, retry logic, and a circuit breaker.
-    """
-    global failure_count, CIRCUIT_OPEN
-
-    if CIRCUIT_OPEN:
-        logger.error("circuit_open", extra={"failure_count": failure_count})
-        raise RuntimeError("LLM circuit breaker is OPEN")
-
-    async with llm_semaphore:
-        for attempt in range(MAX_RETRIES):
-            try:
-                result = await call_coro()
-                
-                # Success: reset circuit breaker
-                failure_count = 0
-                CIRCUIT_OPEN = False
-                return result
-
-            except Exception as e:
-                # Logic: wait_for TimeoutError or API errors should trigger retry
-                logger.warning(
-                    "llm_retry",
-                    extra={"attempt": attempt + 1, "error": str(e)}
-                )
-                
-                if attempt == MAX_RETRIES - 1:
-                    # Final failure: update circuit breaker
-                    failure_count += 1
-                    if failure_count >= FAILURE_THRESHOLD:
-                        CIRCUIT_OPEN = True
-                    raise
-                
-                # Exponential backoff
-                await asyncio.sleep(2 ** attempt)
-# ---------------------------------------
+# New Timeout Constants
+ALIGNMENT_TIMEOUT = 45
+GENERATION_TIMEOUT = 60
+STRUCTURED_TIMEOUT = 120
 
 
 class GeminiLLMService(AbstractLLMService):
@@ -71,7 +36,7 @@ class GeminiLLMService(AbstractLLMService):
         self._genai_client: Optional[genai.Client] = None
         
         # Centralized Default Parameters (Step 4)
-        self.default_model_name = "gemini-2.5-flash"
+        self.default_model_name = GEMINI_MODEL
         self.default_temperature = 0.0
         self.default_max_tokens = 8192
         self.embedding_model = "models/embedding-001"
@@ -88,87 +53,86 @@ class GeminiLLMService(AbstractLLMService):
             self._chat = LlmChat(api_key=self.api_key)
         return self._chat
 
+    async def _retry_llm_call(self, func):
+        """
+        Controlled retry logic with exponential backoff and latency instrumentation.
+        """
+        max_retries = 2
+        
+        async with llm_semaphore:
+            for attempt in range(max_retries + 1):
+                start_time = time.time()
+                try:
+                    result = await func()
+                    latency = time.time() - start_time
+                    
+                    logger.info(
+                        f"llm_success attempt={attempt+1} latency={latency:.2f}s model={self.default_model_name}"
+                    )
+                    return result
+                except Exception as e:
+                    latency = time.time() - start_time
+                    logger.warning(
+                        f"llm_retry attempt={attempt+1} latency={latency:.2f}s error={str(e)}"
+                    )
+                    
+                    if attempt == max_retries:
+                        logger.error(f"LLM_ERROR model={self.default_model_name} error={str(e)}")
+                        raise
+                        
+                    await asyncio.sleep(2 ** attempt)
+
     async def predict(self, prompt: str, images: Optional[List[str]] = None, **kwargs) -> str:
         model_name = kwargs.get("model_name", self.default_model_name)
-        temperature = kwargs.get("temperature", self.default_temperature)
-        max_tokens = kwargs.get("max_tokens") or kwargs.get("max_output_tokens") or self.default_max_tokens
         
-        logger.info("LLM_CALL model=%s task=%s input_size=%d", model_name, "predict", len(prompt))
-        start_time = time.time()
-        
-        try:
-            config = kwargs.get("config")
-            if isinstance(config, dict):
-                config = LLMConfig(**config)
-            
-            chat = self._get_chat()
-            chat.with_params(temperature=temperature, max_output_tokens=max_tokens)
-            
-            if "response_mime_type" in kwargs:
-                chat.with_params(response_mime_type=kwargs["response_mime_type"])
+        async def call_llm():
+            # Support images if provided, otherwise just prompt
+            client = self._get_client()
+            if hasattr(client, "aio"):
+                # Use simplified part-based approach for consistency with SDK requirement
+                msg = UserMessage(text=prompt, file_contents=[ImageContent(img) for img in (images or [])])
+                parts = msg.to_genai_parts()
                 
-            chat.with_model("gemini", model_name)
-                
-            if "system_message" in kwargs:
-                chat.system_message = kwargs["system_message"]
-            
-            msg = UserMessage(text=prompt, file_contents=[ImageContent(img) for img in (images or [])])
-            
-            async def do_call():
-                return await asyncio.wait_for(
-                    chat.send_message(msg),
-                    timeout=30.0
+                response = await client.aio.models.generate_content(
+                    model=model_name,
+                    contents=parts
                 )
+                return response.text or ""
+            else:
+                # Fallback to sync if needed, but the current env should support aio
+                chat = self._get_chat()
+                msg = UserMessage(text=prompt, file_contents=[ImageContent(img) for img in (images or [])])
+                return await chat.send_message(msg)
 
-            try:
-                response = await safe_llm_call(do_call)
-            except asyncio.TimeoutError:
-                logger.error("LLM call timed out", extra={"component": "llm_adapter", "method": "predict"})
-                raise
-
-            latency = time.time() - start_time
-            logger.info("LLM_RESPONSE model=%s latency=%s", model_name, f"{latency:.3f}s")
-            return response
-        except Exception as e:
-            logger.error("LLM_ERROR model=%s error=%s", model_name, str(e))
-            raise
+        return await self._retry_llm_call(
+            lambda: asyncio.wait_for(call_llm(), timeout=GENERATION_TIMEOUT)
+        )
 
     async def predict_structured(self, prompt: str, response_schema: Any, images: Optional[List[str]] = None, **kwargs) -> Any:
         model_name = kwargs.get("model_name", self.default_model_name)
-        temperature = kwargs.get("temperature", self.default_temperature)
-        max_tokens = kwargs.get("max_tokens") or kwargs.get("max_output_tokens") or self.default_max_tokens
         
-        logger.info("LLM_CALL model=%s task=%s input_size=%d", model_name, "predict_structured", len(prompt))
-        start_time = time.time()
-        
-        try:
-            chat = self._get_chat()
-            chat.with_params(temperature=temperature, max_output_tokens=max_tokens)
-            chat.with_model("gemini", model_name)
-                
-            if "system_message" in kwargs:
-                chat.system_message = kwargs["system_message"]
-            
+        async def call_llm_structured():
+            client = self._get_client()
             msg = UserMessage(text=prompt, file_contents=[ImageContent(img) for img in (images or [])])
+            parts = msg.to_genai_parts()
             
-            async def do_call_structured():
-                return await asyncio.wait_for(
-                    chat.send_message_structured(msg, response_schema=response_schema),
-                    timeout=45.0
+            if hasattr(client, "aio"):
+                response = await client.aio.models.generate_content(
+                    model=model_name,
+                    contents=parts,
+                    config={
+                        "response_mime_type": "application/json",
+                        "response_schema": response_schema
+                    }
                 )
+                return response.parsed
+            else:
+                chat = self._get_chat()
+                return await chat.send_message_structured(msg, response_schema=response_schema)
 
-            try:
-                response = await safe_llm_call(do_call_structured)
-            except asyncio.TimeoutError:
-                logger.error("LLM call timed out (predict_structured)", extra={"component": "llm_adapter", "method": "predict_structured"})
-                raise
-            
-            latency = time.time() - start_time
-            logger.info("LLM_RESPONSE model=%s latency=%s", model_name, f"{latency:.3f}s")
-            return response
-        except Exception as e:
-            logger.error("LLM_ERROR model=%s error=%s", model_name, str(e))
-            raise
+        return await self._retry_llm_call(
+            lambda: asyncio.wait_for(call_llm_structured(), timeout=STRUCTURED_TIMEOUT)
+        )
 
     async def embed(self, text: str) -> List[float]:
         return self.embed_sync(text)

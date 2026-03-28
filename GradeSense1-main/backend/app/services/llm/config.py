@@ -9,7 +9,8 @@ load_dotenv()
 logger = logging.getLogger("gradesense")
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GEMINI_MODEL_NAME = os.environ.get("GEMINI_MODEL_NAME", "gemini-2.5-flash")
+GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL_NAME = os.environ.get("GEMINI_MODEL_NAME", GEMINI_MODEL)
 LLM_PROVIDER = "gemini"
 
 if not GEMINI_API_KEY:
