@@ -1451,12 +1451,66 @@ def _merge_semantic_with_visual_entities(
         area1 = (b1[2] - b1[0]) * (b1[3] - b1[1])
         return overlap / max(1e-5, area1)
 
+    # [PHASE 6] DETERMINISTIC MATCHING LOGIC
+    # Formula: score = (bbox_overlap * 0.5) + (number_match * 0.3) + (text_similarity * 0.2)
+    def _calculate_match_score(sq, anchor):
+        from difflib import SequenceMatcher
+        
+        # Weights (Dynamic parameters for future tuning)
+        W_OVERLAP = 0.5
+        W_NUMBER = 0.3
+        W_TEXT = 0.2
+        
+        # 1. BBox Overlap (0.5 weight)
+        evs = sq.get("image_evidence") or []
+        s_bbox = evs[0].get("bbox") if evs else None
+        s_page = _to_int(evs[0].get("page_index"), -1) if evs else -1
+        a_page = _to_int(anchor.get("page"), 0)
+        a_bbox = anchor.get("bbox") or [0, 0, 0, 0]
+        
+        overlap_r = 0.0
+        if s_page == a_page:
+            overlap_r = _calculate_overlap(s_bbox, a_bbox) if s_bbox else 0.01
+
+        # 2. Number Match (0.3 weight)
+        s_num = _to_int(sq.get("number"), 0)
+        a_num = _to_int(anchor.get("number"), 0)
+        number_r = 1.0 if (s_num > 0 and s_num == a_num) else 0.0
+
+        # 3. Text Similarity (0.2 weight)
+        s_text = str(sq.get("question_text") or "").strip().lower()
+        # Visual anchors may have 'text' or 'question_text' from Vision extraction
+        a_text = str(anchor.get("text") or anchor.get("question_text") or "").strip().lower()
+        text_r = SequenceMatcher(None, s_text, a_text).ratio() if s_text and a_text else 0.0
+        
+        total_score = (overlap_r * W_OVERLAP) + (number_r * W_NUMBER) + (text_r * W_TEXT)
+        return total_score, (overlap_r, number_r, text_r)
+
+    # Pre-calculate best anchor for each semantic question (Deterministic choice)
+    semantic_to_anchor = {} # s_idx -> (a_idx, score, components)
+    for s_idx, sq in enumerate(semantic_questions):
+        best_a_idx = -1
+        max_s = -1.0
+        best_c = (0.0, 0.0, 0.0)
+        
+        for a_idx, anchor in enumerate(visual_anchors):
+            s_val, c_vals = _calculate_match_score(sq, anchor)
+            # Add a stable tie-breaker (prefer earlier anchors) for strict determinism
+            tie_breaker_score = s_val + (1e-6 * (len(visual_anchors) - a_idx))
+            if tie_breaker_score > max_s:
+                max_s = tie_breaker_score
+                best_a_idx = a_idx
+                best_c = c_vals
+        
+        if best_a_idx != -1 and max_s > 0.1: # Minimum threshold to prevent 'pity matches' for unrelated questions
+            semantic_to_anchor[s_idx] = (best_a_idx, max_s, best_c)
+
     final_questions = []
     used_keys = set()
     matched_semantic_indices = set()
     
     # 2. CORE VISUAL-FIRST LOOP (1 visual anchor = 1 final question)
-    for anchor in visual_anchors:
+    for a_idx, anchor in enumerate(visual_anchors):
         if not isinstance(anchor, dict): continue
         qn = _parse_question_number(anchor.get("number"))
         if qn is None: continue
@@ -1465,24 +1519,28 @@ def _merge_semantic_with_visual_entities(
         a_bbox = anchor.get("bbox") or [0, 0, 0, 0]
         spatial_sec = _get_spatial_section(p_idx, a_bbox[0])
         
-        # 3. Find BEST semantic match (must match number and page, highest overlap wins)
-        best_semantic = None
-        best_idx = -1
-        max_overlap = -1.0
+        # 3. Find ALL semantic candidates for THIS anchor
+        # Each semantic question selected its 'best' anchor in Phase 6 pre-match.
+        # We now collect all those that "voted" for this specific visual anchor.
+        contenders = [] # List of (s_idx, score, comps)
+        for s_idx, (match_a_idx, match_score, match_comps) in semantic_to_anchor.items():
+            if match_a_idx == a_idx:
+                contenders.append((s_idx, match_score, match_comps))
         
-        for idx, sq in enumerate(semantic_questions):
-            s_num = _to_int(sq.get("number"), 0)
-            evs = sq.get("image_evidence") or []
-            s_page = _to_int(evs[0].get("page_index"), -1) if evs else -1
-            s_bbox = evs[0].get("bbox") if evs else None
-            
-            if s_num == qn and s_page == p_idx:
-                overlap = _calculate_overlap(s_bbox, a_bbox) if s_bbox else 0.01 # minimal match if no bbox
-                if overlap > max_overlap:
-                    max_overlap = overlap
-                    best_semantic = sq
-                    best_idx = idx
-                    
+        # Sort contenders by score to identify the winning candidate
+        contenders.sort(key=lambda x: x[1], reverse=True)
+        
+        best_semantic = None
+        best_s_idx = -1
+        win_score = -1.0
+        win_comps = (0.0, 0.0, 0.0)
+
+        if contenders:
+            best_s_idx, win_score, win_comps = contenders[0]
+            best_semantic = semantic_questions[best_s_idx]
+            logger.info("[MATCH_SCORE] a_idx=%s sq_num=%s score=%.4f (overlap=%.2f num=%.1f text=%.2f) contenders=%s", 
+                        a_idx, best_semantic.get("number"), win_score, *win_comps, len(contenders))
+
         # 4. Construct Final Question
         final_q = {
             "number": qn,
@@ -1500,13 +1558,38 @@ def _merge_semantic_with_visual_entities(
             "_spatial": {"page": p_idx, "bbox": a_bbox}
         }
         
-        if best_semantic:
-            final_q["question_text"] = best_semantic.get("question_text", "")
+        if contenders:
+            # 4.1. Merge Question Texts and Evidence from all contenders
+            unique_texts = []
+            all_evidence = list(final_q["image_evidence"])
+            
+            for s_idx, _, _ in contenders:
+                sq = semantic_questions[s_idx]
+                text = str(sq.get("question_text") or "").strip()
+                if text and text not in unique_texts:
+                    unique_texts.append(text)
+                
+                # Aggregate evidence (avoid duplicates based on bbox)
+                for ev in (sq.get("image_evidence") or []):
+                    if ev not in all_evidence:
+                        all_evidence.append(ev)
+                
+                matched_semantic_indices.add(s_idx)
+            
+            # Winner provides primary metadata (type, marks, subquestions)
+            final_q["question_text"] = " | ".join(unique_texts)
             final_q["question_type"] = best_semantic.get("question_type") or "descriptive"
             final_q["section"] = best_semantic.get("section") or spatial_sec
             final_q["subquestions"] = copy.deepcopy(best_semantic.get("subquestions") or [])
             final_q["ai_confidence"] = best_semantic.get("ai_confidence") or best_semantic.get("confidence")
-            matched_semantic_indices.add(best_idx)
+            final_q["image_evidence"] = all_evidence
+            
+            if len(contenders) > 1:
+                logger.info("[VISUAL_MERGE] Combined %s semantic candidates for visual anchor=%s", 
+                            len(contenders), qn)
+            else:
+                logger.info("[VISUAL_MERGE] Matched sq=%s (score=%.4f) to visual anchor=%s", 
+                            best_semantic.get("number"), win_score, qn)
             
         # 5. COLLISION CHECK (Deferred UID Generation)
         sec_norm = normalize_section(final_q["section"]) if final_q["section"] else None
@@ -1517,11 +1600,12 @@ def _merge_semantic_with_visual_entities(
         
         used_keys.add(key)
         
-
-
         final_questions.append(final_q)
 
-    # 7. SEMANTIC FALLBACK (Preserve semantic questions without visual anchors)
+    # 7. SEMANTIC FALLBACK (Group and Merge unmatched semantic questions)
+    # Remaining questions are processed by (section, number) to maintain one UID per question.
+    unmatched_groups = {} # (sec_norm, qn) -> List[sq_idx]
+    
     for idx, sq in enumerate(semantic_questions):
         if idx in matched_semantic_indices:
             continue
@@ -1533,28 +1617,59 @@ def _merge_semantic_with_visual_entities(
         sec_norm = normalize_section(sec_raw) if sec_raw else None
         key = (sec_norm, qn)
         
-        # Avoid duplication if question already exists from visual layer
         if key in used_keys:
             logger.warning("[VISUAL_MERGE] Skipping semantic fallback for sec=%s, num=%s (already exists)", sec_norm, qn)
             continue
             
+        if key not in unmatched_groups:
+            unmatched_groups[key] = []
+        unmatched_groups[key].append(idx)
+        
+    for key, indices in unmatched_groups.items():
+        # Identify Winner within the group for metadata
+        group_contenders = []
+        for idx in indices:
+            sq = semantic_questions[idx]
+            group_contenders.append((idx, _to_float(sq.get("ai_confidence") or sq.get("confidence"), 0.0)))
+        
+        group_contenders.sort(key=lambda x: x[1], reverse=True)
+        winner_idx, winner_conf = group_contenders[0]
+        winner_sq = semantic_questions[winner_idx]
+        
+        # Merge Texts and Evidence
+        unique_texts = []
+        all_evidence = []
+        for idx in indices:
+            sq = semantic_questions[idx]
+            text = str(sq.get("question_text") or "").strip()
+            if text and text not in unique_texts:
+                unique_texts.append(text)
+            for ev in (sq.get("image_evidence") or []):
+                if ev not in all_evidence:
+                    all_evidence.append(ev)
+        
         final_q = {
-            "number": qn,
-            "raw_number": str(qn),
+            "number": winner_sq.get("number"),
+            "raw_number": str(winner_sq.get("number")),
             "page": -1,
             "bbox": [0, 0, 0, 0],
             "confidence": 0.0,
-            "question_text": sq.get("question_text", ""),
-            "question_type": sq.get("question_type") or "descriptive",
-            "section": sec_raw,
-            "subquestions": copy.deepcopy(sq.get("subquestions") or []),
-            "ai_confidence": sq.get("ai_confidence") or sq.get("confidence"),
-            "image_evidence": [],
+            "question_text": " | ".join(unique_texts),
+            "question_type": winner_sq.get("question_type") or "descriptive",
+            "section": winner_sq.get("section"),
+            "subquestions": copy.deepcopy(winner_sq.get("subquestions") or []),
+            "ai_confidence": winner_sq.get("ai_confidence") or winner_sq.get("confidence"),
+            "image_evidence": all_evidence,
             "marks": None,
             "mark_source": "missing",
             "source": "semantic_fallback",
             "_spatial": {"page": -1, "bbox": [0, 0, 0, 0]}
         }
+        
+        if len(indices) > 1:
+            logger.info("[VISUAL_MERGE] Merged %s fallback semantic questions into UID=%s_q%s", 
+                        len(indices), normalize_section(final_q["section"] or "default"), final_q["number"])
+            
         final_questions.append(final_q)
         used_keys.add(key)
 
