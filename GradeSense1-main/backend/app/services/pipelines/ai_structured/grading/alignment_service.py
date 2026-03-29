@@ -32,8 +32,6 @@ from app.infrastructure.serialization.json_helpers import parse_tolerant_json
 from app.infrastructure.serialization.safe_numeric import safe_float
 from app.utils.async_utils import safe_gather
 
-STRICT_MODE = True
-
 
 # ALIGNMENT_COVERAGE_GATE moved to constants.py
 
@@ -42,7 +40,47 @@ class AlignmentError(Exception):
     """Raised when alignment coverage is too low."""
     pass
 
+def extract_text_block(text: str, start_pattern: str) -> str:
+    """
+    Extract text starting from a pattern until the next question pattern.
+    """
+    try:
+        start_idx = text.find(start_pattern)
+        if start_idx == -1:
+            return ""
+        
+        # Look for the next question marker (e.g. Q\d+)
+        content_after = text[start_idx + len(start_pattern):]
+        next_match = re.search(r"Q\d+", content_after)
+        if next_match:
+            return content_after[:next_match.start()].strip()
+            
+        return content_after[:1000].strip()
+    except Exception:
+        return ""
 
+def fallback_alignment(ocr_text: str, questions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Deterministic fallback using OCR pattern matching.
+    """
+    results = []
+    for q in questions:
+        # We need the displayed number, usually in q.get("question_number")
+        q_num = q.get("question_number") or q.get("number")
+        if not q_num:
+            continue
+            
+        pattern = f"Q{q_num}"
+        if pattern in ocr_text:
+            extracted = extract_text_block(ocr_text, pattern)
+            results.append({
+                "question_uid": q.get("question_uid"),
+                "question_number": q_num,
+                "answer_text": extracted,
+                "status": "answered",
+                "confidence": 0.5
+            })
+    return results
 
 
 def extract_question_numbers(text: str):
@@ -67,6 +105,27 @@ def extract_question_numbers(text: str):
     return list(found)
 
 
+def _extract_option_letter(text: str) -> Optional[str]:
+    t = (text or "").strip().upper()
+    if not t:
+        return None
+    # Priority 1: Clear delimiters like A), A. or (A)
+    m = re.search(r"\b([A-H])\s*[\).]", t)
+    if m:
+        return m.group(1)
+    m = re.search(r"\(([A-H])\)", t)
+    if m:
+        return m.group(1)
+    # Priority 2: Isolated letter
+    m = re.search(r"\b([A-H])\b", t)
+    if m:
+        return m.group(1)
+    return None
+
+
+def _is_objective_question(question: Dict[str, Any]) -> bool:
+    qtype = str(question.get("question_type") or "").strip().lower()
+    return qtype in {"mcq", "fill_blank"}
 
 
 def _normalize_alignment_answers(payload: Dict[str, Any], expected_uids: List[str]) -> List[Dict[str, Any]]:
@@ -265,6 +324,8 @@ async def align_answers(
         for q in (question_structure.get("questions") or [])
         if q.get("question_uid")
     ]
+    # Keep expected_numbers for backward compatibility or metrics
+    expected_numbers = expected_uids 
 
     logger.info(
         "alignment_started",
@@ -350,14 +411,20 @@ async def align_answers(
 
                 filtered_blueprint = {"questions": filtered_questions}
                 
-                # ✅ STEP 6 — LLM ALIGNMENT (NO FALLBACK)
-                payload = await _llm_align_answers(
-                    question_structure=filtered_blueprint,
-                    answer_images=batch,
-                    llm_service=llm_service,
-                    ocr_text=batch_ocr,
-                    **kwargs,
-                )
+                # ✅ STEP 6 — LLM TIMEOUT HANDLING
+                try:
+                    payload = await _llm_align_answers(
+                        question_structure=filtered_blueprint,
+                        answer_images=batch,
+                        llm_service=llm_service,
+                        ocr_text=batch_ocr,
+                        **kwargs,
+                    )
+                except (asyncio.TimeoutError, Exception) as e:
+                    logger.error("LLM failure or timeout — switching to fallback: %s", str(e))
+                    # ✅ STEP 3 — DETERMINISTIC FALLBACK
+                    fallback_results = fallback_alignment(batch_ocr, filtered_questions)
+                    payload = {"answers": fallback_results}
 
                 # Adjust page indices
                 for ans in (payload.get("answers") or []):

@@ -7,43 +7,112 @@ logger = logging.getLogger("gradesense")
 STOPWORDS = {"the", "is", "and", "of", "to", "a", "in", "for", "on", "with"}
 
 
-def evaluate_answer(model_answer: str, student_answer: str, max_marks: float) -> float:
+class DeterministicGrader:
     """
-    Pure, deterministic evaluation function.
-    Calculates marks based on token-overlap semantic similarity.
+    Fully deterministic keyword-matching grading engine.
+    Used to replace stochastic LLM-based scoring in production.
     """
-    # 1. Input Validation (Fail-Fast)
-    if not model_answer or not str(model_answer).strip():
-        raise ValueError("missing_model_answer")
-    if not student_answer or not str(student_answer).strip():
-        raise ValueError("missing_student_answer")
-    if max_marks <= 0:
-        raise ValueError("invalid_max_marks")
 
-    # 2. Normalization
-    def normalize(text: str) -> set:
-        # Lowercase, remove non-alphanumeric, and tokenize
-        text = text.lower()
-        # Simple tokenization by word boundaries
-        tokens = re.findall(r'\b\w{2,}\b', text)
-        return set(t for t in tokens if t not in STOPWORDS)
+    def grade(
+        self,
+        student_answer: Optional[str],
+        model_answer: Optional[str],
+        rubric: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Grades a student answer against a model answer or rubric keywords.
+        Uses word boundaries to avoid substring matching bugs.
+        """
 
-    model_tokens = normalize(model_answer)
-    student_tokens = normalize(student_answer)
+        # ---------------------------
+        # CASE 1: Empty student answer
+        # ---------------------------
+        if not student_answer or not student_answer.strip():
+            logger.info("[DET_DEBUG] Empty student answer")
+            return {
+                "score": 0.0,
+                "matched_keywords": 0,
+                "total_keywords": 0,
+                "feedback": "",
+                "concept_coverage": {}
+            }
 
-    # 3. Deterministic Scoring (Jaccard Similarity)
-    if not model_tokens:
-        # Fallback if model answer has no meaningful tokens (very rare)
-        return 0.0
+        # Normalize text
+        student_answer = student_answer.lower().strip()
+        model_answer = (model_answer or "").lower().strip()
 
-    intersection = model_tokens.intersection(student_tokens)
-    union = model_tokens.union(student_tokens)
-    
-    similarity = len(intersection) / len(model_tokens) # Recall-oriented for grading
-    # Alternative: Jaccard (len(i)/len(u)), but Recall is better for partial credit vs model answer
-    
-    # 4. Final Awarded Marks (Bounded)
-    score = similarity * max_marks
-    return min(max_marks, max(0.0, score))
+        # ---------------------------
+        # Extract keywords
+        # ---------------------------
+        if rubric and isinstance(rubric, dict) and "keywords" in rubric:
+            raw_keywords = rubric.get("keywords", [])
+        else:
+            raw_keywords = model_answer.split()
 
+        # Ensure raw_keywords is iterable
+        if not isinstance(raw_keywords, list):
+            raw_keywords = list(raw_keywords)
 
+        # ---------------------------
+        # Clean keywords
+        # ---------------------------
+        keywords: List[str] = list({
+            kw.strip().lower()
+            for kw in raw_keywords
+            if isinstance(kw, str)
+            and kw.strip()
+            and kw.strip().lower() not in STOPWORDS
+        })
+
+        total = len(keywords)
+
+        # ---------------------------
+        # CASE 2: No keywords
+        # ---------------------------
+        if total == 0:
+            logger.info(
+                f"[DET_DEBUG] No keywords | "
+                f"model={model_answer[:80]} | rubric={rubric}"
+            )
+            return {
+                "score": 0.0,
+                "matched_keywords": 0,
+                "total_keywords": 0,
+                "feedback": "",
+                "concept_coverage": {}
+            }
+
+        # ---------------------------
+        # Matching logic
+        # ---------------------------
+        matches = sum(
+            1 for kw in keywords
+            if re.search(rf"\b{re.escape(kw)}\b", student_answer)
+        )
+
+        # ---------------------------
+        # Score calculation
+        # ---------------------------
+        score = matches / total if total > 0 else 0.0
+        score = round(score, 3)
+
+        # ---------------------------
+        # DEBUG LOG (CRITICAL)
+        # ---------------------------
+        logger.info(
+            f"[DET_DEBUG] "
+            f"student={student_answer[:80]} | "
+            f"model={model_answer[:80]} | "
+            f"keywords={keywords} | "
+            f"matched={matches} | "
+            f"total={total} | "
+            f"score={score}"
+        )
+
+        return {
+            "score": score,
+            "matched_keywords": matches,
+            "total_keywords": total,
+            "feedback": "",
+            "concept_coverage": {}
+        }

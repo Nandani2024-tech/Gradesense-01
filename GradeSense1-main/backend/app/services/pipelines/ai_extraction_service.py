@@ -13,8 +13,6 @@ import uuid
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
-STRICT_MODE = True
-
 from PIL import Image
 
 from app.core.logging_config import logger
@@ -769,16 +767,49 @@ def _normalize_batch_payload(
                 }
             )
 
+        # Fix 1: Extract question_text from LLM output; record whether it came from LLM.
         llm_text = str(q.get("question_text") or "").strip()
+        text_source = "llm"
 
-        # Fix 1: OCR logic removed. If missing text, fail fast.
-        if not llm_text:
-            logger.error("STRICT_MODE_VIOLATION: Mission question text for qn=%d", qn)
-            raise ValueError(f"extraction_incomplete_no_text: qn={qn}")
+        # Fix 1: OCR backfill when LLM omits question_text.
+        if not llm_text and page_ocr_texts:
+            ev_page = page_offset
+            if evidence:
+                ev_page = evidence[0].get("page_index", page_offset)
 
-        # Fix 2: Set ai_confidence based on LLM confidence.
-        ai_conf = _to_float(q.get("ai_confidence", q.get("confidence")), 0.0)
-        ai_conf = max(ai_conf, 0.1)
+            ocr_page_text = ""
+            if 0 <= ev_page < len(page_ocr_texts):
+                ocr_page_text = page_ocr_texts[ev_page]
+            elif page_ocr_texts:
+                ocr_page_text = " ".join(
+                    page_ocr_texts[page_offset: page_offset + max(1, len(evidence))]
+                )
+
+            if ocr_page_text:
+                ocr_match = re.search(
+                    rf"(?:^|\n)\s*(?:Q\.?\s*|Question\s*)?{re.escape(str(qn))}\s*[.):\-]?\s*(.{{10,512}}?)(?:\n|$)",
+                    ocr_page_text,
+                    flags=re.IGNORECASE | re.DOTALL,
+                )
+                if ocr_match:
+                    candidate = ocr_match.group(1).strip()
+                    candidate = re.sub(r"\s+", " ", candidate)[:512]
+                    if len(candidate) >= 10:
+                        llm_text = candidate
+                        text_source = "ocr_fallback"
+                        logger.info(
+                            "OCR_BACKFILL qn=%s page=%s",
+                            qn, ev_page,
+                        )
+
+        # Fix 2: Set ai_confidence based on text provenance.
+        llm_ai_conf = _to_float(q.get("ai_confidence", q.get("confidence")), 0.0)
+        if text_source == "llm" and llm_text:
+            ai_conf = max(llm_ai_conf, 0.9)
+        elif text_source == "ocr_fallback":
+            ai_conf = 0.5
+        else:
+            ai_conf = max(llm_ai_conf, 0.1)
 
         # identity: generate globally unique question_uid (canonical)
         sec = (str(q.get("section") or "").strip() or None)
@@ -793,6 +824,7 @@ def _normalize_batch_payload(
             "section": sec,
             "instruction": (str(q.get("instruction") or "").strip() or None),
             "question_text": llm_text,
+            "question_text_source": text_source,
             "question_type": _normalize_type(q.get("question_type")),
             "marks": None,
             "mark_source": "missing",

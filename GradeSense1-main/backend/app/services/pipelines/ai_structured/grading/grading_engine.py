@@ -3,12 +3,16 @@ import json
 import re
 from typing import List, Dict, Any, Optional, Set, Tuple
 from collections import Counter, defaultdict
+from app.services.grading.llm_evaluator import LlmEvaluator
+from app.adapters.interfaces import AbstractLLMService
+from app.services.grading.answer_normalizer import AnswerNormalizer
+from app.services.grading.rubric_builder import RubricBuilder
 from app.core.logging_config import logger
 from app.utils.debug_logger import request_id
-from app.services.grading.deterministic_engine import evaluate_answer
+from app.services.grading.deterministic_engine import DeterministicGrader
 
 USE_LLM_GRADING = False
-from app.utils.identity_manager import is_valid_question_id
+from app.utils.identity_manager import normalize_question_id, is_valid_question_id
 from app.core.exceptions import CustomServiceException
 from app.models.submission import QuestionScore, SubQuestionScore, GradingResult
 from app.repositories import ExamRepo
@@ -18,14 +22,38 @@ from app.services.pipelines.ai_structured.extraction.utils import _structure_con
 from app.services.pipelines.ai_structured.grading.alignment_service import ALIGNMENT_COVERAGE_GATE, align_answers
 from app.services.pipelines.ai_structured.grading.grading_interface import GRADING_CONTRACT_VERSION, grade_answers_with_contracts
 from app.layers.ai_structured.validation import validate_structure
+from app.services.pipelines.ai_structured.grading.score_validator import validate_score_justification
+from app.services.pipelines.ai_structured.grading.score_band import compute_score_band, enforce_score_band
 from app.utils.async_utils import safe_gather
-from app.services.grading.answer_normalizer import AnswerNormalizer
-
-STRICT_MODE = True
 
 exam_repo = ExamRepo()
 
-# Removed duplicate IdentityManager - use app.utils.identity_manager.normalize_id instead
+class IdentityManager:
+    """Standardizes Question IDs from Vision models (e.g., '1', '22a', 'Q 34')."""
+    
+    @staticmethod
+    def normalize_id(qid: str) -> str:
+        if not qid:
+            return ""
+        # Remove whitespace and force upper for legacy keys, but preserve UIDs if they look special
+        s_qid = str(qid).strip()
+        if "__q" in s_qid:
+            # It's a UID, keep as is (or lower/upper consistently)
+            # We'll stick to lowercase for UIDs as that's what build_question_uid uses
+            return s_qid.lower()
+            
+        clean = re.sub(r'\s+', '', s_qid).upper()
+        # Handle '1' or '22A' -> 'Q1' or 'Q22A'
+        if clean and clean[0].isdigit():
+            clean = f"Q{clean}"
+        # Regex to insert dot before first letter following numbers
+        clean = re.sub(r'(Q\d+)([A-Z])', r'\1.\2', clean)
+        return clean
+
+    @staticmethod
+    def get_root_id(qid: str) -> str:
+        """Extracts parent ID for mark aggregation."""
+        return qid.split('.')[0]
 
 class GradingEngine:
     """
@@ -37,10 +65,41 @@ class GradingEngine:
     question and returned as part of the grading result.
     """
     
-    def __init__(self, llm_service: Optional[Any] = None):
+    def __init__(self, llm_service: AbstractLLMService = None):
         self.llm_service = llm_service
+        self.evaluator = LlmEvaluator(llm_service)
         self.normalizer = AnswerNormalizer()
+        self.rubric_builder = RubricBuilder()
+        self.det_grader = DeterministicGrader()
 
+    def _degraded_score(self, answer: str, max_marks: float) -> float:
+        """
+        Fallback scoring for cases where model_answer or rubric is missing.
+        Uses word count and diversity as proxies for answer quality.
+        """
+        if not answer or not answer.strip():
+            return 0.0
+
+        words = answer.split()
+        word_count = len(words)
+
+        if word_count < 5:
+            base = 0.2
+        elif word_count < 15:
+            base = 0.4
+        elif word_count < 30:
+            base = 0.6
+        else:
+            base = 0.75
+
+        unique_words = len(set(answer.lower().split()))
+        diversity_ratio = unique_words / max(word_count, 1)
+
+        if diversity_ratio > 0.6:
+            base += 0.1
+
+        base = min(base, 0.85)
+        return round(base * max_marks, 2)
 
     async def _grade_worker(self, question: Dict[str, Any], mapped_packet: Optional[Dict[str, Any]]) -> QuestionScore:
         if not question:
@@ -57,39 +116,23 @@ class GradingEngine:
         # logs for this question
         q_logs: List[str] = []
         
-        # STRICT MODE: Enforce question_uid (SSOT)
-        try:
-            qid = str(question["question_uid"])
-        except KeyError:
-            logger.error("STRICT_MODE_VIOLATION: Missing question_uid: %s", question)
-            raise CustomServiceException("missing_question_identifier", 500)
+        # Support both 'question_uid' (SSOT), 'id' (new), 'question_number' (legacy), AND 'number' (AI structured)
+        qid = str(question.get("question_uid") or question.get("id") or question.get("question_number") or question.get("number") or "Unknown")
+        q_id = qid # For user snippet compatibility
         
-        # Phase 6: FATAL INVALID MARKS
-        raw_marks = question.get("marks") or question.get("max_marks")
-        if raw_marks is None or float(raw_marks) <= 0:
-            logger.error("STRICT_MODE_VIOLATION: Invalid or missing marks for question %s", qid)
-            raise CustomServiceException("invalid_max_marks", 500)
-        max_marks = float(raw_marks)
+        # Support both 'marks' (new) and 'max_marks' (legacy)
+        max_marks = float(question.get("marks") or question.get("max_marks") or 0.0)
         
         # Support both 'question' (new) and 'question_text'/'rubric' (legacy)
-        q_text = question.get("question") or question.get("question_text") or question.get("rubric")
-        if not q_text:
-            if STRICT_MODE:
-                logger.error("STRICT_MODE_VIOLATION: Missing question text for question %s", qid)
-                raise CustomServiceException("missing_question_text", 500)
-            q_text = "N/A"
+        q_text = question.get("question") or question.get("question_text") or question.get("rubric") or "N/A"
         
         # For semantic evaluation
         model_answer = question.get("model_answer") or question.get("expected_answer") or ""
-        if not model_answer and STRICT_MODE:
-            logger.error("STRICT_MODE_VIOLATION: Missing model_answer for question %s", qid)
-            raise CustomServiceException("missing_model_answer", 500)
-        
         if not model_answer:
             logger.warning("Missing model_answer for question %s", qid)
         
         # Identity
-        clean_qid = qid
+        clean_qid = normalize_question_id(qid)
         q_logs.append(f"Question {clean_qid}: max_marks={max_marks}")
         
         # Resolve initial raw_text and mapped_subanswers for entry evaluation
@@ -97,18 +140,14 @@ class GradingEngine:
         raw_text = ""
         mapped_subanswers = {}
         
-        # Capture canonical key from extraction layer
-        canonical_key = question["question_uid"]
+        # Capture canonical key from extraction layer if present
+        canonical_key = question.get("canonical_key") or qid
         q_logs.append(f"Processing node: {canonical_key}")
         
         if isinstance(mapped_packet, dict):
             # Task 5/8: Check both field names for confidence
             confidence = float(mapped_packet.get("confidence_score") or mapped_packet.get("mapping_confidence", 1.0))
-            raw_text = mapped_packet.get("combined_text")
-            if raw_text is None:
-                 logger.error("STRICT_MODE_VIOLATION: Missing combined_text in mapped_packet for %s", qid)
-                 raise CustomServiceException("missing_answer_text", 500)
-            raw_text = raw_text or ""
+            raw_text = mapped_packet.get("combined_text", "")
             if mapped_packet.get("subanswers"):
                 for sa in mapped_packet.get("subanswers", []):
                     mapped_subanswers[sa.get("sub_id", "").lower()] = sa
@@ -126,69 +165,171 @@ class GradingEngine:
             raw_text = mapped_packet
 
         # Handle sub-questions
-        sub_questions: List[Dict[str, Any]] = question.get("sub_questions") or []
+        sub_questions: List[Dict[str, Any]] = question.get("sub_questions") or question.get("subquestions") or []
 
         # ✅ PHASE 2.2 DEBUG LOGS
-        logger.info("DEBUG_EVALUATING_QUESTION: uid=%s", qid)
+        logger.info("DEBUG_EVALUATING_QUESTION: uid=%s", q_id)
         logger.info("DEBUG_ANSWER_PRESENT: %s", mapped_packet is not None)
         logger.info("DEBUG_ANSWER_TEXT: %s", raw_text[:200] if raw_text else None)
+
+        # ✅ STEP 1 — INITIALIZE COUNTERS (PER QUESTION)
+        fallback_used_count = 0
+        empty_subanswers_count = 0
+        
+        # previously we short‑circuited low‑confidence packets; now record but continue
+        if confidence < 0.2:
+            # SSOT ENFORCEMENT: Inner layers must raise exceptions on failure
+            logger.error(f"Very low confidence {confidence} for question {qid}, raising exception")
+            raise ValueError(f"low_ocr_confidence: {confidence}")
+        elif confidence < 0.4:
+            # caution log but proceed to grading using whatever text was captured
+            q_logs.append(f"Low confidence {confidence} (below advisory threshold)")
 
         sub_scores = []
         total_awarded = 0.0
         final_feedback = []
 
         if sub_questions:
-            # ✅ STEP 1.1 — ISOLATION TRACKER
-            seen_texts = {}
+            # Logic here uses pre-initialized mapped_subanswers
             
             for sq in sub_questions:
-                sq_id = str(sq["sub_id"])
-                sq_max_marks = float(sq["marks"])
-                sq_text = sq.get("question") or sq.get("question_text") or f"Part {sq_id}"
-                sq_model = sq["model_answer"]
+                sq_id = str(sq.get("sub_id") or sq.get("id") or "Unknown")
+                sq_max_marks = float(sq.get("marks") or sq.get("max_marks") or 0.0)
+                sq_text = sq.get("question") or sq.get("question_text") or sq.get("rubric") or f"Part {sq_id}"
+                sq_model = sq.get("model_answer") or sq.get("expected_answer") or ""
+                if not sq_model:
+                    logger.warning("Missing model_answer for question %s", f"{clean_qid}.{sq_id}")
                 
                 # Find matching student answer
                 matched_sa = mapped_subanswers.get(sq_id.lower())
                 sq_raw_text = matched_sa.get("combined_text", "") if matched_sa else ""
                 
-                # 🛑 ISOLATION RULE 1: FORBID PARENT TEXT INHERITANCE
-                trimmed_text = sq_raw_text.strip()
-                if not trimmed_text:
-                    logger.error(f"STRICT_MODE_VIOLATION: Missing text for subpart {clean_qid}.{sq_id}")
-                    raise CustomServiceException("parent_text_inheritance_forbidden", 500)
+                if matched_sa:
+                    logger.info(f"GRADING_INPUT_TEXT sub_id={matched_sa.get('sub_id')} len={len(sq_raw_text)}")
+
+                fallback_used = False
+
+                # ✅ STEP 2 — FIX SUB-QUESTION FALLBACK LOGIC
+                # CRITICAL RULE: Only fallback if NO subanswers exist at all
+                if not sq_raw_text.strip():
+                    if not mapped_subanswers and raw_text.strip():
+                        sq_raw_text = raw_text
+                        fallback_used = True
+
+                # ✅ STEP 3 — CONTROLLED LOGGING (NO SPAM)
+                if fallback_used:
+                    fallback_used_count += 1
+                    logger.warning(
+                        "Fallback used for subquestion",
+                        extra={
+                            "question_id": q_id,
+                            "sub_id": sq_id,
+                            "reason": "no_subanswers_detected",
+                            "raw_text_length": len(raw_text)
+                        }
+                    )
+
+                elif not sq_raw_text.strip():
+                    empty_subanswers_count += 1
+                    logger.info(
+                        "Subquestion marked as not attempted",
+                        extra={
+                            "question_id": q_id,
+                            "sub_id": sq_id,
+                            "reason": "no_text_found"
+                        }
+                    )
                 
-                # 🛑 ISOLATION RULE 2: FORBID TEXT CONTAMINATION (DUPLICATE ANSWERS)
-                if trimmed_text in seen_texts:
-                    other_id = seen_texts[trimmed_text]
-                    logger.error(f"STRICT_MODE_VIOLATION: Text contamination between {sq_id} and {other_id}")
-                    raise CustomServiceException("subpart_text_contamination", 500)
-                
-                seen_texts[trimmed_text] = sq_id
+                # If no raw text found, mark as not attempted and continue
+                if not sq_raw_text.strip():
+                    sub_scores.append(SubQuestionScore(
+                        sub_id=sq_id,
+                        max_marks=sq_max_marks,
+                        obtained_marks=0.0,
+                        ai_feedback="No answer provided by student."
+                    ))
+                    continue
 
                 # Normalization
                 sq_norm_result = self.normalizer.normalize(sq_raw_text)
                 sq_clean_answer = sq_norm_result["normalized_answer"]
 
-                # TASK 1 & 3 & Phase 6: FATAL ERROR ON MISSING REFERENCE
-                if not sq_model:
-                    logger.error(f"STRICT_MODE_VIOLATION: Subquestion {clean_qid}.{sq_id} - MISSING MODEL")
-                    raise CustomServiceException("missing_model_answer", 500)
+                # Rubric Extraction (For signal only)
+                sq_rubric = self.rubric_builder.build_rubric(sq_text, sq_model, sq_max_marks)
+                sq_concepts = sq_rubric.get("concepts", [])
+                
+                # TASK 1 & 3: FALLBACK TO DEGRADED MODE (SUBQUESTION)
+                if not sq_model or not sq_concepts:
+                    logger.warning(
+                        "DEGRADED GRADING ACTIVATED",
+                        extra={
+                            "question_id": f"{clean_qid}.{sq_id}",
+                            "reason": "missing_model_answer_or_concepts"
+                        }
+                    )
+                    sq_awarded = self._degraded_score(sq_clean_answer, sq_max_marks)
+                    sq_grading_mode = "DEGRADED_NO_MODEL"
+                    concept_coverage = 0.0
+                    feedback = "Graded in degraded mode due to missing reference material."
+                    detected = []
+                    missing = []
                 else:
-                    # Phase 3: Pure Deterministic Evaluation for Subparts
-                    try:
-                        sq_awarded = evaluate_answer(
+                    # Deterministic Grading Execution (Phase 1)
+                    if USE_LLM_GRADING:
+                        sq_eval_result = await self.evaluator.evaluate(
+                            question_number=f"{clean_qid}.{sq_id}",
+                            question_text=sq_text,
                             model_answer=sq_model,
+                            max_marks=sq_max_marks,
                             student_answer=sq_clean_answer,
-                            max_marks=sq_max_marks
+                            matched_concepts=[c["concept"] for c in sq_concepts],
+                            missing_concepts=[]
                         )
-                        feedback = "Deterministic subpart overlap."
-                        detected = []
-                        missing = []
-                        concept_coverage = 1.0 # Bypassed Phase 3
-                        sq_grading_mode = "DET_EVALUATED"
-                    except ValueError as ve:
-                        logger.error(f"STRICT_MODE_VIOLATION: Subpart evaluation failed: {ve}")
-                        raise CustomServiceException(str(ve), 500)
+                    else:
+                        sq_eval_result = self.det_grader.grade(
+                            student_answer=sq_clean_answer,
+                            model_answer=sq_model,
+                            rubric=sq.get("rubric", {})
+                        )
+                    
+                    llm_score = float(sq_eval_result.get("score", 0.0))
+                    feedback = sq_eval_result.get("feedback", "")
+                    detected = sq_eval_result.get("concepts_detected", [])
+                    missing = sq_eval_result.get("concepts_missing", [])
+                    
+                    # Concept Coverage (Step 0 - for logs/fallback)
+                    total_c = len(sq_concepts)
+                    detected_c = len(detected)
+                    concept_coverage = detected_c / total_c if total_c > 0 else 1.0
+                    logger.info(f"[CONCEPT] coverage={concept_coverage:.2f} detected={detected_c} missing={len(missing)}")
+
+                    # Validation (Step 2)
+                    validation = validate_score_justification(sq_eval_result, sq_clean_answer, sq_max_marks)
+                    hallucination_detected = validation.get("hallucination_detected", False)
+                    logger.info(f"[VALIDATION] hallucination_detected={hallucination_detected}")
+
+                    sq_grading_mode = "AI_EVALUATED"
+                    if hallucination_detected:
+                        # Step 3: Fallback
+                        logger.warning("[VALIDATION_FAILED] Triggering deterministic fallback")
+                        sq_awarded = concept_coverage * sq_max_marks
+                        sq_grading_mode = "DETERMINISTIC_FALLBACK"
+                        logger.info(f"[FALLBACK] activated coverage={concept_coverage:.2f} score={sq_awarded:.2f}")
+                    else:
+                        # Step 4: Score Band Clamp
+                        min_score, max_score = compute_score_band(concept_coverage, sq_max_marks)
+                        sq_awarded = max(min(llm_score, max_score), min_score)
+                        logger.info(f"[SCORE_BAND] allowed={min_score:.2f}-{max_score:.2f} given={llm_score:.2f} corrected={sq_awarded:.2f}")
+
+                    # Step 5: Zero Score Protection
+                    if concept_coverage > 0.4 and sq_awarded == 0:
+                        logger.warning("[ZERO_SCORE_OVERRIDE] Invalid zero score detected")
+                        sq_awarded = concept_coverage * sq_max_marks
+                        logger.info(f"[ZERO_SCORE_FIXED] new_score={sq_awarded:.2f}")
+
+                # TASK 6: ZERO MARKS PROTECTION (SUBQUESTION)
+                if sq_clean_answer.strip() and sq_awarded == 0:
+                    sq_awarded = min(1.0, sq_max_marks)
 
                 # Finalize
                 total_awarded += sq_awarded
@@ -214,7 +355,7 @@ class GradingEngine:
             standalone_possible = 0.0
             
             for score in sub_scores:
-                ogid = getattr(score, "or_group_id", None) or next((s.get("or_group_id") for s in sub_questions if str(s["sub_id"]) == score.sub_id), None)
+                ogid = getattr(score, "or_group_id", None) or next((s.get("or_group_id") for s in sub_questions if str(s.get("sub_id") or s.get("id")) == score.sub_id), None)
                 if ogid:
                     or_group_scores[ogid] = max(or_group_scores[ogid], score.obtained_marks)
                     or_group_possible[ogid] = max(or_group_possible[ogid], score.max_marks)
@@ -225,27 +366,23 @@ class GradingEngine:
             total_awarded = standalone_total + sum(or_group_scores.values())
             total_possible_agg = standalone_possible + sum(or_group_possible.values())
             
-            # Phase 5: STICT SUMMATION VALIDATION
-            if abs(total_possible_agg - max_marks) > 0.001:
-                logger.error(f"STRICT_MODE_VIOLATION: Subpart max marks sum ({total_possible_agg}) mismatch with parent ({max_marks}) for {qid}")
-                raise CustomServiceException("subpart_aggregation_mismatch", 500)
+            # Ensure the parent max_marks is at least what the subparts sum to
+            max_marks = max(max_marks, total_possible_agg)
             
-            # Phase 5: COMPLETION VALIDATION
-            if len(sub_scores) != len(sub_questions):
-                logger.error(f"STRICT_MODE_VIOLATION: Missing subpart scores: scored={len(sub_scores)} expected={len(sub_questions)}")
-                raise CustomServiceException("missing_subpart_score", 500)
-            
-            # ✅ STEP 5 — SUMMARY LOG
+            # ✅ STEP 5 — SUMMARY LOG (PER QUESTION, NOT FUNCTION)
             logger.info(
                 "Question grading input resolution complete",
                 extra={
-                    "question_id": qid,
+                    "question_id": q_id,
+                    "total_subquestions": len(sub_questions) if sub_questions else 0,
+                    "fallback_used_count": fallback_used_count,
+                    "empty_subanswers_count": empty_subanswers_count,
                     "subanswers_detected": len(mapped_subanswers) if mapped_subanswers else 0
                 }
             )
             
-            # Aggregate stats for parent (ENFORCE PARENT-LEVEL ROUNDING)
-            final_awarded = round(min(total_awarded, max_marks), 2)
+            # Aggregate stats for parent
+            final_awarded = min(total_awarded, max_marks)
             global_feedback = "\n".join(final_feedback) if final_feedback else "Graded successfully."
             global_answer = raw_text
 
@@ -254,34 +391,100 @@ class GradingEngine:
             norm_result = self.normalizer.normalize(raw_text)
             clean_answer = norm_result["normalized_answer"]
 
-            if clean_answer.strip():
-                # TASK 1 & 3 & Phase 6: FATAL ERROR ON MISSING REFERENCE
-                if not model_answer:
-                    logger.error(f"STRICT_MODE_VIOLATION: Question {qid} - MISSING MODEL")
-                    raise CustomServiceException("missing_model_answer", 500)
-                else:
-                    # Phase 3: Pure Deterministic Evaluation
-                    try:
-                        final_awarded = evaluate_answer(
-                            model_answer=model_answer,
-                            student_answer=clean_answer,
-                            max_marks=max_marks
-                        )
-                        global_feedback = "Deterministic overlap evaluation."
-                        concepts_detected_final = []
-                        missing_concepts_final = []
-                        coverage_final = 1.0 # Bypassed Phase 3
-                        grading_mode_final = "DET_EVALUATED"
-                    except ValueError as ve:
-                        logger.error(f"STRICT_MODE_VIOLATION: Evaluation failed: {ve}")
-                        raise CustomServiceException(str(ve), 500)
-            else:
-                # Phase 6: FATAL MISSING STUDENT ANSWER
-                logger.error(f"STRICT_MODE_VIOLATION: Question {qid} - MISSING STUDENT ANSWER")
-                raise CustomServiceException("missing_student_answer", 500)
+            # 1. Build Rubric (Signal only)
+            rubric = self.rubric_builder.build_rubric(q_text, model_answer, max_marks)
+            concepts = rubric.get("concepts", [])
 
-            # Phase 5: PARENT-LEVEL ROUNDING (Monolithic Case)
-            final_awarded = round(final_awarded, 2)
+            if clean_answer.strip():
+                # TASK 1 & 3: FALLBACK TO DEGRADED MODE (MONOLITHIC)
+                if not model_answer or not concepts:
+                    logger.warning(
+                        "DEGRADED GRADING ACTIVATED",
+                        extra={
+                            "question_id": qid,
+                            "reason": "missing_model_answer_or_concepts"
+                        }
+                    )
+                    final_awarded = self._degraded_score(clean_answer, max_marks)
+                    feedback = "Graded in degraded mode due to missing reference material."
+                    grading_mode = "DEGRADED_NO_MODEL"
+                    detected = []
+                    missing = []
+                else:
+                    # 2. LLM Evaluation (Step 1)
+                    if USE_LLM_GRADING:
+                        eval_result = await self.evaluator.evaluate(
+                            question_number=clean_qid,
+                            question_text=q_text,
+                            model_answer=model_answer,
+                            max_marks=max_marks,
+                            student_answer=clean_answer,
+                            matched_concepts=[c["concept"] for c in concepts],
+                            missing_concepts=[]
+                        )
+                    else:
+                        eval_result = self.det_grader.grade(
+                            student_answer=clean_answer,
+                            model_answer=model_answer,
+                            rubric=question.get("rubric", {})
+                        )
+                    
+                    llm_score = float(eval_result.get("score", 0.0))
+                    feedback = eval_result.get("feedback", "No feedback provided.")
+                    detected = eval_result.get("concepts_detected", [])
+                    missing = eval_result.get("concepts_missing", [])
+                    
+                    # Concept Coverage (Step 0)
+                    total_c = len(concepts)
+                    detected_c = len(detected)
+                    concept_coverage = detected_c / total_c if total_c > 0 else 1.0
+                    logger.info(f"[CONCEPT] coverage={concept_coverage:.2f} detected={detected_c} missing={len(missing)}")
+
+                    # Validation (Step 2)
+                    validation = validate_score_justification(eval_result, clean_answer, max_marks)
+                    hallucination_detected = validation.get("hallucination_detected", False)
+                    logger.info(f"[VALIDATION] hallucination_detected={hallucination_detected}")
+
+                    grading_mode = "AI_EVALUATED"
+                    if hallucination_detected:
+                        # Step 3: Fallback
+                        logger.warning("[VALIDATION_FAILED] Triggering deterministic fallback")
+                        final_awarded = concept_coverage * max_marks
+                        grading_mode = "DETERMINISTIC_FALLBACK"
+                        logger.info(f"[FALLBACK] activated coverage={concept_coverage:.2f} score={final_awarded:.2f}")
+                    else:
+                        # Step 4: Score Band Clamp
+                        min_score, max_score = compute_score_band(concept_coverage, max_marks)
+                        final_awarded = max(min(llm_score, max_score), min_score)
+                        logger.info(f"[SCORE_BAND] allowed={min_score:.2f}-{max_score:.2f} given={llm_score:.2f} corrected={final_awarded:.2f}")
+
+                    # Step 5: Zero Score Protection
+                    if concept_coverage > 0.4 and final_awarded == 0:
+                        logger.warning("[ZERO_SCORE_OVERRIDE] Invalid zero score detected")
+                        final_awarded = concept_coverage * max_marks
+                        logger.info(f"[ZERO_SCORE_FIXED] new_score={final_awarded:.2f}")
+
+                # Finalize result variables
+                global_feedback = feedback
+                concepts_detected_final = detected
+                missing_concepts_final = missing
+                # TASK 4: Robust coverage finalization
+                coverage_final = concept_coverage if 'concept_coverage' in locals() else 0.0
+                grading_mode_final = grading_mode
+
+                # TASK 6: ZERO MARKS PROTECTION (MONOLITHIC)
+                if final_awarded == 0:
+                    final_awarded = min(1.0, max_marks)
+
+            else:
+                # Handle empty answer gracefully
+                logger.info(f"Empty answer detected for question {qid}")
+                final_awarded = 0.0
+                global_feedback = "No answer provided by student."
+                concepts_detected_final = []
+                missing_concepts_final = [c["concept"] for c in concepts]
+                coverage_final = 0.0
+                grading_mode_final = "AI_EVALUATED"
 
             global_answer = clean_answer
 
@@ -306,7 +509,7 @@ class GradingEngine:
         logger.info(
             "grading_question_end",
             extra={
-                "question_id": qid,
+                "question_id": q_id,
                 "request_id": request_id.get(),
                 "stage": "grading",
                 "status": "success",
@@ -353,8 +556,8 @@ class GradingEngine:
         # Rule 7: Parallel Execution Using Asyncio (Fixes ThreadPool sync mismatches)
         tasks = []
         for q in blueprint_questions:
-            # STRICT MODE: Use question_uid (canonical) only
-            uid = q["question_uid"]
+            # Task 2: Use question_uid (canonical) as primary key
+            uid = q.get("question_uid") or q.get("id") or q.get("question_number") or q.get("number")
             clean_qid = str(uid).strip().lower()
             root_id = clean_qid.split('.')[0]
             
@@ -372,24 +575,17 @@ class GradingEngine:
             
             if mapping_status == "VALID":
                 tasks.append(self._grade_worker(q, mapped))
-            elif mapping_status == "MISSING":
-                # Valid unattempted question: Award 0.0 without failing the whole job.
-                logger.info(f"Question {clean_qid}: Status MISSING. Awarding 0.0 marks (unattempted).")
-                
-                # Create a future that returns a QuestionScore directly to maintain parallel structure
-                async def mock_missing_score(qid, max_m):
-                    return QuestionScore(
-                        question_number=qid,
-                        obtained_marks=0.0,
-                        max_marks=max_m,
-                        status="not_attempted",
-                        ai_feedback="Question missing in submission (unattempted)."
-                    )
-                tasks.append(mock_missing_score(clean_qid, float(q.get("marks") or 0.0)))
             else:
-                # Phase 6: FATAL ALIGNMENT MAPPING FAILURE (AMBIGUOUS or ERROR)
-                logger.error(f"STRICT_MODE_VIOLATION: Question {clean_qid} - ALIGNMENT {mapping_status}")
-                raise CustomServiceException("alignment_mapping_failure", 500)
+                # Store a dummy score for non-valid mapping to keep indices aligned for raw_results
+                async def mock_failed_mapping():
+                    return QuestionScore(
+                        question_number=clean_qid,
+                        max_marks=float(q.get("marks") or q.get("max_marks") or 0.0),
+                        obtained_marks=0.0,
+                        status="needs_review",
+                        ai_feedback=f"Aggregation safety: Mapping is {mapping_status}. Manual review required."
+                    )
+                tasks.append(mock_failed_mapping())
         
         # return_exceptions=True was previously used, now replaced by safe_gather
         results_list = await safe_gather(tasks)
@@ -410,9 +606,9 @@ class GradingEngine:
         main_q_awarded: Dict[str, float] = {}
         main_q_possible: Dict[str, float] = {}
         
-        # map questons to their or_group_id using canonical question_uid
+        # We need to map questons to their or_group_id from the blueprint
         blueprint_or_map = {
-             str(q["question_uid"]).strip().lower(): q.get("or_group_id")
+             str(q.get("question_uid") or q.get("id") or q.get("question_number") or q.get("number")).strip().lower(): q.get("or_group_id")
              for q in blueprint_questions
         }
 
@@ -610,3 +806,29 @@ async def perform_grading(
     return grading_result.get("question_scores", []), packet_meta
 
 
+if __name__ == "__main__":
+    # Production Test Scenario (Standalone Execution)
+    blueprint_data = {
+        "questions": [
+            {"id": "Q1", "question": "Capital of France?", "marks": 1, "model_answer": "Paris"},
+            {"id": "Q2.a", "question": "Define Osmosis", "marks": 2, "model_answer": "Movement of water through semi-permeable membrane"},
+            {"id": "Q2.b", "question": "Define Diffusion", "marks": 3, "model_answer": "Movement of particles from high to low concentration"}
+        ]
+    }
+    
+    # Simulating a mix of dirty OCR strings and complex mapped packets
+    vision_data = {
+        "Q1": "Ans: (A) Paris.",
+        "Q2A": {
+            "mapping_confidence": 0.5, # Should trigger confidence gate bypass
+            "combined_text": "Movement of water through... scattered noise"
+        },
+        "Q2.b": "Movement of particles from high to low concentration"
+    }
+    
+    async def run_test():
+        engine = GradingEngine()
+        final_report = await engine.run_production_grading(blueprint_data, vision_data)
+        print(json.dumps(final_report, indent=2))
+        
+    asyncio.run(run_test())
