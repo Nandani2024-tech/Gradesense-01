@@ -14,13 +14,28 @@ from app.utils.identity_manager import UIDCollisionError, MissingUIDError
 
 def _normalize_subquestion(sub: Dict[str, Any]) -> Dict[str, Any]:
     label = str(sub.get("label") or "").strip()
+    
+    # STRETCH 7 Step 4.1: Preserve identity fields (Critical Blocker Fix)
+    n_path = list(sub.get("normalized_path") or [])
+    n_index = sub.get("normalized_index")
+    if n_index is None and n_path:
+        n_index = n_path[-1]
+    
+    # Optional debug logging for verification
+    # import logging
+    # logger = logging.getLogger("app.validation")
+    # logger.info("PATH_CHECK: label=%s path=%s", label, n_path)
+
     return {
         "sub_id": str(sub.get("sub_id") or sub.get("id") or label).strip(),
         "label": label,
+        "normalized_index": n_index,
+        "normalized_path": n_path,
         "text": str(sub.get("text") or "").strip(),
         "rubric": str(sub.get("rubric") or "").strip() or None,
         "model_answer": str(sub.get("model_answer") or sub.get("rubric") or "").strip(),
         "marks": round(to_float(sub.get("marks"), 0.0), 4),
+        "subquestions": [_normalize_subquestion(sq) for sq in (sub.get("subquestions") or []) if isinstance(sq, dict)],
         "or_group_id": (str(sub.get("or_group_id") or "").strip() or None),
         "mark_source": str(sub.get("mark_source") or "missing").strip().lower(),
         "mark_confidence": round(to_float(sub.get("mark_confidence"), 0.0), 4),

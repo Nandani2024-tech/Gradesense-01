@@ -892,29 +892,7 @@ def _merge_questions(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Dict
         existing_evidence.append(ev)
     merged["image_evidence"] = existing_evidence
 
-    sub_by_label = {str(sq.get("label")): dict(sq) for sq in (merged.get("subquestions") or [])}
-    for sq in (incoming.get("subquestions") or []):
-        label = str(sq.get("label") or "").strip()
-        if not label:
-            continue
-        if label not in sub_by_label:
-            sub_by_label[label] = dict(sq)
-            continue
-        ex_sq = sub_by_label[label]
-        if len(str(sq.get("text") or "")) > len(str(ex_sq.get("text") or "")):
-            ex_sq["text"] = sq.get("text")
-        if _to_float(sq.get("marks"), 0.0) > _to_float(ex_sq.get("marks"), 0.0):
-            ex_sq["marks"] = _to_float(sq.get("marks"), 0.0)
-        ex_ev = list(ex_sq.get("image_evidence") or [])
-        ex_sq["image_evidence"] = ex_ev + [
-            ev for ev in (sq.get("image_evidence") or []) if ev not in ex_ev
-        ]
-        ex_sq["confidence"] = max(
-            _to_float(ex_sq.get("confidence"), 0.0),
-            _to_float(sq.get("confidence"), 0.0),
-        )
-        sub_by_label[label] = ex_sq
-    merged["subquestions"] = sorted(sub_by_label.values(), key=lambda s: str(s.get("label") or ""))
+    merged["subquestions"] = _merge_subpart_lists(merged.get("subquestions") or [], incoming.get("subquestions") or [])
 
     merged["ai_confidence"] = max(ex_conf, in_conf)
     merged["confidence"] = max(
@@ -926,6 +904,213 @@ def _merge_questions(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Dict
         json.dumps(merged, indent=2)[:1000]
     )
     return merged
+
+
+def _label_to_index(label_raw: Any) -> Optional[int]:
+    """
+    STRICT Phase 7 Step 2: Canonical label-to-index conversion.
+    Alphabetic: a->0, b->1
+    Roman: i->0, ii->1, iii->2
+    Numeric: 1->0, 2->1
+    """
+    import re
+    s = str(label_raw or "").strip().lower()
+    if not s:
+        return None
+        
+    # Remove surrounding brackets/dots like (a), a., 1)
+    s = re.sub(r'[\(\)\[\]\{\}\.]', '', s).strip()
+    if not s:
+        return None
+        
+    # Case 1: Pure Numeric (1, 2, 3)
+    if s.isdigit():
+        return int(s) - 1
+        
+    # Case 2: Roman Numerals (i, ii, iii, iv, v, vi, vii, viii, ix, x)
+    roman_map = {
+        'i': 0, 'ii': 1, 'iii': 2, 'iv': 3, 'v': 4,
+        'vi': 5, 'vii': 6, 'viii': 7, 'ix': 8, 'x': 9
+    }
+    if s in roman_map:
+        return roman_map[s]
+        
+    # Case 3: Alphabetic (a, b, c) - single char
+    if len(s) == 1 and 'a' <= s <= 'z':
+        return ord(s) - ord('a')
+        
+    return None
+
+
+def _merge_subpart_lists(existing: List[Dict[str, Any]], incoming: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    STRICT Phase 7 Step 1: Safe merge of subquestions to prevent data loss.
+    Priority 1: matching labels.
+    Priority 2: fuzzy text similarity fallback for label-less items.
+    """
+    from difflib import SequenceMatcher
+    
+    if not incoming:
+        return [dict(sq) for sq in existing or []]
+    if not existing:
+        return [dict(sq) for sq in incoming or []]
+        
+    merged_map = {} # label -> sq
+    unlabeled_existing = []
+    
+    for sq in existing:
+        label = str(sq.get("label") or "").strip().lower()
+        if label:
+            merged_map[label] = dict(sq)
+        else:
+            unlabeled_existing.append(dict(sq))
+            
+    unlabeled_incoming = []
+    for sq in incoming:
+        label = str(sq.get("label") or "").strip().lower()
+        if not label:
+            unlabeled_incoming.append(dict(sq))
+            continue
+            
+        if label in merged_map:
+            # Merge fields
+            ex_sq = merged_map[label]
+            # text: prefer longer
+            in_text = str(sq.get("text") or sq.get("question_text") or "").strip()
+            ex_text = str(ex_sq.get("text") or ex_sq.get("question_text") or "").strip()
+            if len(in_text) > len(ex_text):
+                ex_sq["text"] = in_text
+            
+            # model_answer: prefer non-empty
+            in_ma = str(sq.get("model_answer") or "").strip()
+            if in_ma and not str(ex_sq.get("model_answer") or "").strip():
+                ex_sq["model_answer"] = in_ma
+            
+            # marks: PRESERVE but do not calculate (Phase 7 rule)
+            in_marks = _to_float(sq.get("marks"), 0.0)
+            ex_marks = _to_float(ex_sq.get("marks"), 0.0)
+            if in_marks > ex_marks:
+                ex_sq["marks"] = in_marks
+                ex_sq["mark_source"] = sq.get("mark_source") or ex_sq.get("mark_source")
+
+            # image_evidence: deduplicate merge
+            ex_ev = list(ex_sq.get("image_evidence") or [])
+            for ev in (sq.get("image_evidence") or []):
+                if ev not in ex_ev:
+                    ex_ev.append(ev)
+            ex_sq["image_evidence"] = ex_ev
+            
+            # confidence
+            ex_sq["confidence"] = max(_to_float(ex_sq.get("confidence"), 0.0), _to_float(sq.get("confidence"), 0.0))
+            
+            # Recursive subset merge
+            in_subs = sq.get("subquestions") or []
+            ex_subs = ex_sq.get("subquestions") or []
+            if in_subs or ex_subs:
+                in_labels = {str(s.get("label") or "").strip().lower() for s in in_subs if str(s.get("label") or "").strip()}
+                ex_labels = {str(s.get("label") or "").strip().lower() for s in ex_subs if str(s.get("label") or "").strip()}
+                if in_subs and ex_subs and not in_labels.intersection(ex_labels) and (in_labels or ex_labels):
+                    logger.error("[AMBIGUOUS_MERGE] Disjoint nested paths at label '%s': %s vs %s. Skipping merge to preserve SSOT.", label, ex_labels, in_labels)
+                else:
+                    ex_sq["subquestions"] = _merge_subpart_lists(ex_subs, in_subs)
+                    logger.info("[MERGE_TRACE] Recursively merged label '%s', resulting in %s children.", label, len(ex_sq["subquestions"]))
+        else:
+            merged_map[label] = dict(sq)
+            
+    # Fallback: Merge unlabeled items by text similarity
+    final_unlabeled = []
+    for in_sq in unlabeled_incoming:
+        in_text = str(in_sq.get("text") or in_sq.get("question_text") or "").strip().lower()
+        best_match_idx = -1
+        best_score = 0.0
+        
+        for idx, ex_sq in enumerate(unlabeled_existing):
+            ex_text = str(ex_sq.get("text") or ex_sq.get("question_text") or "").strip().lower()
+            if not in_text or not ex_text:
+                continue
+            score = SequenceMatcher(None, in_text, ex_text).ratio()
+            if score > best_score and score > 0.7:
+                best_score = score
+                best_match_idx = idx
+                
+        if best_match_idx != -1:
+            ex_sq = unlabeled_existing.pop(best_match_idx)
+            # Merge fields like above
+            in_ma = str(in_sq.get("model_answer") or "").strip()
+            if in_ma and not str(ex_sq.get("model_answer") or "").strip():
+                ex_sq["model_answer"] = in_ma
+            
+            in_marks = _to_float(in_sq.get("marks"), 0.0)
+            ex_marks = _to_float(ex_sq.get("marks"), 0.0)
+            if in_marks > ex_marks:
+                ex_sq["marks"] = in_marks
+                
+            ex_ev = list(ex_sq.get("image_evidence") or [])
+            for ev in (in_sq.get("image_evidence") or []):
+                if ev not in ex_ev:
+                    ex_ev.append(ev)
+            ex_sq["image_evidence"] = ex_ev
+            
+            # Recursive subset merge
+            in_subs = in_sq.get("subquestions") or []
+            ex_subs = ex_sq.get("subquestions") or []
+            if in_subs or ex_subs:
+                in_labels = {str(s.get("label") or "").strip().lower() for s in in_subs if str(s.get("label") or "").strip()}
+                ex_labels = {str(s.get("label") or "").strip().lower() for s in ex_subs if str(s.get("label") or "").strip()}
+                if in_subs and ex_subs and not in_labels.intersection(ex_labels) and (in_labels or ex_labels):
+                    logger.error("[AMBIGUOUS_MERGE] Disjoint nested paths at fallback label: %s vs %s. Skipping merge to preserve SSOT.", ex_labels, in_labels)
+                else:
+                    ex_sq["subquestions"] = _merge_subpart_lists(ex_subs, in_subs)
+                    logger.info("[MERGE_TRACE] Recursively merged fallback subpart, resulting in %s children.", len(ex_sq["subquestions"]))
+            
+            final_unlabeled.append(ex_sq)
+        else:
+            final_unlabeled.append(in_sq)
+            
+    # Add remaining unlabeled existing
+    final_unlabeled.extend(unlabeled_existing)
+    
+    # Combined final list
+    res = list(merged_map.values()) + final_unlabeled
+
+    # STRETCH 7 Step 2: Final Normalization Pass
+    # Ensure every subpart has a normalized_index
+    for idx, sq in enumerate(res):
+        n_idx = _label_to_index(sq.get("label"))
+        if n_idx is None:
+            # Fallback to list order if label unrecognized
+            sq["normalized_index"] = idx
+        else:
+            sq["normalized_index"] = n_idx
+            
+    try:
+        res.sort(key=lambda x: (x.get("normalized_index", 0), str(x.get("label") or "")))
+    except:
+        pass
+    return res
+
+
+def _assign_normalized_paths(subquestions: List[Dict[str, Any]], parent_path: List[int] = []) -> None:
+    """
+    STRICT Phase 7 Step 4.1: Build subpart identity paths (e.g. 1.a.i -> [0, 0]).
+    Recursively traversal to assign an immutable identity path to every node.
+    """
+    for sq in (subquestions or []):
+        if not isinstance(sq, dict):
+            continue
+            
+        n_idx = sq.get("normalized_index")
+        if n_idx is None:
+            # Step 2 fallback if missing
+            n_idx = _label_to_index(sq.get("label")) or 0
+            sq["normalized_index"] = n_idx
+            
+        path = parent_path + [n_idx]
+        sq["normalized_path"] = path
+        
+        children = sq.get("subquestions")
+        if children and isinstance(children, list):
+            _assign_normalized_paths(children, parent_path=path)
 
 
 def _is_bbox_within(inner: List[float], outer: List[float], threshold: float = 0.7) -> bool:
@@ -1510,6 +1695,8 @@ def _merge_semantic_with_visual_entities(
                         a_idx, best_semantic.get("number"), win_score, *win_comps, len(contenders))
 
         # 4. Construct Final Question
+        # STRICT Phase 7 Step 6: Semantic tree is Single Source of Truth
+        # DO NOT inject flat visual subparts here. We will enrich later.
         final_q = {
             "number": qn,
             "raw_number": str(qn),
@@ -1519,7 +1706,7 @@ def _merge_semantic_with_visual_entities(
             "question_text": "",
             "question_type": "descriptive",
             "section": spatial_sec,
-            "subquestions": [],
+            "subquestions": [], # Start empty, populate exclusively from semantic tree
             "image_evidence": [{"page_index": p_idx, "bbox": a_bbox, "visual_confidence": _to_float(anchor.get("confidence"), 0.0)}],
             "marks": None,
             "mark_source": "missing",
@@ -1544,13 +1731,98 @@ def _merge_semantic_with_visual_entities(
                 
                 matched_semantic_indices.add(s_idx)
             
-            # Winner provides primary metadata (type, marks, subquestions)
+            # Winner provides primary metadata (type, marks)
             final_q["question_text"] = " | ".join(unique_texts)
             final_q["question_type"] = best_semantic.get("question_type") or "descriptive"
             final_q["section"] = best_semantic.get("section") or spatial_sec
-            final_q["subquestions"] = copy.deepcopy(best_semantic.get("subquestions") or [])
             final_q["ai_confidence"] = best_semantic.get("ai_confidence") or best_semantic.get("confidence")
             final_q["image_evidence"] = all_evidence
+            
+            # STRICT Phase 7 Step 6: Merge ONLY semantic subparts to maintain SSOT tree
+            for s_idx, _, _ in contenders:
+                sq = semantic_questions[s_idx]
+                final_q["subquestions"] = _merge_subpart_lists(
+                    final_q["subquestions"], 
+                    sq.get("subquestions") or []
+                )
+            
+            # STRETCH 7 Step 4: Assign normalized_paths to the final merged hierarchy
+            _assign_normalized_paths(final_q["subquestions"])
+            
+            # STRICT Phase 7 Step 6: Path-aware Visual Enrichment
+            # We ONLY enrich nodes that match canonical paths. We DO NOT inject flat structural noise.
+            from app.layers.ai_structured.mark_sources import parse_visual_label_to_path
+            v_subs = (visual_entities or {}).get("subparts") or []
+            
+            for vs in v_subs:
+                if _to_int(vs.get("q"), 0) == qn:
+                    raw_lbl = str(vs.get("label") or "").strip()
+                    v_path = parse_visual_label_to_path(raw_lbl)
+                    if not v_path:
+                        continue
+                        
+                    # Find matching semantic node
+                    matched = False
+                    def _enrich_recursive(nodes: List[Dict[str, Any]]):
+                        nonlocal matched
+                        for node in nodes:
+                            if tuple(node.get("normalized_path") or []) == v_path:
+                                node["bbox"] = vs.get("bbox")
+                                node["image_evidence"] = [{"page_index": vs.get("page"), "bbox": vs.get("bbox"), "visual_confidence": vs.get("confidence")}]
+                                matched = True
+                                return
+                            if node.get("subquestions"):
+                                _enrich_recursive(node["subquestions"])
+                                if matched:
+                                    return
+                    
+                    _enrich_recursive(final_q["subquestions"])
+                    
+                    if not matched:
+                        parent_path = tuple(list(v_path)[:-1])
+                        if not parent_path:
+                            # Do not inject top-level unseen subparts, as it breaks the SSOT structure.
+                            logger.warning("[VISUAL_UNMATCHED] Top-level visual subpart '%s' (path=%s) discarded.", raw_lbl, v_path)
+                            continue
+                            
+                        # Find parent node to inject into
+                        parent_node = None
+                        def _find_parent(nodes: List[Dict[str, Any]]):
+                            nonlocal parent_node
+                            for p in nodes:
+                                if tuple(p.get("normalized_path") or []) == parent_path:
+                                    parent_node = p
+                                    return
+                                if p.get("subquestions"):
+                                    _find_parent(p["subquestions"])
+                                    if parent_node: return
+                        
+                        _find_parent(final_q["subquestions"])
+                        if parent_node:
+                            logger.info("[VISUAL_INJECT] Safely injecting visual subpart '%s' (path=%s) for qn=%s into canonical tree.", raw_lbl, v_path, qn)
+                            p_subs = parent_node.setdefault("subquestions", [])
+                            # Duplicate check
+                            existing_labels = [str(n.get("label") or "").lower() for n in p_subs]
+                            if raw_lbl.lower() in existing_labels:
+                                logger.error("[VISUAL_INJECT_CONFLICT] Conflict injecting '%s' at path %s. Ambiguous merge, skipping.", raw_lbl, v_path)
+                            else:
+                                p_subs.append({
+                                    "label": raw_lbl,
+                                    "text": "",
+                                    "marks": None,
+                                    "mark_source": "missing",
+                                    "confidence": vs.get("confidence", 0.0),
+                                    "bbox": vs.get("bbox"),
+                                    "image_evidence": [{"page_index": vs.get("page"), "bbox": vs.get("bbox"), "visual_confidence": vs.get("confidence", 0.0)}],
+                                    "normalized_path": list(v_path),
+                                    "normalized_index": v_path[-1],
+                                    "subquestions": []
+                                })
+                                try:
+                                    p_subs.sort(key=lambda x: (x.get("normalized_index", 0), str(x.get("label") or "")))
+                                except: pass
+                        else:
+                            logger.warning("[VISUAL_UNMATCHED_DISCARD] Could not find parent path %s for qn=%s. Dropping '%s'.", parent_path, qn, raw_lbl)
             
             if len(contenders) > 1:
                 logger.info("[VISUAL_MERGE] Combined %s semantic candidates for visual anchor=%s", 
@@ -1625,7 +1897,7 @@ def _merge_semantic_with_visual_entities(
             "question_text": " | ".join(unique_texts),
             "question_type": winner_sq.get("question_type") or "descriptive",
             "section": winner_sq.get("section"),
-            "subquestions": copy.deepcopy(winner_sq.get("subquestions") or []),
+            "subquestions": [],
             "ai_confidence": winner_sq.get("ai_confidence") or winner_sq.get("confidence"),
             "image_evidence": all_evidence,
             "marks": None,
@@ -1633,6 +1905,17 @@ def _merge_semantic_with_visual_entities(
             "source": "semantic_fallback",
             "_spatial": {"page": -1, "bbox": [0, 0, 0, 0]}
         }
+        
+        # STRETCH 7 Step 1: Safe merge subquestions for fallback contenders
+        for idx in indices:
+            sq = semantic_questions[idx]
+            final_q["subquestions"] = _merge_subpart_lists(
+                final_q["subquestions"], 
+                sq.get("subquestions") or []
+            )
+        
+        # STRETCH 7 Step 4: Assign normalized_paths
+        _assign_normalized_paths(final_q["subquestions"])
         
         if len(indices) > 1:
             logger.info("[VISUAL_MERGE] Merged %s fallback semantic questions into UID=%s_q%s", 
@@ -1863,46 +2146,56 @@ Return ONLY valid JSON:
         payload = _parse_json_object(raw)
         ans_list = payload.get("answers") or []
         
-        # Recursively flatten nested subparts and OR-groups into canonical map keys
-        ans_map = {}
-        subpart_count = 0
-        or_group_count = 0
-
-        def _flatten_answers(answers_list, parent_key=""):
-            nonlocal subpart_count, or_group_count
-            for a in answers_list:
-                raw_key = str(a.get("number") or a.get("label") or "").strip()
-                or_group = a.get("or_group_id")
-                if not raw_key and or_group:
-                    raw_key = str(or_group)
+        # STRICT Phase 7 Step 5.1: Build Canonical Model Answer Map
+        # Format: { question_uid: { tuple(path): { "text": str, "marks": float } } }
+        canonical_ma_map = defaultdict(dict)
+        
+        # Build a lookup from visual label-strings to (uid, path) using the provided questions list
+        uid_path_lookup = {} # label_path_str -> (uid, path_tuple)
+        
+        def _index_questions_recursive(items, prefix=""):
+            for it in items:
+                uid = it.get("question_uid") or it.get("uid")
+                num = str(it.get("number") or it.get("label") or "").strip().lower()
+                path_str = f"{prefix}.{num}" if prefix else num
+                path_tuple = tuple(it.get("normalized_path") or [])
+                
+                if uid:
+                    uid_path_lookup[path_str] = (uid, path_tuple)
+                
+                children = it.get("subquestions") or []
+                if children:
+                    _index_questions_recursive(children, path_str)
                     
-                if not raw_key:
-                    continue
+        _index_questions_recursive(questions)
 
-                path_key = f"{parent_key}.{raw_key}" if parent_key else raw_key
+        def _process_answers_recursive(ans_list, parent_path_str=""):
+            for a in ans_list:
+                num = str(a.get("number") or a.get("label") or "").strip().lower()
+                path_str = f"{parent_path_str}.{num}" if parent_path_str else num
                 
                 ans_text = str(a.get("text") or "").strip()
-                if ans_text:
-                    ans_map[path_key.lower()] = ans_text
-                    norm_key = re.sub(r'[^a-zA-Z0-9._]', '', path_key).lower()
-                    if norm_key not in ans_map:
-                        ans_map[norm_key] = ans_text
-
-                subqs = a.get("subparts")
-                if subqs and isinstance(subqs, list):
-                    _flatten_answers(subqs, path_key)
-                    
-                if parent_key:
-                    subpart_count += 1
-                if or_group:
-                    or_group_count += 1
-
-        _flatten_answers(ans_list)
+                ans_marks = to_float(a.get("marks"), None)
+                
+                if path_str in uid_path_lookup:
+                    uid, path = uid_path_lookup[path_str]
+                    canonical_ma_map[uid][path] = {
+                        "text": ans_text,
+                        "marks": ans_marks,
+                    }
+                
+                subparts = a.get("subparts") or []
+                if subparts:
+                    _process_answers_recursive(subparts, path_str)
+        
+        _process_answers_recursive(ans_list)
         
         overall_text_len = len(str(payload.get("overall_text") or ""))
-        logger.info("MODEL_ANSWER_MAP_EXTRACTED keys=%s subpart_counts=%s OR_group_counts=%s overall_text_len=%s", list(ans_map.keys()), subpart_count, or_group_count, overall_text_len)
+        logger.info("MODEL_ANSWER_CANONICAL_MAP_BUILT root_uids=%s total_paths=%s overall_text_len=%s", 
+                    len(canonical_ma_map), sum(len(v) for v in canonical_ma_map.values()), overall_text_len)
+        
         return {
-            "model_answer_map": ans_map,
+            "model_answer_map": dict(canonical_ma_map),
             "model_answer_text": str(payload.get("overall_text") or "").strip(),
         }
     except Exception as exc:
@@ -1956,47 +2249,36 @@ QUESTIONS:
         return []
 
 
-def _recursive_map_ma(items: List[Dict[str, Any]], ma_map: Dict[str, str], parent_path: str = ""):
-    """Recursively maps model answers to questions and subparts using canonical keys."""
+def _recursive_map_ma(items: List[Dict[str, Any]], ma_map: Dict[str, Dict[Tuple[int, ...], Dict[str, Any]]]):
+    """
+    STRICT Phase 7 Step 5.2: Map model answers using canonical (UID, normalized_path) identity.
+    REPLACES label-based heuristics with deterministic path identity.
+    """
     for item in items:
-        # 1. Identify current node key
-        num_obj = item.get("number") or item.get("label")
-        num_str = str(num_obj or "").strip().lower()
+        uid = item.get("question_uid") or item.get("uid")
+        path = tuple(item.get("normalized_path") or [])
         
-        # 2. Build canonical search patterns (e.g., Q1.a -> 1.a, q1a -> 1a)
-        path_key = f"{parent_path}.{num_str}" if parent_path else num_str
-        # Clean prefix 'q' if present (e.g., q1 -> 1)
-        clean_path = re.sub(r'^q(\d)', r'\1', path_key) 
+        if not uid:
+            continue
+            
+        # Lookup in canonical map
+        ma_entry = ma_map.get(uid, {}).get(path)
         
-        # 3. Search map using multiple heuristics
-        candidates = [clean_path, path_key, num_str]
-        # If path is "1.a", also try "1a"
-        if "." in clean_path:
-            candidates.append(clean_path.replace(".", ""))
+        if ma_entry:
+            ans_text = ma_entry.get("text")
+            ans_marks = ma_entry.get("marks")
+            
+            if ans_text:
+                item["model_answer"] = ans_text
+                logger.info("MODEL_ANSWER_CANONICAL_MAPPED uid=%s path=%s", uid, path)
+            
+            # Optional: marks override if trusted (RESERVED for Step 6)
+            # if ans_marks is not None:
+            #     item["marks"] = ans_marks
         
-        matched_answer = None
-        for cand in candidates:
-            if cand in ma_map:
-                matched_answer = ma_map[cand]
-                break
-        
-        if matched_answer:
-            item["model_answer"] = matched_answer
-            logger.info("MODEL_ANSWER_MAPPED path=%s matched_key=%s", clean_path, cand)
-        else:
-            item["model_answer"] = item.get("model_answer") or "" # Preserve existing if any
-            if not item["model_answer"]:
-                logger.warning("MODEL_ANSWER_NOT_MAPPED path=%s no match found", clean_path)
-        
-        # Assign canonical ID for debug reporting if not present
-        if not item.get("canonical_key"):
-            item["canonical_key"] = clean_path
-
-        # 4. Recurse
-        subqs = item.get("subquestions")
-        if subqs and isinstance(subqs, list):
-            # For next level, use clean_path as parent_path
-            _recursive_map_ma(subqs, ma_map, clean_path)
+        children = item.get("subquestions") or []
+        if children:
+            _recursive_map_ma(children, ma_map)
 
 
 async def extract_question_structure(
