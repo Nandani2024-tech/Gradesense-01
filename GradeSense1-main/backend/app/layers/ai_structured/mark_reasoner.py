@@ -50,11 +50,8 @@ def resolve_marks(
     4) pattern inference
     """
 
-    # Pre-normalization: Flatten nested subparts and normalize rubrics
-    # This ensures normalize_structure_payload doesn't strip nested data.
+    # Pre-normalization: Ensure rubrics exist (STRETCH 7 Step 3 - Preserve nesting)
     raw_questions = [dict(q) for q in (question_structure or {}).get("questions") or []]
-    for q in raw_questions:
-        q["subquestions"] = _flatten_subquestions(q.get("subquestions") or [], to_int(q.get("number"), 0))
     question_structure["questions"] = raw_questions
 
     normalized = normalize_structure_payload(question_structure or {})
@@ -192,16 +189,14 @@ def resolve_marks(
         if not q:
             continue
         
-        # [FIX 5] Model Answer Check (scoped by key)
-        # Fallback to number only if string map doesn't have it, but prefer (sec, num) logic in future
-        ma_entry = (model_answer_map or {}).get(str(key[1])) or (model_answer_map or {}).get(key[1])
+        uid = q.get("question_uid")
+        ma_entry = (model_answer_map or {}).get(uid) if uid else None
         ma_marks = None
-        ma_sub_marks = None
         if isinstance(ma_entry, dict):
-            ma_marks = to_float(ma_entry.get("marks"), 0.0)
-            ma_sub_marks = {str(k): to_float(v, 0.0) for k, v in (ma_entry.get("subparts") or {}).items()}
-        elif ma_entry is not None:
-            ma_marks = to_float(ma_entry, 0.0)
+            # () is the path for the root parent question
+            root_ma = ma_entry.get(())
+            if root_ma:
+                ma_marks = to_float(root_ma.get("marks"), 0.0)
 
         if ma_marks is not None and ma_marks > 0:
             old = to_float(q.get("marks"), 0.0)
@@ -213,7 +208,7 @@ def resolve_marks(
                 changed_questions.add(key)
                 logger.info("[MARK_OVERRIDE] q=%s section=%s reason=model_answer marks=%s", key[1], key[0], round(ma_marks, 4))
 
-        if _reconcile_subpart_marks(q, ma_sub_marks):
+        if _reconcile_subpart_marks(q, ma_entry):
             by_key[key] = q
             logger.info("[MARK_RECONCILE] q=%s section=%s subparts=true", key[1], key[0])
             _sync_audit_for_question(key, question_audit_tree, by_key)

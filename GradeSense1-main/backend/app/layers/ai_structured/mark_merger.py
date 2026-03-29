@@ -38,7 +38,13 @@ def clean_or_groups_robust(questions: List[Dict[str, Any]], visual_entities: Opt
         for i, s in enumerate(subs):
             lbl = _norm_label(s.get("label")) or f"s{i+1}"
             full_lbl = f"{prefix}{lbl}" if prefix else lbl
+            path = tuple(s.get("normalized_path") or []) # [STRETCH 7 Step 4.5]
+            
+            # Index by primary path and fallback label
+            if path:
+                q_by_ident[(num, sec, path)] = s
             q_by_ident[(num, sec, full_lbl)] = s
+            
             children = s.get("subquestions") or []
             if children:
                 _index_q_recursive(children, num, sec, prefix=f"{full_lbl}.")
@@ -50,17 +56,23 @@ def clean_or_groups_robust(questions: List[Dict[str, Any]], visual_entities: Opt
             q_by_ident[(num, sec, None)] = q
             _index_q_recursive(q.get("subquestions") or [], num, sec)
 
-    def _resolve_ident(num: int, sec: str, lbl: Optional[str]) -> Optional[Tuple[int, str, Optional[str]]]:
-        """Relaxed identity resolver for OR pairs."""
-        target = (num, sec, lbl)
+    def _resolve_ident(num: int, sec: str, lbl_or_path: Any) -> Any:
+        """Relaxed identity resolver for OR pairs, supporting labels or path tuples."""
+        target = (num, sec, lbl_or_path)
         if target in q_by_ident:
             return target
         
-        # Section relaxation: look for any section matching this number and label
-        for (n, s, l) in q_by_ident.keys():
-            if n == num and l == lbl:
-                logger.info("[OR_RELAX_MATCH] q=%s label=%s matched to section=%s (requested=%s)", num, lbl, s, sec)
-                return (n, s, l)
+        # If lbl_or_path is a label string, try to normalize it via _norm_label
+        if isinstance(lbl_or_path, str):
+            norm = _norm_label(lbl_or_path)
+            if (num, sec, norm) in q_by_ident:
+                return (num, sec, norm)
+        
+        # Section relaxation: look for any section matching this number and label/path
+        for (n, s, lp) in q_by_ident.keys():
+            if n == num and lp == lbl_or_path:
+                logger.info("[OR_RELAX_MATCH] q=%s id=%s matched to section=%s (requested=%s)", num, lbl_or_path, s, sec)
+                return (n, s, lp)
         return None
 
     # Union-Find for components
@@ -90,6 +102,9 @@ def clean_or_groups_robust(questions: List[Dict[str, Any]], visual_entities: Opt
         
         if id1 and id2:
             union(id1, id2)
+            logger.info("[OR_GROUP_PAIRING] Successfully mapped pair: %s -> ID1: %s, ID2: %s", pair, id1, id2)
+        else:
+            logger.warning("[OR_GROUP_FAILED] Could not resolve identity for pair: %s (id1=%s, id2=%s)", pair, id1, id2)
 
     groups = defaultdict(list)
     for ident in parent:
@@ -138,6 +153,7 @@ def _flatten_subquestions(subquestions: List[Dict[str, Any]], parent_qn: int) ->
                 # Leaf node
                 new_s = dict(s)
                 new_s["label"] = f"{prefix}{label}" if prefix else label
+                new_s["normalized_path"] = s.get("normalized_path") or [] # [STRETCH 7 Step 4.2]
                 # Ensure rubric exists
                 if not new_s.get("rubric"):
                     new_s["rubric"] = text[:200] if text else f"Rubric for {new_s['label']}"
@@ -198,10 +214,16 @@ def _initial_mark_pass(
             sub_values: List[Optional[float]] = [None] * len(subparts)
             sub_sources: List[str] = ["missing"] * len(subparts)
 
+            uid = q.get("question_uid")
+
             for idx, sq in enumerate(subparts):
                 lbl = _norm_label(sq.get("label")) or f"s{idx+1}"
-                skey = (sec, qn, lbl)
-                if skey in sq_margin:
+                path = tuple(sq.get("normalized_path") or []) # STRICT Phase 7 Step 6: Path mapping
+                
+                # STRICT Priority 1: Canonical Path Match ONLY
+                skey = (uid, path) if uid and path else None
+                
+                if skey and skey in sq_margin:
                     val = max(0.0, to_float(sq_margin[skey]["marks"], 0.0))
                     sub_values[idx] = val
                     sub_sources[idx] = "margin"
@@ -236,24 +258,38 @@ def _initial_mark_pass(
                 if split_values and len(split_values) == len(subparts):
                     sub_values = [round(max(0.0, to_float(v, 0.0)), 4) for v in split_values]
                     sub_sources = ["margin" for _ in subparts]
-                    # explicit_sum = round(sum(v for v in sub_values if v is not None), 4)
-                    # if total is None or total <= 0 or abs(total - explicit_sum) > 1e-6:
-                    #     total = explicit_sum
-                    #     source = "margin"
                     logger.info("[MARK_APPLY] q=%s section=%s reason=margin_split marks=%s", qn, sec, round(total, 4) if total else 0)
 
-            # Re-update structure (NO AUTO-DISTRIBUTION)
+            # Re-update structure (Leaf nodes in the flattened view reach back to nested data via path)
+            # We must apply these marks back to the nested tree [STRETCH 7 Step 4.4]
+            def _apply_recursive(nodes: List[Dict[str, Any]], parent_path: List[int] = []):
+                for node in nodes:
+                    node_path = list(node.get("normalized_path") or [])
+                    
+                    # Find matching flat result by path identity
+                    for f_idx, f_sq in enumerate(subparts):
+                        f_path = list(f_sq.get("normalized_path") or [])
+                        if f_path == node_path and node_path:
+                            node["marks"] = round(sub_values[f_idx], 4) if sub_values[f_idx] is not None else None
+                            node["mark_source"] = sub_sources[f_idx]
+                            break
+                    
+                    children = node.get("subquestions") or []
+                    if children:
+                        _apply_recursive(children, parent_path=node_path)
+            
+            _apply_recursive(raw_subs)
+            
+            # Sub-audit reflects nested results
             for idx, sq in enumerate(subparts):
-                sq["marks"] = round(sub_values[idx], 4) if sub_values[idx] is not None else None
-                sq["mark_source"] = sub_sources[idx]
+                mv = sub_values[idx]
                 sub_audit.append(
                     {
-                        "label": _norm_label(sq.get("label")) or str(sq.get("label") or ""),
-                        "marks": sq["marks"],
+                        "label": sq.get("label"),
+                        "marks": round(mv, 4) if mv is not None else None,
                         "source": sub_sources[idx],
                     }
                 )
-            q["subquestions"] = subparts
 
         q["marks"] = round(total, 4) if total is not None else None
         q["mark_source"] = source
@@ -302,14 +338,22 @@ def _sync_audit_for_question(
             row["distribution_mode"] = q.get("distribution_mode")
             conf_val = _source_confidence(q.get("mark_source"))
             row["confidence"] = round(conf_val if conf_val is not None else 0.0, 4)
-            row["subparts"] = [
-                {
-                    "label": _norm_label(sq.get("label")) or str(sq.get("label") or ""),
-                    "marks": round(max(0.0, to_float(sq.get("marks"), 0.0)), 4),
-                    "source": _norm_source(sq.get("mark_source")),
-                }
-                for sq in (q.get("subquestions") or [])
-            ]
+            
+            def _build_audit_recursive(subs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+                out = []
+                for s in subs:
+                    item = {
+                        "label": _norm_label(s.get("label")) or str(s.get("label") or ""),
+                        "marks": round(max(0.0, to_float(s.get("marks"), 0.0)), 4),
+                        "source": _norm_source(s.get("mark_source")),
+                    }
+                    children = s.get("subquestions") or []
+                    if children:
+                        item["subparts"] = _build_audit_recursive(children)
+                    out.append(item)
+                return out
+
+            row["subparts"] = _build_audit_recursive(q.get("subquestions") or [])
             break
 
 
@@ -330,43 +374,60 @@ def _redistribute_subparts_only(question: Dict[str, Any]) -> bool:
     return False
 
 
-def _reconcile_subpart_marks(question: Dict[str, Any], model_answer_marks: Optional[Dict[str, float]] = None) -> bool:
-    """Ensure subpart sum matches parent marks. If mismatch, NO SCALE / NO DISTRIBUTE.
-    Only allows explicitly matched marks.
+def _reconcile_subpart_marks(question: Dict[str, Any], path_marks_map: Optional[Dict[Tuple[int, ...], Dict[str, Any]]] = None) -> bool:
     """
-    subparts = list(question.get("subquestions") or [])
+    STRICT Phase 7 Step 5.3: Ensure subpart sum matches parent marks using canonical path mapping.
+    Recursively applies marks from path_marks_map and ensures hierarchy integrity.
+    """
+    subparts = question.get("subquestions") or []
     if not subparts:
         return False
     
     qn = to_int(question.get("number"), 0)
     parent_marks = to_float(question.get("marks"), 0.0)
     
-    # Step 3 Refinement: Use OR-aware summation from validation.py
+    # Step 3 Refinement: Use OR-aware summation
     sub_sum = compute_effective_total(question)
     
-    if abs(sub_sum - parent_marks) < 1e-6 and not model_answer_marks:
+    if abs(sub_sum - parent_marks) < 1e-6 and not path_marks_map:
         return False
         
     if abs(sub_sum - parent_marks) > 1e-6:
-        logger.warning(
-            "SUBPART_SUM_MISMATCH q=%s expected=%s sub_sum=%s (NO AUTO-RECONCILE)",
-            qn, round(parent_marks, 4), round(sub_sum, 4)
-        )
-        return False
+        # We still allow model answers to override if explicitly provided for subparts
+        if not path_marks_map:
+            logger.warning(
+                "SUBPART_SUM_MISMATCH q=%s expected=%s sub_sum=%s (NO AUTO-RECONCILE)",
+                qn, round(parent_marks, 4), round(sub_sum, 4)
+            )
+            return False
     
-    # Priority 1: Model Answer (Still used as it is considered ground truth enrichment)
-    if model_answer_marks:
-        for sq in subparts:
-            label = str(sq.get("label") or "").strip()
-            if label in model_answer_marks:
-                sq["marks"] = round(to_float(model_answer_marks[label], 0.0), 4)
-                sq["mark_source"] = MARK_REASON_RECONCILED
-        question["subquestions"] = subparts
-        new_sub_sum = sum(to_float(sq.get("marks"), 0.0) for sq in subparts)
-        if abs(new_sub_sum - parent_marks) > 1e-6:
-            question["marks"] = round(new_sub_sum, 4)
-            question["mark_source"] = MARK_REASON_RECONCILED
-        return True
+    # Priority 1: Model Answer Path-Based Reconciliation
+    if path_marks_map:
+        applied = False
+        def _apply_recursive(nodes: List[Dict[str, Any]]):
+            nonlocal applied
+            for node in nodes:
+                path = tuple(node.get("normalized_path") or [])
+                entry = path_marks_map.get(path)
+                if entry and entry.get("marks") is not None:
+                    node["marks"] = round(to_float(entry["marks"], 0.0), 4)
+                    node["mark_source"] = MARK_REASON_RECONCILED
+                    applied = True
+                    logger.info("[MARK_RECONCILE_PATH] Applied %s marks to nested node path %s.", node["marks"], path)
+                
+                children = node.get("subquestions") or []
+                if children:
+                    _apply_recursive(children)
+        
+        _apply_recursive(subparts)
+        
+        if applied:
+            # Recalculate total if sub-marks were updated
+            new_sub_sum = compute_effective_total(question)
+            if abs(new_sub_sum - parent_marks) > 1e-6:
+                question["marks"] = round(new_sub_sum, 4)
+                question["mark_source"] = MARK_REASON_RECONCILED
+            return True
 
     return False
 

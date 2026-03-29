@@ -15,6 +15,58 @@ def _norm_label(value: Any) -> Optional[str]:
     return s or None
 
 
+def _label_to_index(label_raw: Any) -> Optional[int]:
+    """Helper to convert string labels (a, b, i, ii, 1, 2) into zero-based indices."""
+    if not label_raw:
+        return None
+    val = str(label_raw).strip().lower()
+    if not val:
+        return None
+        
+    try:
+        return int(val) - 1
+    except ValueError:
+        pass
+        
+    if val.isalpha() and len(val) == 1:
+        return ord(val) - ord('a')
+        
+    romans = {"i": 0, "ii": 1, "iii": 2, "iv": 3, "v": 4, "vi": 5, "vii": 6, "viii": 7, "ix": 8, "x": 9}
+    if val in romans:
+        return romans[val]
+        
+    return None
+
+
+def parse_visual_label_to_path(label_raw: Any) -> Tuple[int, ...]:
+    """
+    STRICT Phase 7 Step 6: Visual string path translation.
+    Parses flat OR noisy OCR labels (e.g., "c|i", "c.i", "c i") into canonical path tuples (e.g., (2, 0)).
+    Allows the pipeline to bypass fallback labels entirely.
+    """
+    import re
+    if not label_raw:
+        return ()
+    
+    val = str(label_raw).strip().lower()
+    # Split by common OCR delimiters: pipe, dot, hyphen, space, underscore
+    parts = re.split(r'[\.\|\-\s\_]+', val)
+    
+    path = []
+    for p in parts:
+        if not p:
+            continue
+        idx = _label_to_index(p)
+        if idx is not None:
+            path.append(idx)
+        else:
+            # If a part isn't resolvable, try mapping fallback for the rest or break?
+            # E.g., if OCR produces "question a", "question" fails, "a" succeeds.
+            pass
+
+    return tuple(path)
+
+
 def _parse_margin_split_text(value: Any) -> Optional[List[float]]:
     import re
 
@@ -110,6 +162,14 @@ def _margin_mark_maps(
             sec = str(q.get("section") or "").strip()
             if n > 0:
                 semantic_fallback_sections[n] = sec
+                
+    # STRICT Phase 7 Step 6: UID identity map for margin marks
+    uid_dict = {}
+    for q in semantic_questions:
+        n = to_int(q.get("number"), 0)
+        u = q.get("question_uid")
+        if n > 0 and u:
+            uid_dict[n] = u
 
     for row in (visual_entities or {}).get("margin_marks") or []:
         if not isinstance(row, dict):
@@ -127,7 +187,10 @@ def _margin_mark_maps(
         mark = max(0.0, to_float(row.get("marks"), 0.0))
         if mark <= 0:
             continue
-        sub = _norm_label(row.get("sub"))
+        
+        uid = uid_dict.get(qn)
+        sub_raw = row.get("sub")
+
         raw_text = row.get("text") or row.get("raw") or row.get("expression")
         split_values: Optional[List[float]] = None
         split_attr = row.get("split")
@@ -135,6 +198,7 @@ def _margin_mark_maps(
             split_values = [to_float(v, 0.0) for v in split_attr if to_float(v, 0.0) > 0]
         if not split_values:
             split_values = _parse_margin_split_text(raw_text)
+            
         payload = {
             "marks": round(mark, 4),
             "text": str(raw_text or "").strip() or None,
@@ -146,10 +210,17 @@ def _margin_mark_maps(
                 "source": "margin",
             },
         }
-        if sub:
-            sq_marks[(section, qn, sub)] = payload
-        else:
-            q_marks[(section, qn)] = payload
+        
+        if uid:
+            if sub_raw:
+                path = parse_visual_label_to_path(sub_raw)
+                if path:
+                    sq_marks[(uid, path)] = payload
+                else:
+                    logger.warning("[MARGIN_MARK_UNMATCHED] Margin mark sub='%s' could not be mapped to path for qn=%s", sub_raw, qn)
+            else:
+                q_marks[uid] = payload
+
     return q_marks, sq_marks
 
 
