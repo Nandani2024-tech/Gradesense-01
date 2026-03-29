@@ -45,10 +45,8 @@ async def extract_model_answer_content(
     if not model_answer_images or not questions:
         return "", {}
 
-    logger.info("LEGACY_MA_EXTRACTION_REDIRECT starting")
     try:
         # Use the internal helper from ai_extraction_service to ensure consistency
-        # Note: We pass gemini-2.5-flash by default for efficiency as in the new pipeline
         res = await _extract_model_answers(
             images=model_answer_images,
             questions=questions,
