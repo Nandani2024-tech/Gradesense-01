@@ -17,7 +17,8 @@ from app.core.exceptions import CustomServiceException
 from app.models.submission import QuestionScore, SubQuestionScore, GradingResult
 from app.repositories import ExamRepo
 from app.services.pipelines.ai_structured.utils.common import _to_float
-from app.services.pipelines.ai_structured.extraction.utils import _derive_total_marks, _structure_confidence
+from app.layers.ai_structured.validation import compute_paper_effective_total
+from app.services.pipelines.ai_structured.extraction.utils import _structure_confidence
 from app.services.pipelines.ai_structured.grading.alignment_service import ALIGNMENT_COVERAGE_GATE, align_answers
 from app.services.pipelines.ai_structured.grading.grading_interface import GRADING_CONTRACT_VERSION, grade_answers_with_contracts
 from app.layers.ai_structured.validation import validate_structure
@@ -138,6 +139,10 @@ class GradingEngine:
         confidence = 1.0
         raw_text = ""
         mapped_subanswers = {}
+        
+        # Capture canonical key from extraction layer if present
+        canonical_key = question.get("canonical_key") or qid
+        q_logs.append(f"Processing node: {canonical_key}")
         
         if isinstance(mapped_packet, dict):
             # Task 5/8: Check both field names for confidence
@@ -345,16 +350,24 @@ class GradingEngine:
             
             # Step 5: OR-Aware Subpart Aggregation for Parent
             or_group_scores = defaultdict(float)
+            or_group_possible = defaultdict(float) # Task 6: Aggregate possible marks too
             standalone_total = 0.0
+            standalone_possible = 0.0
             
             for score in sub_scores:
                 ogid = getattr(score, "or_group_id", None) or next((s.get("or_group_id") for s in sub_questions if str(s.get("sub_id") or s.get("id")) == score.sub_id), None)
                 if ogid:
                     or_group_scores[ogid] = max(or_group_scores[ogid], score.obtained_marks)
+                    or_group_possible[ogid] = max(or_group_possible[ogid], score.max_marks)
                 else:
                     standalone_total += score.obtained_marks
+                    standalone_possible += score.max_marks
             
             total_awarded = standalone_total + sum(or_group_scores.values())
+            total_possible_agg = standalone_possible + sum(or_group_possible.values())
+            
+            # Ensure the parent max_marks is at least what the subparts sum to
+            max_marks = max(max_marks, total_possible_agg)
             
             # ✅ STEP 5 — SUMMARY LOG (PER QUESTION, NOT FUNCTION)
             logger.info(
@@ -631,14 +644,16 @@ class GradingEngine:
         target_total = float(blueprint.get("total_marks") or total_possible)
         normalized_score = (total_awarded / total_possible * target_total) if total_possible > 0 else 0.0
         
-        check_msg = f"[FINAL SCORE CHECK] sum_of_questions={total_awarded} total_possible={total_possible}"
-        if abs(target_total - total_possible) > 0.01:
-            check_msg += f" normalized={normalized_score:.2f}/{target_total:.2f}"
-            
-        logger.info(check_msg)
-        all_logs.append(check_msg)
+        # Phase 4: Reconcile with SSOT to prevent divergence
+        ssot_total = compute_paper_effective_total(blueprint.get("questions") or [])
+        if abs(total_possible - ssot_total) > 0.01:
+            logger.warning(
+                "TOTAL_POSSIBLE_DIVERGENCE predicted=%s ssot=%s",
+                total_possible, ssot_total
+            )
+            total_possible = ssot_total
 
-        logger.info(f"Engine totals: awarded={total_awarded}, possible={total_possible}")
+        logger.info(f"Engine totals: awarded={total_awarded}, possible={total_possible} (ssot={ssot_total})")
 
         # ADDED LOGGING START
         logger.info("[STEP SUCCESS] RUN_GRADING")
@@ -670,7 +685,7 @@ async def perform_grading(
     PROMPT_VERSION: str,
 ) -> Tuple[List[QuestionScore], Dict[str, Any]]:
 
-    derived_total = _derive_total_marks(structure)
+    derived_total = compute_paper_effective_total(structure.get("questions") or [])
     declared_total = _to_float(structure.get("total_marks"), 0.0)
     validation_meta = exam.get("question_structure_validation") or {}
     header_total_marks = _to_float(validation_meta.get("header_total_marks"), 0.0)

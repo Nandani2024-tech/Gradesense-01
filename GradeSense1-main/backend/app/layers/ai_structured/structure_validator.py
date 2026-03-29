@@ -8,7 +8,13 @@ from typing import Any, Dict, List, Optional, Tuple
 from app.core.logging_config import logger
 
 from app.infrastructure.serialization.safe_numeric import parse_section_math_expression, to_float, to_int
-from .validation import normalize_structure_payload
+from .validation import (
+    normalize_structure_payload,
+    compute_effective_total,
+    compute_paper_effective_total,
+    compute_or_groups_map as _compute_or_groups_map,
+    compute_attempt_rules as _compute_attempt_rules,
+)
 
 
 def _contiguous(numbers: List[int]) -> Tuple[bool, List[int], List[int]]:
@@ -18,48 +24,6 @@ def _contiguous(numbers: List[int]) -> Tuple[bool, List[int], List[int]]:
     expected = list(range(uniq[0], uniq[-1] + 1))
     missing = sorted(set(expected) - set(uniq))
     return uniq == expected, uniq, missing
-
-
-def _compute_or_groups_map(questions: List[Dict[str, Any]]) -> Dict[str, List[str]]:
-    grouped: Dict[str, List[str]] = defaultdict(list)
-    for q in questions:
-        gid = str(q.get("or_group_id") or "").strip()
-        if not gid:
-            continue
-        grouped[gid].append(q.get("question_uid") or q.get("uid") or str(q.get("number")))
-    return {gid: sorted(list(set(uids))) for gid, uids in grouped.items() if len(set(uids)) >= 2}
-
-
-def _compute_attempt_rules(questions: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    rules: Dict[str, Dict[str, Any]] = {}
-    for q in questions:
-        uid = q.get("question_uid") or q.get("uid")
-        if not uid:
-            continue
-        qn = to_int(q.get("number"), 0)
-        sub_count = len(q.get("subquestions") or [])
-        q_type = str(q.get("question_type") or "").strip().lower()
-        if q.get("or_group_id"):
-            rule = "best_of"
-        elif q_type in {"mcq", "fill_blank"} and sub_count <= 1:
-            rule = "binary"
-        else:
-            rule = "sum"
-        rules[uid] = {
-            "question_uid": uid,
-            "question_number": qn,
-            "rule": rule,
-            "subparts": sub_count,
-        }
-    return rules
-
-
-def _compute_effective_total(questions: List[Dict[str, Any]]) -> float:
-    total = 0.0
-    for q in questions:
-        marks = max(0.0, to_float(q.get("marks"), 0.0))
-        total += marks
-    return round(total, 4)
 
 
 def validate_structure(
@@ -119,7 +83,7 @@ def validate_structure(
         if len(labels) != len(set(labels)):
             duplicate_subparts += 1
 
-        sub_sum = round(sum(max(0.0, to_float(sq.get("marks"), 0.0)) for sq in subparts), 4)
+        sub_sum = compute_effective_total(q)
         logger.info("SUBPART_SUM_CHECK q=%s parent=%s sub_sum=%s subparts=%s", qn, round(q_marks, 4), sub_sum, len(subparts))
         if subparts and abs(sub_sum - q_marks) > 1e-6:
             subpart_sum_errors += 1
@@ -250,7 +214,7 @@ def validate_structure(
         errors.append(f"mark_coverage_low:{mark_coverage}")
         repair_tasks.append("missing_marks")
 
-    effective_total = _compute_effective_total(questions)
+    effective_total = compute_paper_effective_total(questions)
     if header_total_reliable and header_total_marks is not None and header_total_marks > 0:
         expected = round(float(header_total_marks), 4)
         if abs(effective_total - expected) > 1e-6:

@@ -1736,23 +1736,31 @@ async def _extract_model_answers(
 
     ctx_lines = _build_ctx(questions)
     ctx = "\n".join(ctx_lines)
-    prompt = f"""You are an expert at extracting model answers/solutions from images.
+    prompt = f"""You are an expert at extracting model answers/solutions from images of an answer key.
 Below is the question structure (number and marks).
-Extract the model answer text for each question.
-If the answer key is structured, preserve that structure.
+Extract the model answer text for each question. 
+If a question has subparts, extract the specific answer for each subpart.
 
-CONTEXT:
+CONTEXT (Question IDs and Marks):
 {ctx}
 
 Return ONLY valid JSON:
 {{
   "answers": [
     {{
-      "number": 1,
-      "text": "Correct answer text..."
+      "number": "1",
+      "text": "Answer for Q1..."
+    }},
+    {{
+      "number": "1.a",
+      "text": "Answer for Q1 subpart a..."
+    }},
+    {{
+      "number": "2.1",
+      "text": "Answer for Q2 subpart 1..."
     }}
   ],
-  "overall_text": "Full extracted text..."
+  "overall_text": "Full text of the answer key..."
 }}"""
     try:
         logger.info("MODEL_ANSWER_LLM_PROMPT_BUILT context_len=%s", len(ctx))
@@ -1765,7 +1773,20 @@ Return ONLY valid JSON:
         logger.info("MODEL_ANSWER_RAW_LLM_RESPONSE len=%s", len(raw or ""))
         payload = _parse_json_object(raw)
         ans_list = payload.get("answers") or []
-        ans_map = {str(a.get("number")): str(a.get("text") or "").strip() for a in ans_list if a.get("number")}
+        
+        # Normalize keys in ans_map for flexible lookup (e.g., 1.a, 1a, Q1.A)
+        ans_map = {}
+        for a in ans_list:
+            raw_key = str(a.get("number") or "").strip()
+            if not raw_key:
+                continue
+            # Store both raw and normalized for maximum hit rate
+            ans_map[raw_key.lower()] = str(a.get("text") or "").strip()
+            norm_key = re.sub(r'[^a-zA-Z0-9.]', '', raw_key).lower()
+            if norm_key not in ans_map:
+                ans_map[norm_key] = str(a.get("text") or "").strip()
+                
+        logger.info("MODEL_ANSWER_MAP_EXTRACTED keys=%s overall_text_len=%s", list(ans_map.keys()), len(str(payload.get("overall_text") or "")))
         logger.info("MODEL_ANSWER_MAP_EXTRACTED keys=%s overall_text_len=%s", list(ans_map.keys()), len(str(payload.get("overall_text") or "")))
         return {
             "model_answer_map": ans_map,
@@ -1820,6 +1841,49 @@ QUESTIONS:
     except Exception as exc:
         logger.warning("TOPIC_INFERENCE_FAILED error=%s", exc)
         return []
+
+
+def _recursive_map_ma(items: List[Dict[str, Any]], ma_map: Dict[str, str], parent_path: str = ""):
+    """Recursively maps model answers to questions and subparts using canonical keys."""
+    for item in items:
+        # 1. Identify current node key
+        num_obj = item.get("number") or item.get("label")
+        num_str = str(num_obj or "").strip().lower()
+        
+        # 2. Build canonical search patterns (e.g., Q1.a -> 1.a, q1a -> 1a)
+        path_key = f"{parent_path}.{num_str}" if parent_path else num_str
+        # Clean prefix 'q' if present (e.g., q1 -> 1)
+        clean_path = re.sub(r'^q(\d)', r'\1', path_key) 
+        
+        # 3. Search map using multiple heuristics
+        candidates = [clean_path, path_key, num_str]
+        # If path is "1.a", also try "1a"
+        if "." in clean_path:
+            candidates.append(clean_path.replace(".", ""))
+        
+        matched_answer = None
+        for cand in candidates:
+            if cand in ma_map:
+                matched_answer = ma_map[cand]
+                break
+        
+        if matched_answer:
+            item["model_answer"] = matched_answer
+            logger.info("MODEL_ANSWER_MAPPED path=%s matched_key=%s", clean_path, cand)
+        else:
+            item["model_answer"] = item.get("model_answer") or "" # Preserve existing if any
+            if not item["model_answer"]:
+                logger.warning("MODEL_ANSWER_NOT_MAPPED path=%s no match found", clean_path)
+        
+        # Assign canonical ID for debug reporting if not present
+        if not item.get("canonical_key"):
+            item["canonical_key"] = clean_path
+
+        # 4. Recurse
+        subqs = item.get("subquestions")
+        if subqs and isinstance(subqs, list):
+            # For next level, use clean_path as parent_path
+            _recursive_map_ma(subqs, ma_map, clean_path)
 
 
 async def extract_question_structure(
@@ -2444,25 +2508,7 @@ async def extract_question_structure(
         # Mapping extracted model answers to individual questions for DeterministicGrader
         ma_map = ma_results.get("model_answer_map") or {}
         logger.info("MODEL_ANSWER_RECURSIVE_MAPPING_START ma_map_keys=%s", list(ma_map.keys()))
-        
-        def _recursive_map_ma(items: List[Dict[str, Any]], depth: int = 0):
-            for item in items:
-                # Use number or label as key
-                num_obj = item.get("number") or item.get("label")
-                num_str = str(num_obj or "")
-                
-                if num_str in ma_map:
-                    item["model_answer"] = ma_map[num_str]
-                    logger.info("MODEL_ANSWER_MAPPED depth=%s key=%s length=%s", depth, num_str, len(item["model_answer"]))
-                else:
-                    logger.warning("MODEL_ANSWER_NOT_FOUND_IN_MAP depth=%s key=%s (num_obj=%s)", depth, num_str, num_obj)
-                
-                # Handle nested subquestions or OR-groups
-                subqs = item.get("subquestions")
-                if subqs and isinstance(subqs, list):
-                    _recursive_map_ma(subqs, depth + 1)
-        
-        _recursive_map_ma(structure.get("questions") or [])
+        _recursive_map_ma(structure.get("questions") or [], ma_map)
         logger.info("MODEL_ANSWER_RECURSIVE_MAPPING_COMPLETE")
 
     if infer_topics:

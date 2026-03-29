@@ -9,8 +9,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.logging_config import logger
 from app.core.exceptions import CustomServiceException
-from app.infrastructure.ocr.provider import get_ocr_provider
-from app.infrastructure.ocr.provider.models import OCRLine
+from app.models.submission import QuestionScore, SubQuestionScore, GradingResult
+from app.repositories import ExamRepo
+from app.services.pipelines.ai_structured.utils.common import _to_float
+from app.layers.ai_structured.validation import compute_paper_effective_total
 from app.constants.layers import (
     VISUAL_HEADER_HEIGHT_RATIO,
     MARGIN_MARK_CONF_THRESHOLD,
@@ -474,13 +476,6 @@ def _canonicalize_or_group_ids(
     return out
 
 
-def _compute_effective_total(question_marks: Dict[int, float], questions: List[Dict[str, Any]]) -> float:
-    total = 0.0
-    for qn, mark in question_marks.items():
-        total += max(0.0, mark)
-    return round(total, 4)
-
-
 async def resolve_visual_marks(
     *,
     question_structure: Dict[str, Any],
@@ -869,8 +864,8 @@ async def resolve_visual_marks(
         "questions": sorted(resolved_questions, key=lambda r: to_int(r.get("number"), 0)),
         "section_math_blocks": section_exprs,
         "total_questions": len(resolved_questions),
-        "total_marks": round(_compute_effective_total(resolved_q_marks, resolved_questions), 4),
-        "effective_total_marks": round(_compute_effective_total(resolved_q_marks, resolved_questions), 4),
+        "total_marks": compute_paper_effective_total(resolved_questions),
+        "effective_total_marks": compute_paper_effective_total(resolved_questions),
         "numbering_contiguous": bool(question_structure.get("numbering_contiguous", False)),
     }
 

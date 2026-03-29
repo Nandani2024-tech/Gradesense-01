@@ -185,12 +185,17 @@ def compute_attempt_rules(questions: List[Dict[str, Any]]) -> Dict[str, Dict[str
 def compute_effective_total(question: Dict[str, Any]) -> float:
     """
     Computes the logically effective total for a single question based on subparts.
+    Recursively evaluates subquestions to handle nested OR-groups and hierarchies.
     If multiple subparts share an or_group_id, only the max marks in that group is counted.
     If no subparts, falls back to the question's own marks.
     """
+    if not isinstance(question, dict):
+        # Defensive check to prevent list-as-dict crash
+        raise TypeError(f"compute_effective_total expected dict, got {type(question).__name__}")
+
     subquestions = question.get("subquestions") or []
     if not subquestions:
-        return to_float(question.get("marks"), 0.0)
+        return round(to_float(question.get("marks"), 0.0), 4)
 
     # Constraint: Only group if or_group_id is present and not empty.
     # Preserve simple sum behavior if no subparts have an or_group_id.
@@ -199,7 +204,8 @@ def compute_effective_total(question: Dict[str, Any]) -> float:
     non_or_marks = 0.0
 
     for sq in subquestions:
-        marks = to_float(sq.get("marks"), 0.0)
+        # Recursively compute marks for subparts
+        marks = compute_effective_total(sq)
         gid = str(sq.get("or_group_id") or "").strip()
         if gid:
             groups[gid].append(marks)
@@ -208,7 +214,7 @@ def compute_effective_total(question: Dict[str, Any]) -> float:
             non_or_marks += marks
 
     if not has_any_or:
-        return round(sum(to_float(sq.get("marks"), 0.0) for sq in subquestions), 4)
+        return round(sum(compute_effective_total(sq) for sq in subquestions), 4)
 
     total = non_or_marks
     for gid, marks_list in groups.items():
@@ -222,13 +228,19 @@ def compute_paper_effective_total(questions: List[Dict[str, Any]]) -> float:
     Computes the effective total for the whole paper, considering choice questions (OR groups).
     Uses compute_effective_total(q) for each individual question's marks.
     """
+    if not isinstance(questions, list):
+        # Defensive check to prevent dict-as-list crash
+        raise TypeError(f"compute_paper_effective_total expected list, got {type(questions).__name__}")
+
     grouped: Dict[Optional[str], List[Dict[str, Any]]] = defaultdict(list)
     for q in questions:
+        if not isinstance(q, dict):
+            continue
         grouped[q.get("or_group_id")].append(q)
 
     def _q_marks(q: Dict[str, Any]) -> float:
         parent = to_float(q.get("marks"), 0.0)
-        # Use OR-aware summation for subparts
+        # Use OR-aware recursive summation for subparts
         sub_sum = compute_effective_total(q)
         return max(parent, sub_sum)
 
@@ -240,6 +252,7 @@ def compute_paper_effective_total(questions: List[Dict[str, Any]]) -> float:
         else:
             total += sum(_q_marks(q) for q in qs)
     return round(total, 2)
+
 
 
 def _contiguous(numbers: List[int]) -> Tuple[bool, List[int], List[int]]:

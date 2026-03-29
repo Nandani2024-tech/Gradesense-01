@@ -1,5 +1,7 @@
 from typing import Any, Dict, List
 from app.services.pipelines.ai_structured.utils.common import _to_float
+from app.layers.ai_structured.validation import compute_effective_total
+
 
 def question_structure_to_legacy_questions(structure: Dict[str, Any]) -> List[Dict[str, Any]]:
     legacy = []
@@ -9,7 +11,7 @@ def question_structure_to_legacy_questions(structure: Dict[str, Any]) -> List[Di
                 "question_number": int(q.get("number")),
                 "question_uid": str(q.get("question_uid") or f"qv2_{int(q.get('number'))}"),
                 "question_uuid": str(q.get("question_uid") or f"qv2_{int(q.get('number'))}"),
-                "max_marks": _to_float(q.get("marks"), 0.0),
+                "max_marks": compute_effective_total(q),
                 "question_text": str(q.get("question_text") or "").strip(),
                 "model_answer": str(q.get("model_answer") or "").strip(),
                 "rubric": str(q.get("rubric") or "").strip(),

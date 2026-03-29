@@ -2,6 +2,7 @@ from typing import Any, Dict, List, Optional
 from app.layers.ai_structured.validation import (
     normalize_structure_payload,
     compute_effective_total,
+    compute_paper_effective_total,
 )
 from .common_utils import _to_float
 
@@ -83,26 +84,9 @@ def _apply_audit_tree_marks(structure: Dict[str, Any], question_audit_tree: Opti
         by_num[qn] = q
 
     normalized["questions"] = [by_num[int(q.get("number"))] for q in (normalized.get("questions") or []) if str(q.get("number", "")).isdigit()]
-    normalized["total_marks"] = compute_effective_total(normalized.get("questions") or [])
+    
+    # Phase 2 Fix: Call compute_paper_effective_total for list of questions
+    normalized["total_marks"] = compute_paper_effective_total(normalized.get("questions") or [])
     normalized["effective_total_marks"] = normalized["total_marks"]
     return normalized
 
-
-def _derive_total_marks(structure: Dict[str, Any]) -> float:
-    grouped: Dict[Optional[str], List[Dict[str, Any]]] = {}
-    for q in (structure.get("questions") or []):
-        grouped.setdefault(q.get("or_group_id"), []).append(q)
-
-    def _q_marks(q: Dict[str, Any]) -> float:
-        marks = _to_float(q.get("marks"), 0.0)
-        if marks > 0:
-            return marks
-        return sum(_to_float(sq.get("marks"), 0.0) for sq in (q.get("subquestions") or []))
-
-    total = 0.0
-    for gid, qs in grouped.items():
-        if gid:
-            total += max((_q_marks(q) for q in qs), default=0.0)
-        else:
-            total += sum(_q_marks(q) for q in qs)
-    return round(total, 2)
