@@ -5,10 +5,7 @@ from typing import Optional, Dict, Any
 from app.core.logging_config import logger
 from app.core.database import db
 from app.services.storage.gridfs_helpers import get_exam_model_answer_images, get_exam_question_paper_images
-from app.services.extraction.auto_extraction import (
-    auto_extract_questions,
-    extract_model_answer_content
-)
+from app.services.extraction.auto_extraction import auto_extract_questions
 from app.services.extraction.parsing import parse_question_number
 from app.services.extraction.utils import _to_float_or_none, _normalize_sub_id
 from app.config.llm_config import get_llm_api_key, get_llm_service
@@ -68,23 +65,6 @@ async def _process_question_paper_async(exam_id: str):
             exam_updated = await db.exams.find_one({"exam_id": exam_id})
             questions = exam_updated.get("questions", [])
 
-            async def run_model_answer():
-                if model_images:
-                    logger.info("[QP-ASYNC] Starting redundant model answer extraction check")
-                    ma_text, ma_map = await extract_model_answer_content(
-                        model_answer_images=model_images,
-                        questions=questions,
-                        llm_service=llm_service
-                    )
-                    if ma_text or ma_map:
-                        logger.info(f"[QP-ASYNC] Model answer text and map extracted successfully for exam {exam_id}. Map size: {len(ma_map)}")
-                        await db.exam_files.update_one(
-                            {"exam_id": exam_id, "file_type": "model_answer"},
-                            {"$set": {"model_answer_text": ma_text, "model_answer_map": ma_map, "updated_at_redundant": datetime.now(timezone.utc).isoformat()}}
-                        )
-                    else:
-                        logger.warning(f"[QP-ASYNC] Model answer extraction (redundant) returned empty text or map for exam {exam_id}")
-
             async def run_mark_validation():
                 if MARK_VALIDATION_ENABLED:
                     try:
@@ -99,7 +79,7 @@ async def _process_question_paper_async(exam_id: str):
                         logger.warning(f"Mark validation report sync failed: {ve}")
 
 
-            await asyncio.gather(run_model_answer(), run_mark_validation())
+            await run_mark_validation()
 
     except Exception as e:
         logger.error(f"[QP-ASYNC] Failed for exam {exam_id}: {e}", exc_info=True)

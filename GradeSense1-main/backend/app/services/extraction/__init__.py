@@ -8,10 +8,7 @@ from .blueprint import (
     build_question_blueprint_from_pdf
 )
 
-from .auto_extraction import (
-    auto_extract_questions,
-    extract_model_answer_content
-)
+from .auto_extraction import auto_extract_questions
 from app.services.pipelines.ai_extraction_service import extract_question_structure
 
 
@@ -33,7 +30,6 @@ from .parsing import (
 
 __all__ = [
     "auto_extract_questions",
-    "extract_model_answer_content",
     "build_question_blueprint_from_exam_questions",
     "build_question_blueprint_from_pdf",
     "parse_question_number",
