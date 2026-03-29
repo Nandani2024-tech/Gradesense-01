@@ -104,13 +104,16 @@ def _as_payload_dict(parsed: Any) -> Optional[Dict[str, Any]]:
     if isinstance(parsed, dict):
         if any(
             key in parsed
-            for key in ("questions", "section_math_blocks", "total_questions", "total_marks", "effective_total_marks")
+            for key in ("questions", "section_math_blocks", "total_questions", "total_marks", "effective_total_marks", "answers", "overall_text")
         ):
             return parsed
         return None
     if isinstance(parsed, list):
         rows = [row for row in parsed if isinstance(row, dict)]
         if rows and len(rows) == len(parsed):
+            # Bypass flattening into generic questions if this is a Model Answer
+            if any("text" in r and "subparts" in r for r in rows) or any("answers" in r for r in rows) or any("text" in r and "number" in r and "marks" not in r for r in rows):
+                return {"answers": rows}
             return {"questions": rows}
         return None
     return None
@@ -1739,7 +1742,8 @@ async def _extract_model_answers(
     prompt = f"""You are an expert at extracting model answers/solutions from images of an answer key.
 Below is the question structure (number and marks).
 Extract the model answer text for each question. 
-If a question has subparts, extract the specific answer for each subpart.
+If a question has subparts, extract the specific answer for each subpart exactly under the parent node into the "subparts" array.
+For OR-groups, extract them as separate parallel items and specify their "or_group_id".
 
 CONTEXT (Question IDs and Marks):
 {ctx}
@@ -1749,15 +1753,17 @@ Return ONLY valid JSON:
   "answers": [
     {{
       "number": "1",
-      "text": "Answer for Q1..."
+      "text": "Parent answer",
+      "subparts": [
+        {{"number": "a", "text": "Answer a"}},
+        {{"number": "b", "text": "Answer b"}}
+      ]
     }},
     {{
-      "number": "1.a",
-      "text": "Answer for Q1 subpart a..."
-    }},
-    {{
-      "number": "2.1",
-      "text": "Answer for Q2 subpart 1..."
+      "number": "2",
+      "text": "Second question answer",
+      "or_group_id": "Q2_OR",
+      "subparts": []
     }}
   ],
   "overall_text": "Full text of the answer key..."
@@ -1774,20 +1780,44 @@ Return ONLY valid JSON:
         payload = _parse_json_object(raw)
         ans_list = payload.get("answers") or []
         
-        # Normalize keys in ans_map for flexible lookup (e.g., 1.a, 1a, Q1.A)
+        # Recursively flatten nested subparts and OR-groups into canonical map keys
         ans_map = {}
-        for a in ans_list:
-            raw_key = str(a.get("number") or "").strip()
-            if not raw_key:
-                continue
-            # Store both raw and normalized for maximum hit rate
-            ans_map[raw_key.lower()] = str(a.get("text") or "").strip()
-            norm_key = re.sub(r'[^a-zA-Z0-9.]', '', raw_key).lower()
-            if norm_key not in ans_map:
-                ans_map[norm_key] = str(a.get("text") or "").strip()
+        subpart_count = 0
+        or_group_count = 0
+
+        def _flatten_answers(answers_list, parent_key=""):
+            nonlocal subpart_count, or_group_count
+            for a in answers_list:
+                raw_key = str(a.get("number") or a.get("label") or "").strip()
+                or_group = a.get("or_group_id")
+                if not raw_key and or_group:
+                    raw_key = str(or_group)
+                    
+                if not raw_key:
+                    continue
+
+                path_key = f"{parent_key}.{raw_key}" if parent_key else raw_key
                 
-        logger.info("MODEL_ANSWER_MAP_EXTRACTED keys=%s overall_text_len=%s", list(ans_map.keys()), len(str(payload.get("overall_text") or "")))
-        logger.info("MODEL_ANSWER_MAP_EXTRACTED keys=%s overall_text_len=%s", list(ans_map.keys()), len(str(payload.get("overall_text") or "")))
+                ans_text = str(a.get("text") or "").strip()
+                if ans_text:
+                    ans_map[path_key.lower()] = ans_text
+                    norm_key = re.sub(r'[^a-zA-Z0-9._]', '', path_key).lower()
+                    if norm_key not in ans_map:
+                        ans_map[norm_key] = ans_text
+
+                subqs = a.get("subparts")
+                if subqs and isinstance(subqs, list):
+                    _flatten_answers(subqs, path_key)
+                    
+                if parent_key:
+                    subpart_count += 1
+                if or_group:
+                    or_group_count += 1
+
+        _flatten_answers(ans_list)
+        
+        overall_text_len = len(str(payload.get("overall_text") or ""))
+        logger.info("MODEL_ANSWER_MAP_EXTRACTED keys=%s subpart_counts=%s OR_group_counts=%s overall_text_len=%s", list(ans_map.keys()), subpart_count, or_group_count, overall_text_len)
         return {
             "model_answer_map": ans_map,
             "model_answer_text": str(payload.get("overall_text") or "").strip(),
