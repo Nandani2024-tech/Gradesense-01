@@ -10,8 +10,11 @@ import json
 import os
 import re
 import uuid
+from datetime import datetime
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
+import traceback
+
 
 STRICT_MODE = True
 
@@ -36,7 +39,8 @@ from app.layers.ai_structured.structure_repair import apply_structure_repairs
 from app.layers.ai_structured.structure_validator import validate_structure as validate_structure_stage3
 from app.layers.ai_structured.validation import normalize_structure_payload
 from app.adapters.visual_extractor import extract_visual_entities
-from app.utils.identity_manager import build_question_uid, normalize_section
+from app.utils.identity_manager import canonicalize_uid, normalize_section, UIDCollisionError
+from app.utils.text_utils import normalize_text_unicode_safe
 
 
 _ALLOWED_TYPES = {
@@ -57,8 +61,14 @@ _ALLOWED_TYPES = {
 }
 
 
-def _to_float(value: Any, default: float = 0.0) -> float:
-    return safe_float(value, default)
+def _to_float(value: Any, default: Any = 0.0) -> Any:
+    try:
+        if value is None or str(value).strip() == "":
+            return default
+        return safe_float(value, 0.0 if default is None else default)
+    except:
+        return default
+
 
 
 def _parse_question_number(value: Any) -> Optional[int]:
@@ -462,6 +472,96 @@ def _normalize_visual_payload(payload: Dict[str, Any], page_offset: int, page_co
 
     return out
 
+def _merge_question_anchors(visual_questions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Phase 2: Consolidates fragmented visual blocks into single anchors.
+    Ensures 1:1 mapping for vertically split questions.
+    """
+    if not visual_questions:
+        return []
+
+    # Group by number - we will then split/merge based on page and spatial proximity
+    groups_by_num = defaultdict(list)
+    for q in visual_questions:
+        qn = q.get("number")
+        if qn is not None:
+            groups_by_num[qn].append(q)
+
+    merged_list = []
+    
+    for qn, group in groups_by_num.items():
+        if len(group) == 1:
+            merged_list.append(group[0])
+            continue
+            
+        # Sort by (page, ymin)
+        group.sort(key=lambda x: (x.get("page") if x.get("page") is not None else x.get("page_index", 0), 
+                                 (x.get("bbox") or [0,0,0,0])[1]))
+        
+        # Sub-groups: blocks that are contiguous or spatially close
+        current_subgroup = [group[0]]
+        for i in range(1, len(group)):
+            prev = current_subgroup[-1]
+            curr = group[i]
+            
+            p_prev = prev.get("page") if prev.get("page") is not None else prev.get("page_index", 0)
+            p_curr = curr.get("page") if curr.get("page") is not None else curr.get("page_index", 0)
+            
+            y_prev_max = (prev.get("bbox") or [0,0,0,1000])[3]
+            y_curr_min = (curr.get("bbox") or [0,0,0,0])[1]
+            
+            # Merge criteria: 
+            # 1. Same page + reasonably close (Vertical split)
+            # 2. Sequential pages + (prev is at bottom OR curr is at top)
+            can_merge = False
+            if p_prev == p_curr:
+                can_merge = True # Same page, same number -> Merge unless they are in different sections (handled later)
+            elif p_curr == p_prev + 1:
+                # Multi-page fragment: if prev is in bottom 30% and curr is in top 30%
+                if y_prev_max > 700 and y_curr_min < 300:
+                    can_merge = True
+            
+            if can_merge:
+                current_subgroup.append(curr)
+            else:
+                # Flush current subgroup and start new
+                merged_list.append(self_consolidate(current_subgroup, qn))
+                current_subgroup = [curr]
+        
+        merged_list.append(self_consolidate(current_subgroup, qn))
+        
+    return merged_list
+
+def self_consolidate(group: List[Dict[str, Any]], qn: int) -> Dict[str, Any]:
+    if len(group) == 1:
+        return group[0]
+        
+    first = group[0]
+    p = first.get("page") if first.get("page") is not None else first.get("page_index", 0)
+    
+    # Union bbox if same page, else take first page main bbox
+    # (Actually for multi-page we might want to store a list of bboxes per page,
+    # but the system currently expects a single bbox/page for the main anchor.
+    # We will prioritize the first block's page for the ID but store all evidence.)
+    
+    min_x = min(q.get("bbox", [0,0,0,0])[0] for q in group)
+    min_y = min(q.get("bbox", [0,0,0,0])[1] for q in group)
+    max_x = max(q.get("bbox", [0,0,0,0])[2] for q in group)
+    max_y = max(q.get("bbox", [0,0,0,0])[3] for q in group)
+    
+    avg_conf = sum(q.get("confidence", 0.0) for q in group) / len(group)
+    
+    return {
+        "number": qn,
+        "raw_number": first.get("raw_number") or str(qn),
+        "bbox": [min_x, min_y, max_x, max_y],
+        "page": p,
+        "confidence": avg_conf,
+        "merged": True,
+        "merge_count": len(group),
+        "merge_reason": "multi_page_or_vertical_fragment" if len(set(q.get("page") for q in group)) > 1 else "vertical_split_consolidation"
+    }
+
 
 def _extract_partial_payload(raw_text: str) -> Optional[Dict[str, Any]]:
     snippets = _extract_balanced_json_candidates(raw_text, max_candidates=4096)
@@ -483,13 +583,16 @@ def _extract_partial_payload(raw_text: str) -> Optional[Dict[str, Any]]:
                 if not isinstance(q, dict):
                     continue
                 qn = _to_int(q.get("number"), 0)
+                qn = _to_int(q.get("number"), 0)
                 sec = str(q.get("section") or "").strip()
-                uid = build_question_uid(sec, qn) if qn else None
+                # Use canonical UID generation
+                uid = canonicalize_uid(sec, qn)
                 if not uid:
                     continue
                 if uid not in questions_by_uid:
                     q_copy = dict(q)
-                    # Ensure UID is present in the object
+                    # Trace Raw -> Normalized
+                    logger.debug("IDENTITY_TRACE: raw_sec=%s raw_num=%s -> uid=%s", sec, qn, uid)
                     q_copy["question_uid"] = uid
                     q_copy["uid"] = uid
                     questions_by_uid[uid] = q_copy
@@ -515,10 +618,11 @@ def _extract_partial_payload(raw_text: str) -> Optional[Dict[str, Any]]:
         if isinstance(parsed, dict) and _looks_like_question_dict(parsed):
             qn = _to_int(parsed.get("number"), 0)
             sec = str(parsed.get("section") or "").strip()
-            uid = build_question_uid(sec, qn) if qn else None
+            uid = canonicalize_uid(sec, qn)
             if uid:
                 if uid not in questions_by_uid:
                     q_copy = dict(parsed)
+                    logger.debug("IDENTITY_TRACE_OBJ: raw_sec=%s raw_num=%s -> uid=%s", sec, qn, uid)
                     q_copy["question_uid"] = uid
                     q_copy["uid"] = uid
                     questions_by_uid[uid] = q_copy
@@ -678,34 +782,7 @@ def _normalize_type(value: Any) -> str:
     return alias.get(t, "descriptive")
 
 
-def _parse_subpart_candidate(q: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    import re
-
-    raw = str(q.get("number") or "").strip()
-    text = str(q.get("question_text") or "").strip()
-
-    patterns = [
-        r"^\s*(\d+)\s*\(\s*([a-z])\s*\)\s*$",   # 1(a)
-        r"^\s*(\d+)\s*[-]\s*([a-z])\s*$",       # 1-a
-        r"^\s*(\d+)\s+([a-z])\s*$",             # 1 a
-        r"^\s*(\d+)([a-z])\s*$",                # 1a
-    ]
-
-    for pat in patterns:
-        m = re.match(pat, raw, flags=re.IGNORECASE)
-        if m:
-            parent = int(m.group(1))
-            label = m.group(2).lower()
-
-            return {
-                "parent": parent,
-                "label": label,
-                "text": text,
-                "raw": raw,
-                "confidence": _to_float(q.get("confidence"), 0.0),
-            }
-
-    return None
+# DELETED: _parse_subpart_candidate (Legacy heuristic replaced by canonical_uid)
 
 
 def _normalize_batch_payload(
@@ -713,7 +790,18 @@ def _normalize_batch_payload(
     page_offset: int = 0,
     page_ocr_texts: Optional[List[str]] = None,
     full_ocr_results: Optional[List[Dict[str, Any]]] = None,  # Refined Phase 1
+    paper_id: Optional[str] = None,
+    seen_uids: Optional[set] = None,
+    uid_trace: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
+    if seen_uids is None:
+        seen_uids = set()
+    if uid_trace is None:
+        uid_trace = []
+    
+    # Phase 3: Semantic Trace Audit hook
+    semantic_trace = []
+    
     payload = payload or {}
     questions = payload.get("questions") or []
     normalized_questions: List[Dict[str, Any]] = []
@@ -724,14 +812,23 @@ def _normalize_batch_payload(
     for q in questions:
         if not isinstance(q, dict):
             continue
-        qn = _parse_question_number(q.get("number"))
-        if not qn:
-            orphan = _parse_subpart_candidate(q)
-            if orphan:
-                orphan_subparts.append(orphan)
-            else:
-                logger.warning("QUESTION_DROPPED raw=%s", q.get("number"))
-            continue
+        
+        raw_num = q.get("number")
+        qn = _parse_question_number(raw_num)
+        
+        # STRICT CLEANUP: If number is unparseable as int, we still process it!
+        # Legacy discard logic REMOVED.
+        if qn is None and raw_num:
+             # Try to treat the whole raw_num as the number if it's alphanumeric
+             # This handles cases like "1a" or "Q1" that might have been rejected but should be kept
+             logger.info("PROCESSING_UNCONVENTIONAL_ID: raw=%s", raw_num)
+             # We use 0 as a flag or try to extract leading digits
+             match = re.search(r'\d+', str(raw_num))
+             qn = int(match.group(0)) if match else 0
+
+        if qn == 0 and not raw_num:
+            logger.error("STRICT_MODE_VIOLATION: Missing question number entirely. Generating fallback UID.")
+            qn = -1 # Special negative flag for missing numbers
 
         subquestions: List[Dict[str, Any]] = []
         for sq in (q.get("subquestions") or []):
@@ -769,40 +866,92 @@ def _normalize_batch_payload(
                 }
             )
 
-        llm_text = str(q.get("question_text") or "").strip()
+        raw_llm_text = str(q.get("question_text") or "").strip()
+        normalized_llm_text = normalize_text_unicode_safe(raw_llm_text)
 
-        # Fix 1: OCR logic removed. If missing text, fail fast.
-        if not llm_text:
-            logger.error("STRICT_MODE_VIOLATION: Mission question text for qn=%d", qn)
-            raise ValueError(f"extraction_incomplete_no_text: qn={qn}")
+        # Trace text normalization
+        logger.debug("TEXT_NORM_TRACE: raw=%s... -> norm=%s...", raw_llm_text[:20], normalized_llm_text[:20])
+
+        if not normalized_llm_text:
+            if subquestions:
+                logger.warning("[MinorSemanticWarning] Missing question text for qn=%s, but subparts exist. Proceeding with [no_text] parent.", qn)
+            else:
+                logger.warning("STRICT_MODE_WARNING: Missing question text for qn=%s and no subparts. Using fallback.", qn)
+            normalized_llm_text = "[no_text]"
 
         # Fix 2: Set ai_confidence based on LLM confidence.
         ai_conf = _to_float(q.get("ai_confidence", q.get("confidence")), 0.0)
         ai_conf = max(ai_conf, 0.1)
 
         # identity: generate globally unique question_uid (canonical)
-        sec = (str(q.get("section") or "").strip() or None)
-        sec_name = sec.strip() if sec else "default"
-        q_uid = build_question_uid(sec_name, qn)
+        raw_sec = (str(q.get("section") or "").strip() or None)
+        sec_name = raw_sec if raw_sec else "default"
+        q_uid = canonicalize_uid(sec_name, qn, paper_id=paper_id)
+
+        # Log UID Trace
+        logger.info("[UID_TRACE] raw_sec=%s raw_num=%s -> uid=%s", raw_sec, q.get("number"), q_uid)
+        
+        # Phase 1: STRICT Collision Detection
+        if q_uid in seen_uids:
+            logger.error("UID_COLLISION_DETECTED: uid=%s", q_uid)
+            raise UIDCollisionError(f"Duplicate UID detected: {q_uid}")
+        seen_uids.add(q_uid)
+
+        # Store forensic trace (Phase 1)
+        uid_trace.append({
+            "raw_section": raw_sec,
+            "raw_number": q.get("number"),
+            "normalized_section": sec_name,
+            "normalized_number": qn,
+            "uid": q_uid,
+            "raw_text": raw_llm_text,
+            "normalized_text": normalized_llm_text
+        })
+        
+        # Phase 3: Semantic Trace
+        semantic_trace.append({
+            "uid": q_uid,
+            "raw_text": raw_llm_text,
+            "normalized_text": normalized_llm_text,
+            "subpart_of": None,
+            "status": "extracted"
+        })
 
         question_obj = {
             "number": qn,
             "raw_number": str(q.get("number")),
             "question_uid": q_uid,
-            "uid": q_uid,  # Step 2: Ensure "uid" field is present
-            "section": sec,
+            "uid": q_uid,
+            "section": raw_sec,
             "instruction": (str(q.get("instruction") or "").strip() or None),
-            "question_text": llm_text,
+            "question_text": normalized_llm_text,
             "question_type": _normalize_type(q.get("question_type")),
             "marks": None,
             "mark_source": "missing",
             "mark_confidence": 0.0,
             "options": list(q.get("options") or []) or None,
-            "subquestions": subquestions,
+            "subquestions": [], # Will be populated recursively below
             "image_evidence": evidence,
             "ai_confidence": round(ai_conf, 4),
             "confidence": round(ai_conf, 4),
         }
+
+        # Recursive subquestion normalization
+        raw_subs = q.get("subquestions") or []
+        if raw_subs:
+            _normalize_subquestions_recursive(
+                raw_subs, 
+                question_obj["subquestions"], 
+                sec_name, 
+                qn, 
+                q_uid, 
+                seen_uids, 
+                uid_trace, 
+                paper_id,
+                None, # parent_subpart prefix
+                semantic_trace # Phase 3 Trace Hook
+            )
+
         normalized_questions.append(question_obj)
         q_by_uid[q_uid] = question_obj
 
@@ -835,7 +984,87 @@ def _normalize_batch_payload(
         "total_marks": 0.0,
         "effective_total_marks": 0.0,
         "numbering_contiguous": bool(payload.get("numbering_contiguous", False)),
+        "_semantic_trace": semantic_trace # Phase 3 Trace hook
     }
+
+
+def _normalize_subquestions_recursive(
+    raw_subs: List[Dict[str, Any]],
+    target_list: List[Dict[str, Any]],
+    section: str,
+    parent_num: int,
+    parent_uid: str,
+    seen_uids: set,
+    uid_trace: List[Dict[str, Any]],
+    paper_id: Optional[str] = None,
+    parent_subpart: str = None,
+    semantic_trace: Optional[List[Dict[str, Any]]] = None # Phase 3 Hook
+):
+    for sq in raw_subs:
+        if not isinstance(sq, dict):
+            continue
+        label = str(sq.get("label") or sq.get("number") or "").strip()
+        if not label:
+            continue
+            
+        # Composite subpart for multi-level nesting
+        current_subpart = f"{parent_subpart}_{label}" if parent_subpart else label
+        sq_uid = canonicalize_uid(section, parent_num, subpart=current_subpart, paper_id=paper_id)
+        
+        if sq_uid in seen_uids:
+            logger.error("SUBPART_UID_COLLISION_STRICT: uid=%s", sq_uid)
+            # Phase 3: Strict UID Collision for subparts
+            raise UIDCollisionError(f"Duplicate subpart UID detected: {sq_uid}")
+            
+        seen_uids.add(sq_uid)
+        
+        raw_text = str(sq.get("text") or sq.get("question_text") or "").strip()
+        norm_text = normalize_text_unicode_safe(raw_text)
+        
+        # Phase 3: Semantic Trace
+        if semantic_trace is not None:
+            semantic_trace.append({
+                "uid": sq_uid,
+                "raw_text": raw_text,
+                "normalized_text": norm_text,
+                "subpart_of": parent_uid,
+                "status": "extracted"
+            })
+        
+        uid_trace.append({
+            "parent_uid": parent_uid,
+            "label": label,
+            "uid": sq_uid,
+            "raw_text": raw_text,
+            "normalized_text": norm_text
+        })
+        
+        sq_obj = {
+            "label": label,
+            "text": norm_text,
+            "question_uid": sq_uid,
+            "uid": sq_uid,
+            "marks": None,
+            "mark_source": "missing",
+            "mark_confidence": 0.0,
+            "subquestions": []
+        }
+        target_list.append(sq_obj)
+        
+        nested = sq.get("subquestions") or []
+        if nested:
+            _normalize_subquestions_recursive(
+                nested, 
+                sq_obj["subquestions"], 
+                section, 
+                parent_num, 
+                sq_uid, 
+                seen_uids, 
+                uid_trace, 
+                paper_id,
+                current_subpart,
+                semantic_trace # Recursive Hook
+            )
 
 
 def _merge_questions(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str, Any]:
@@ -1113,7 +1342,17 @@ def _assign_normalized_paths(subquestions: List[Dict[str, Any]], parent_path: Li
             _assign_normalized_paths(children, parent_path=path)
 
 
+def _to_path_key(path: Any) -> str:
+    """Convert a normalized_path (list/tuple) to a stable string key for JSON-safe mapping."""
+    if not path:
+        return ""
+    if isinstance(path, (list, tuple)):
+        return ",".join(map(str, path))
+    return str(path)
+
+
 def _is_bbox_within(inner: List[float], outer: List[float], threshold: float = 0.7) -> bool:
+
     """Check if inner bbox is mostly within outer bbox [ymin, xmin, ymax, xmax]."""
     if not inner or not outer or len(inner) != 4 or len(outer) != 4:
         return False
@@ -1245,7 +1484,7 @@ def _extract_structured_question_anchors(structure: Dict[str, Any]) -> List[Dict
     return anchors
 
 
-def _merge_question_anchors(
+def _merge_anchor_sources(
     visual_questions: List[Dict[str, Any]],
     ocr_anchors: List[Dict[str, Any]],
     structured_anchors: List[Dict[str, Any]],
@@ -1258,8 +1497,7 @@ def _merge_question_anchors(
     logger.info("[ANCHOR_MERGE_START] visual=%s ocr=%s structured=%s", 
                 len(visual_questions), len(ocr_anchors or []), len(structured_anchors or []))
     
-    def normalize_section(section):
-        return (str(section) or "default").strip().lower()
+    # REPLACED LOCAL DUPLICATE: normalize_section now imported from identity_manager
 
     # Step 1 — Build Anchor Map from visual_questions
     anchor_map = {}
@@ -1495,9 +1733,15 @@ def _merge_semantic_with_visual_entities(
     import re
 
     semantic_questions = stage2_structure.get("questions") or []
-    visual_anchors = (visual_entities or {}).get("questions") or []
+    raw_visual_anchors = (visual_entities or {}).get("questions") or []
     
-    logger.info("[VISUAL_MERGE_START] anchors=%s semantic=%s", len(visual_anchors), len(semantic_questions))
+    # Phase 2: Hardening the visual layer by consolidating split blocks first.
+    visual_anchors = _merge_question_anchors(raw_visual_anchors)
+    
+    anchor_trace = [] # Trace for phase2_anchor_trace.json
+    
+    logger.info("[VISUAL_MERGE_START] raw=%s merged=%s semantic=%s", 
+                len(raw_visual_anchors), len(visual_anchors), len(semantic_questions))
     logger.info("[OR_GROUP_REMOVED] legacy or_group assignments cleared in merge layer")
 
     # [PHASE 8.1] DETERMINISTIC SECTION RESOLUTION SYSTEM
@@ -1832,13 +2076,32 @@ def _merge_semantic_with_visual_entities(
                             best_semantic.get("number"), win_score, qn)
             
         # 5. COLLISION CHECK (Deferred UID Generation)
-        sec_norm = normalize_section(final_q["section"]) if final_q["section"] else None
+        sec_norm = normalize_section(final_q["section"]) if final_q["section"] else "default"
         key = (sec_norm, qn)
         if key in used_keys:
-            # FATAL ERROR as per hard constraint 4
-            raise ValueError(f"[PHASE1_ERROR] Duplicate question detected: section {sec_norm}, number {qn}. Strict 1:1 anchor rule violated.")
+            # Phase 2: Strict enforcement of 1:1 mapping
+            from app.utils.identity_manager import DuplicateAnchorError
+            msg = f"Duplicate question anchor detected: section={sec_norm}, number={qn}. Strict 1:1 rule violated."
+            logger.error("[PHASE2_ERROR] %s", msg)
+            raise DuplicateAnchorError(msg)
         
         used_keys.add(key)
+        
+        # Forensic Trace: Visual -> Canonical UID
+        from app.utils.identity_manager import canonicalize_uid
+        final_uid = canonicalize_uid(final_q["section"], qn, paper_id=visual_entities.get("paper_id"))
+        anchor_trace.append({
+            "anchor_id": str(uuid.uuid4()),
+            "question_number": qn,
+            "section": final_q["section"],
+            "bbox": a_bbox,
+            "page": p_idx,
+            "canonical_uid": final_uid,
+            "merge_info": {
+                "is_merged": anchor.get("merged", False),
+                "block_count": anchor.get("merge_count", 1)
+            }
+        })
         
         final_questions.append(final_q)
 
@@ -1924,9 +2187,12 @@ def _merge_semantic_with_visual_entities(
         final_questions.append(final_q)
         used_keys.add(key)
 
-    # [PHASE 8.1] Final Guarantee: No question leaves merge layer with section=None
+    # [PHASE 8.1] Final Guarantee: Assign normalized_paths to entire root set
+    _assign_normalized_paths(final_questions)
+    
     for f_q in final_questions:
         if not f_q.get("section"):
+
             f_q["section"] = _resolve_section(f_q, raw_headers, visual_entities)
 
     logger.info("[VISUAL_MERGE_COMPLETE] anchors=%s semantic_matched=%s final=%s", 
@@ -1937,6 +2203,7 @@ def _merge_semantic_with_visual_entities(
         "section_math_blocks": stage2_structure.get("section_math_blocks", []),
         "total_questions": len(final_questions),
         "total_marks": 0.0,
+        "_anchor_trace": anchor_trace # Forensic hook for Phase 2
     }
     
     # PHASE 2: Return merged structure AS-IS to prevent double normalization.
@@ -2175,14 +2442,16 @@ Return ONLY valid JSON:
                 path_str = f"{parent_path_str}.{num}" if parent_path_str else num
                 
                 ans_text = str(a.get("text") or "").strip()
-                ans_marks = to_float(a.get("marks"), None)
+                ans_marks = _to_float(a.get("marks"), None)
+
                 
                 if path_str in uid_path_lookup:
                     uid, path = uid_path_lookup[path_str]
-                    canonical_ma_map[uid][path] = {
+                    canonical_ma_map[uid][_to_path_key(path)] = {
                         "text": ans_text,
                         "marks": ans_marks,
                     }
+
                 
                 subparts = a.get("subparts") or []
                 if subparts:
@@ -2199,8 +2468,9 @@ Return ONLY valid JSON:
             "model_answer_text": str(payload.get("overall_text") or "").strip(),
         }
     except Exception as exc:
-        logger.warning("MODEL_ANSWER_EXTRACTION_FAILED error=%s", exc)
+        logger.warning("MODEL_ANSWER_EXTRACTION_FAILED error=%s traceback=%s", exc, traceback.format_exc())
         return {}
+
 
 
 async def _infer_topics(
@@ -2256,13 +2526,14 @@ def _recursive_map_ma(items: List[Dict[str, Any]], ma_map: Dict[str, Dict[Tuple[
     """
     for item in items:
         uid = item.get("question_uid") or item.get("uid")
-        path = tuple(item.get("normalized_path") or [])
+        path = item.get("normalized_path")
         
         if not uid:
             continue
             
-        # Lookup in canonical map
-        ma_entry = ma_map.get(uid, {}).get(path)
+        # Lookup in canonical map using stringified path key
+        ma_entry = ma_map.get(uid, {}).get(_to_path_key(path))
+
         
         if ma_entry:
             ans_text = ma_entry.get("text")
@@ -2297,8 +2568,13 @@ async def extract_question_structure(
     model_name: str = "qwen2.5:latest",
     llm_service: "AbstractLLMService",
     model_answer_map: Optional[Dict[str, Any]] = None,
+    paper_id: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any], str, int]:
     """Extract question structure with layered visual+semantic pipeline."""
+    
+    # Trace for Phase 1
+    uid_trace: List[Dict[str, Any]] = []
+    seen_uids = set()
 
     if not question_paper_images:
         raise ValueError("paper_images_required")
@@ -2387,6 +2663,9 @@ async def extract_question_structure(
                 "headers": [],
                 "header_total": None,
             }
+
+    visual_entities = dict(visual_entities or {})
+    visual_entities["paper_id"] = paper_id
 
     def _avg_conf(items: List[Dict[str, Any]]) -> float:
         vals = [float(row.get("confidence") or 0.0) for row in items if isinstance(row, dict)]
@@ -2509,6 +2788,9 @@ async def extract_question_structure(
                 page_offset=start_idx,
                 page_ocr_texts=page_ocr_texts,
                 full_ocr_results=full_ocr_results,
+                paper_id=paper_id,
+                seen_uids=seen_uids,
+                uid_trace=uid_trace
             )
 
             logger.warning(
@@ -2581,6 +2863,11 @@ async def extract_question_structure(
                         pass
                     merged[q_uid] = _merge_questions(merged[q_uid], q)
 
+        # Phase 3: Aggregate semantic traces
+        all_semantic_traces = []
+        for payload in batch_payloads:
+            all_semantic_traces.extend(payload.get("_semantic_trace") or [])
+
         # Final validation pass: ensure each question has at least some content
         for uid, q in merged.items():
             if not q.get("question_text") and not q.get("subquestions"):
@@ -2603,6 +2890,7 @@ async def extract_question_structure(
             "effective_total_marks": 0.0,
             "bottom_total_marks": 0.0,
             "numbering_contiguous": True,
+            "_semantic_trace": all_semantic_traces
         }
 
         # Step 4: POST_SEMANTIC_MERGE_STATE (Safe Logging)
@@ -2670,13 +2958,30 @@ async def extract_question_structure(
         stage2_structure = {"questions": [], "section_math_blocks": [], "total_questions": 0, "total_marks": 0.0}
         retry_count = max_retries
 
-    # If semantic extraction yields nothing, STOP and log failure instead of silent fallback.
-    if not (stage2_structure.get("questions") or []):
+    # Step 4: SEMANTIC_FAILURE_CHECK
+    # Softened for Phase 3: only fail if NO questions are extracted at all.
+    semantic_questions = stage2_structure.get("questions") or []
+    if not semantic_questions:
         logger.error(
             "SEMANTIC_EXTRACTION_FAILED reason=empty_semantic_output pages_processed=%s",
             len(question_paper_images)
         )
         raise ValueError("SEMANTIC_EXTRACTION_FAILED: No questions extracted from semantic layer.")
+
+    # Phase 3: Save forensic semantic trace
+    st_trace = stage2_structure.pop("_semantic_trace", [])
+    if st_trace:
+        debug_dir = "debug"
+        if not os.path.exists(debug_dir):
+            os.makedirs(debug_dir)
+        st_path = os.path.join(debug_dir, "phase3_semantic_trace.json")
+        with open(st_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "paper_id": paper_id,
+                "timestamp": datetime.utcnow().isoformat(),
+                "trace": st_trace
+            }, f, indent=2, ensure_ascii=False)
+        logger.info("[PHASE3_TRACE_SAVED] path=%s count=%s", st_path, len(st_trace))
 
     # Step 5: BEFORE_VISUAL_MERGE (Safe Logging)
     try:
@@ -2697,9 +3002,24 @@ async def extract_question_structure(
         full_ocr_results=full_ocr_results,
     )
     
+    # Phase 2: Save forensic anchor trace
+    anchor_trace = stage2_structure.pop("_anchor_trace", [])
+    if anchor_trace:
+        debug_dir = "debug"
+        if not os.path.exists(debug_dir):
+            os.makedirs(debug_dir)
+        trace_path = os.path.join(debug_dir, "phase2_anchor_trace.json")
+        with open(trace_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "paper_id": paper_id,
+                "timestamp": datetime.utcnow().isoformat(),
+                "trace": anchor_trace
+            }, f, indent=2, ensure_ascii=False)
+        logger.info("[PHASE2_TRACE_SAVED] path=%s count=%s", trace_path, len(anchor_trace))
+    
     # NEW IDENTITY ENFORCEMENT: Central UID generation
     from app.utils.identity_manager import assign_question_uids
-    assign_question_uids(stage2_structure.get("questions") or [])
+    assign_question_uids(stage2_structure.get("questions") or [], paper_id=paper_id)
     
     for q in stage2_structure.get("questions") or []:
         if q.get("number") == 1:
@@ -2722,7 +3042,7 @@ async def extract_question_structure(
     except Exception as exc:
         logger.warning("STRUCTURED_ANCHOR_EXTRACTION_FAILED error=%s", exc)
         structured_anchors = []
-    merged_anchors = _merge_question_anchors(
+    merged_anchors = _merge_anchor_sources(
         list((visual_entities or {}).get("questions") or []),
         ocr_anchors,
         structured_anchors,
@@ -2755,6 +3075,10 @@ async def extract_question_structure(
         header_total_reliable=header_total_reliable,
         model_answer_map=model_answer_map,
     )
+    
+    # Phase 4: Capture main grading trace
+    main_grading_trace = reasoned.pop("_grading_trace", [])
+    
     structure = reasoned.get("resolved_structure") or stage2_structure
     question_audit_tree = list(reasoned.get("question_audit_tree") or [])
 
@@ -2810,10 +3134,10 @@ async def extract_question_structure(
                     model_name=model_name,
                     llm_service=llm_service,
                 )
-                reconstructed_semantic = _normalize_batch_payload(reconstructed_raw, page_offset=0)
+                reconstructed_semantic = _normalize_batch_payload(reconstructed_raw, page_offset=0, paper_id=paper_id)
                 reconstructed_semantic = _merge_semantic_with_visual_entities(reconstructed_semantic, visual_entities)
                 from app.utils.identity_manager import assign_question_uids
-                assign_question_uids(reconstructed_semantic.get("questions") or [])
+                assign_question_uids(reconstructed_semantic.get("questions") or [], paper_id=paper_id)
                 reconstructed_reasoned = resolve_marks(
                     reconstructed_semantic,
                     visual_entities=visual_entities,
@@ -2821,6 +3145,10 @@ async def extract_question_structure(
                     header_total_reliable=header_total_reliable,
                     model_answer_map=model_answer_map,
                 )
+                # Phase 4: Combine traces from retry if applicable
+                retry_grading_trace = reconstructed_reasoned.pop("_grading_trace", [])
+                main_grading_trace.extend(retry_grading_trace)
+                
                 reconstructed_structure = reconstructed_reasoned.get("resolved_structure") or reconstructed_semantic
                 reconstructed_audit = list(reconstructed_reasoned.get("question_audit_tree") or [])
                 
@@ -2942,6 +3270,30 @@ async def extract_question_structure(
         )
     except Exception:
         pass
+
+    # Save phase1_uid_trace.json
+    try:
+        trace_path = os.path.join("debug", "phase1_uid_trace.json")
+        os.makedirs("debug", exist_ok=True)
+        with open(trace_path, "w", encoding="utf-8") as f:
+            json.dump(uid_trace, f, indent=2, ensure_ascii=False)
+        logger.info("PHASE1_UID_TRACE_SAVED path=%s count=%s", trace_path, len(uid_trace))
+    except Exception as e:
+        logger.warning("FAILED_TO_SAVE_UID_TRACE error=%s", e)
+
+    # Phase 4: Save forensic grading trace
+    try:
+        if main_grading_trace:
+            g_trace_path = os.path.join("debug", "phase4_grading_trace.json")
+            with open(g_trace_path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "paper_id": paper_id,
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "trace": main_grading_trace
+                }, f, indent=2, ensure_ascii=False)
+            logger.info("[PHASE4_TRACE_SAVED] path=%s count=%s", g_trace_path, len(main_grading_trace))
+    except Exception as e:
+        logger.warning("FAILED_TO_SAVE_GRADING_TRACE error=%s", e)
 
     return {
         **structure,

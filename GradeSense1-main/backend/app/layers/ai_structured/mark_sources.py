@@ -140,9 +140,9 @@ def _source_confidence(source: str) -> float:
 def _margin_mark_maps(
     visual_entities: Optional[Dict[str, Any]],
     semantic_questions: Optional[List[Dict[str, Any]]] = None
-) -> Tuple[Dict[Tuple[str, int], Dict[str, Any]], Dict[Tuple[str, int, str], Dict[str, Any]]]:
-    q_marks: Dict[Tuple[str, int], Dict[str, Any]] = {}
-    sq_marks: Dict[Tuple[str, int, str], Dict[str, Any]] = {}
+) -> Tuple[Dict[str, Dict[str, Any]], Dict[Tuple[str, Tuple[int, ...]], Dict[str, Any]]]:
+    q_marks: Dict[str, Dict[str, Any]] = {}
+    sq_marks: Dict[Tuple[str, Tuple[int, ...]], Dict[str, Any]] = {}
     
     # [FIX 5] Build (page, number) -> section lookup to resolve margin mark ambiguity
     anchor_sections: Dict[Tuple[int, int], str] = {}
