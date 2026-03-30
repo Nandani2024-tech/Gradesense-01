@@ -69,26 +69,94 @@ def extract_question_numbers(text: str):
 
 
 
+def _normalize_detected_uid(raw_uid: str) -> Optional[str]:
+    """
+    Standardizes OCR/LLM output into logical leaf format.
+    'Q47' or '47' -> 'q47'
+    """
+    if not raw_uid:
+        return None
+    
+    s = str(raw_uid).strip().lower()
+    
+    # Handle 'q47' or 'Q47'
+    if s.startswith("q") and s[1:].isdigit():
+        return s
+    # Handle raw '47'
+    if s.isdigit():
+        return f"q{s}"
+        
+    # Handle full hallucinated IDs (already have q, just need to ensure lowercase)
+    if "_q" in s:
+        q_idx = s.rfind("_q")
+        return s[q_idx+1:]
+        
+    return None
+
+
+def _resolve_uid_identity(raw_uid: str, expected_set: Set[str]) -> Optional[str]:
+    """
+    A deterministic, case-insensitive, schema-aware UID resolver.
+    """
+    normalized = _normalize_detected_uid(raw_uid)
+    if not normalized:
+        return None
+
+    # ✅ Case-insensitive matching pool
+    expected_lower_map = {e.lower(): e for e in expected_set}
+
+    # Rule 1 — Direct leaf match (_q47)
+    target_suffix = f"_{normalized}"
+    matches = [
+        original for lower, original in expected_lower_map.items()
+        if lower.endswith(target_suffix)
+    ]
+
+    # 🚨 Trace (MANDATORY for forensic visibility)
+    logger.info("[RESOLVER_DEBUG] raw=%s normalized=%s matches=%s", raw_uid, normalized, matches)
+
+    # Rule 2 — Unique match only
+    if len(matches) == 1:
+        return matches[0]
+
+    # Rule 3 — Ambiguity safety (implicit: returns None if len > 1)
+    return None
+
+
 def _normalize_alignment_answers(payload: Dict[str, Any], expected_uids: List[str]) -> List[Dict[str, Any]]:
     answers = []
     allowed_types = {"mcq", "written", "blank"}
+    total_count = 0
+    resolved_count = 0
+    dropped_count = 0
     expected_set = set(expected_uids)
 
     for row in (payload.get("answers") or []):
         if not isinstance(row, dict):
             continue
             
-        # ✅ STEP 1 — UID PASSTHROUGH (STRICT)
+        total_count += 1
+        # ✅ STEP 1 — UID RESOLUTION (FUZZY SUFFIX SUPPORT)
         raw_uid = row.get("question_uid")
+        
+        # 🔗 [RECOVERY LAYER] Handle missing UID by deriving from question_number
+        if not raw_uid and row.get("question_number") is not None:
+            qn_val = row.get("question_number")
+            raw_uid = f"q{qn_val}"
+            logger.info("[UID_RECOVERY_ATTEMPT] Constructing fallback UID from number: raw=%s", raw_uid)
+
         if not raw_uid:
             raise ValueError(f"Alignment fast-fail: missing question_uid in answer map: {row}")
-        normalized_uid = raw_uid
+        
+        normalized_uid = _resolve_uid_identity(raw_uid, expected_set)
         
         # ✅ STEP 4 — REMOVE UNMAPPED KEYS
-        if normalized_uid not in expected_set:
-            logger.warning("DROPPED_INVALID_UIDS: %s", normalized_uid)
+        if not normalized_uid:
+            logger.warning("DROPPED_INVALID_UIDS: %s", raw_uid)
+            dropped_count += 1
             continue
 
+        resolved_count += 1
         detected_type = str(row.get("detected_type") or "written").strip().lower()
         if detected_type not in allowed_types:
             detected_type = "written"
@@ -109,6 +177,13 @@ def _normalize_alignment_answers(payload: Dict[str, Any], expected_uids: List[st
             "status": row_status,
         }
         answers.append(ans)
+    
+    logger.info(
+        "[ALIGNMENT_SUMMARY] total=%d resolved=%d dropped=%d",
+        total_count,
+        resolved_count,
+        dropped_count
+    )
     return answers
 
 
@@ -316,56 +391,106 @@ async def align_answers(
 
                 # STEP 4: FILTER BLUEPRINT PER BATCH
                 detected_questions = extract_question_numbers(batch_ocr)
+                
+                logger.info(
+                    "[DEBUG_DETECTED_QUESTIONS] batch=%d detected=%s",
+                    batch_index,
+                    detected_questions
+                )
+
                 normalized_detected = list(detected_questions)
                 
                 filtered_questions = []
+                expected_keys = set(blueprint_index.keys())
+                seen_uids = set()
+
                 for q_slug in normalized_detected:
-                    # 1. Direct match ONLY
+                    # 1. Direct Match (Fast Path)
                     if q_slug in blueprint_index:
-                        filtered_questions.append(blueprint_index[q_slug])
+                        uid = q_slug
+                    else:
+                        # 2. Identity-Aware Resolution
+                        uid = _resolve_uid_identity(q_slug, expected_keys)
 
-                # HARD LIMIT FILTERED BLUEPRINT
-                MAX_QUESTIONS_PER_BATCH = 15 # Increased from 8 to be more robust
-                if len(filtered_questions) > MAX_QUESTIONS_PER_BATCH:
-                    filtered_questions = filtered_questions[:MAX_QUESTIONS_PER_BATCH]
+                    # 3. Skip if unresolved
+                    if not uid:
+                        continue
 
-                # FALLBACK STRATEGY if no questions detected
-                if not filtered_questions:
-                    # Use a larger fallback window proportional to total questions
-                    BATCH_FALLBACK_SIZE = 8 # Increased from 5
-                    all_qs = question_structure.get("questions") or []
-                    if all_qs:
-                        fallback_start = (batch_index * BATCH_FALLBACK_SIZE) % len(all_qs)
-                        filtered_questions = all_qs[fallback_start : fallback_start + BATCH_FALLBACK_SIZE]
+                    # 4. Ambiguity-safe + Deduplication
+                    if uid in seen_uids:
+                        continue
+
+                    seen_uids.add(uid)
+                    filtered_questions.append(blueprint_index[uid])
 
                 logger.info(
-                    "alignment_blueprint_filtered",
-                    extra={
-                        "batch_index": batch_index,
-                        "detected_questions": normalized_detected,
-                        "filtered_size": len(filtered_questions),
-                        "filtered_uids": [q.get("question_uid") for q in filtered_questions]
-                    }
+                    "[DEBUG_FILTERED_QUESTIONS] batch=%d count=%d data=%s",
+                    batch_index,
+                    len(filtered_questions),
+                    [q.get("question_uid") for q in filtered_questions]
                 )
 
-                filtered_blueprint = {"questions": filtered_questions}
+                # ✅ STEP 5: LOGICAL SUB-BATCHING (RECALL FIX)
+                # Fallback Strategy if no questions were detected by OCR
+                if not filtered_questions:
+                    logger.info("[DEBUG_FALLBACK_TRIGGERED] batch=%d triggered=True", batch_index)
+                    FALLBACK_SIZE = 15 # Match chunk size for consistency
+                    all_qs = question_structure.get("questions") or []
+                    if all_qs:
+                        # Use batch_index to offset the window so different images see different questions
+                        start_offset = (batch_index * FALLBACK_SIZE) % len(all_qs)
+                        filtered_questions = all_qs[start_offset : start_offset + FALLBACK_SIZE]
+
+                # Instead of slicing to 15, we split the questions into safe batches for the LLM.
+                LLM_CHUNK_SIZE = 15
+                MAX_TOTAL_QS = 45 # Safety ceiling for a single image set
                 
-                # ✅ STEP 6 — LLM ALIGNMENT (NO FALLBACK)
-                payload = await _llm_align_answers(
-                    question_structure=filtered_blueprint,
-                    answer_images=batch,
-                    llm_service=llm_service,
-                    ocr_text=batch_ocr,
-                    **kwargs,
+                # Use all available questions (up to a reasonable paper limit)
+                if len(filtered_questions) > MAX_TOTAL_QS:
+                    logger.warning("[LIMIT_CAP] Capping batch context at %d from %d", MAX_TOTAL_QS, len(filtered_questions))
+                    filtered_questions = filtered_questions[:MAX_TOTAL_QS]
+
+                chunks = [filtered_questions[i:i + LLM_CHUNK_SIZE] for i in range(0, len(filtered_questions), LLM_CHUNK_SIZE)]
+                
+                if not chunks:
+                    return []
+
+                logger.info(
+                    "[SUB_BATCH_START] batch=%d chunks=%d questions=%d",
+                    batch_index,
+                    len(chunks),
+                    len(filtered_questions)
                 )
 
-                # Adjust page indices
-                for ans in (payload.get("answers") or []):
-                    if isinstance(ans, dict) and str(ans.get("page_index", "")).isdigit():
-                        ans["page_index"] = int(ans["page_index"]) + start_idx
+                sub_tasks = []
+                for chunk in chunks:
+                    chunk_blueprint = {"questions": chunk}
+                    sub_tasks.append(_llm_align_answers(
+                        question_structure=chunk_blueprint,
+                        answer_images=batch,
+                        llm_service=llm_service,
+                        ocr_text=batch_ocr,
+                        **kwargs,
+                    ))
+
+                # Launch parallel sub-batches for this image set
+                chunk_responses = await safe_gather(sub_tasks)
+
+                all_batch_normalized = []
+                for idx, payload in enumerate(chunk_responses):
+                    chunk_uids = [q.get("question_uid") for q in chunks[idx]]
+                    
+                    # 🔗 [SCHEMA_BINDING] Normalize using ONLY the chunk's UIDs
+                    normalized_chunk = _normalize_alignment_answers(payload, chunk_uids)
+                    
+                    # Adjust page indices
+                    for ans in normalized_chunk:
+                        if isinstance(ans, dict) and str(ans.get("page_index", "")).isdigit():
+                            ans["page_index"] = int(ans["page_index"]) + start_idx
+                    
+                    all_batch_normalized.extend(normalized_chunk)
                 
-                normalized = _normalize_alignment_answers(payload, expected_uids)
-                return normalized
+                return all_batch_normalized
                 
             except Exception as exc:
                 logger.error("[STEP FAILED] BATCH_ALIGNMENT | error=%s", exc)
