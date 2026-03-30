@@ -7,8 +7,9 @@ import json
 from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.core.logging_config import logger
 from app.infrastructure.serialization.safe_numeric import to_float, to_int
-from app.utils.identity_manager import UIDCollisionError, MissingUIDError
+from app.utils.identity_manager import UIDCollisionError, MissingUIDError, canonicalize_uid
 
 
 
@@ -44,7 +45,7 @@ def _normalize_subquestion(sub: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def normalize_structure_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+def normalize_structure_payload(payload: Dict[str, Any], paper_id: Optional[str] = None, allow_collisions: bool = False) -> Dict[str, Any]:
     questions = payload.get("questions") or []
     normalized_questions: List[Dict[str, Any]] = []
     seen_uids: Dict[str, int] = {}
@@ -53,13 +54,26 @@ def normalize_structure_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
             continue
         qn = to_int(q.get("number"), 0)
         sec = (str(q.get("section") or "").strip() or "default")
-        # Pass-through UI enforcement (NO GENERATION ALLOWED)
-        final_uid = q.get("question_uid")
+        final_uid = q.get("question_uid") or q.get("uid")
+        
+        # Phase 4 Focus: Force prefix compliance if paper_id is passed down
+        if final_uid and paper_id and not str(final_uid).startswith(paper_id):
+            logger.warning("[VALIDATION_UID_PREFIX_FIX] Re-computing legacy UID %s into prefixed format.", final_uid)
+            final_uid = None
+
         if not final_uid:
-            raise MissingUIDError(f"Missing question_uid for question {qn}")
+            # Fallback to generation if missing, but log it as a potential consistency issue
+            final_uid = canonicalize_uid(sec, qn, paper_id=paper_id)
+            
+        if not final_uid:
+            raise MissingUIDError(f"Failed to resolve question_uid for question {qn}")
         
         if final_uid in seen_uids:
-            raise UIDCollisionError(f"Duplicate UID detected: {final_uid}")
+            if not allow_collisions:
+                # In Phase 0, we treat this as a fatal error to ensure deterministic identity
+                raise UIDCollisionError(f"Duplicate UID detected: {final_uid}")
+            else:
+                logger.warning("[VALIDATION_COLLISION_ALLOWED] uid=%s", final_uid)
         
         seen_uids[final_uid] = 1
 
@@ -373,9 +387,10 @@ def validate_structure(
 def validate_reconstruction_guardrails(
     previous_structure: Dict[str, Any],
     next_structure: Dict[str, Any],
+    paper_id: Optional[str] = None,
 ) -> Tuple[bool, List[str]]:
-    prev_norm = normalize_structure_payload(previous_structure)
-    next_norm = normalize_structure_payload(next_structure)
+    prev_norm = normalize_structure_payload(previous_structure, paper_id=paper_id)
+    next_norm = normalize_structure_payload(next_structure, paper_id=paper_id)
 
     prev_numbers = [int(q["number"]) for q in prev_norm["questions"]]
     next_numbers = [int(q["number"]) for q in next_norm["questions"]]
@@ -390,7 +405,7 @@ def validate_reconstruction_guardrails(
     return len(errors) == 0, errors
 
 
-def structure_hash(structure: Dict[str, Any]) -> str:
-    normalized = normalize_structure_payload(structure)
+def structure_hash(structure: Dict[str, Any], paper_id: Optional[str] = None) -> str:
+    normalized = normalize_structure_payload(structure, paper_id=paper_id)
     encoded = json.dumps(normalized, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()

@@ -48,13 +48,16 @@ def resolve_marks(
     2) section math
     3) header totals (if reliable)
     4) pattern inference
+    5) model answer alignment (Phase 4 Strict)
     """
+    grading_trace = [] # Phase 4 Forensic hook
+    seen_grading_uids = set()
 
     # Pre-normalization: Ensure rubrics exist (STRETCH 7 Step 3 - Preserve nesting)
     raw_questions = [dict(q) for q in (question_structure or {}).get("questions") or []]
     question_structure["questions"] = raw_questions
 
-    normalized = normalize_structure_payload(question_structure or {})
+    normalized = normalize_structure_payload(question_structure or {}, allow_collisions=True)
     questions = [dict(q) for q in (normalized.get("questions") or [])]
     questions.sort(key=lambda q: (str(q.get("section") or ""), to_int(q.get("number"), 0)))
     if not questions:
@@ -184,12 +187,14 @@ def resolve_marks(
         logger.info("OR_GROUP_RESOLVED group=%s members=%s shared_max=%s", gid, members, round(shared_max, 4))
 
     # Final reconciliation pass for all questions
-    for key in q_keys:
-        q = by_key.get(key)
-        if not q:
-            continue
-        
+    for q in questions:
+        key = (str(q.get("section") or ""), to_int(q.get("number"), 0))
         uid = q.get("question_uid")
+        
+        # Phase 4 Strict Alignment: Trace extraction -> Model Answer linkage
+        status = "aligned"
+        drop_reason = None
+        
         ma_entry = (model_answer_map or {}).get(uid) if uid else None
         ma_marks = None
         if isinstance(ma_entry, dict):
@@ -197,8 +202,33 @@ def resolve_marks(
             root_ma = ma_entry.get(())
             if root_ma:
                 ma_marks = to_float(root_ma.get("marks"), 0.0)
+                
+        if not uid:
+            status = "unaligned"
+            drop_reason = "missing_uid"
+        elif not ma_entry:
+            status = "dropped"
+            drop_reason = "DROPPED_QUESTION"
+            logger.warning("[PHASE4_ALIGN_MISSING] uid=%s (Extracted but missing model answer)", uid)
+        
+        if uid in seen_grading_uids:
+            logger.error("[PHASE4_DOUBLE_GRADING] uid=%s attempted multiple assignments", uid)
+            status = "collision"
+            drop_reason = "DOUBLE_GRADING"
+            
+        if uid: seen_grading_uids.add(uid)
+        
+        grading_trace.append({
+            "canonical_uid": uid,
+            "raw_text": q.get("question_text"),
+            "section": q.get("section"),
+            "number": q.get("number"),
+            "status": status,
+            "drop_reason": drop_reason,
+            "has_model_answer": ma_entry is not None
+        })
 
-        if ma_marks is not None and ma_marks > 0:
+        if status == "aligned" and ma_marks is not None and ma_marks > 0:
             old = to_float(q.get("marks"), 0.0)
             if abs(old - ma_marks) > 1e-6:
                 q["marks"] = round(ma_marks, 4)
@@ -207,8 +237,38 @@ def resolve_marks(
                 by_key[key] = q
                 changed_questions.add(key)
                 logger.info("[MARK_OVERRIDE] q=%s section=%s reason=model_answer marks=%s", key[1], key[0], round(ma_marks, 4))
+        
+        # Recursive trace for subparts (a, b, c...)
+        def _trace_subparts(subs, parent_ma, parent_path):
+            if not subs: return
+            for sq in subs:
+                sq_lbl = (sq.get("label") or "").strip()
+                path = tuple(list(parent_path or []) + [sq_lbl])
+                sq_ma = (parent_ma or {}).get(path)
+                sq_uid = sq.get("question_uid") or sq.get("uid")
+                
+                sq_status = "aligned" if sq_ma else "dropped"
+                sq_drop_reason = "DROPPED_QUESTION" if not sq_ma else None
+                
+                if sq_uid and sq_uid in seen_grading_uids:
+                    sq_status = "collision"
+                    sq_drop_reason = "DOUBLE_GRADING"
+                
+                if sq_uid: seen_grading_uids.add(sq_uid)
+                
+                grading_trace.append({
+                    "canonical_uid": sq_uid,
+                    "path": path,
+                    "raw_text": sq.get("text"),
+                    "status": sq_status,
+                    "drop_reason": sq_drop_reason,
+                    "has_model_answer": sq_ma is not None
+                })
+                _trace_subparts(sq.get("subquestions"), parent_ma, path)
 
-        if _reconcile_subpart_marks(q, ma_entry):
+        _trace_subparts(q.get("subquestions"), ma_entry, ())
+
+        if status == "aligned" and _reconcile_subpart_marks(q, ma_entry):
             by_key[key] = q
             logger.info("[MARK_RECONCILE] q=%s section=%s subparts=true", key[1], key[0])
             _sync_audit_for_question(key, question_audit_tree, by_key)
@@ -302,6 +362,7 @@ def resolve_marks(
         "or_groups_map": {gid: sorted(list(members)) for gid, members in or_groups_map.items() if len(members) >= 2},
         "ai_visual_mismatches": ai_visual_mismatches,
         "question_audit_tree": sorted(question_audit_tree, key=lambda x: (str(x.get("section") or ""), to_int(x.get("number"), 0))),
+        "_grading_trace": grading_trace # Phase 4 Forensic Hook
     }
 
 __all__ = ['resolve_marks']

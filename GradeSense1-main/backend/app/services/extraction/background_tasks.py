@@ -32,14 +32,27 @@ async def _process_question_paper_async(exam_id: str):
         llm_service = _get_llm_service()
         model_images = await get_exam_model_answer_images(exam_id)
 
-        # Unified Extraction: Questions + Topics + Model Answers in one go
-        result = await auto_extract_questions(
-            exam_id=exam_id, 
-            llm_service=llm_service, 
-            force=True, 
-            lock_owner=f"upload_question_paper:{exam_id}",
-            model_answer_images=model_images
-        )
+        # Unified Extraction: Questions + Topics + Model Answers in one go    
+        lock_owner = f"exam_pipeline:{exam_id}"
+        max_retries = 60 # 3 minutes total wait time
+        for attempt in range(max_retries):
+            try:
+                result = await auto_extract_questions(
+                    exam_id=exam_id, 
+                    llm_service=llm_service, 
+                    force=True, 
+                    lock_owner=lock_owner,
+                    model_answer_images=model_images
+                )
+                if not result.get("success") and "processing_lock_busy" in str(result.get("message", "")):
+                    if attempt < max_retries - 1:
+                        logger.info(f"[QP-ASYNC] Lock busy for exam {exam_id}. Waiting 3s... (Attempt {attempt+1}/{max_retries})")
+                        await asyncio.sleep(3)
+                        continue
+                break
+            except Exception as e:
+                raise
+        
         success = result.get("success")
         
         if success:
@@ -122,13 +135,26 @@ async def _process_model_answer_async(exam_id: str):
         model_images = await get_exam_model_answer_images(exam_id)
 
         # Unified Extraction: Re-run question paper extraction but focus on model answers
-        result = await auto_extract_questions(
-            exam_id=exam_id, 
-            llm_service=llm_service, 
-            force=False, 
-            lock_owner=f"upload_model_answer:{exam_id}",
-            model_answer_images=model_images
-        )
+        lock_owner = f"exam_pipeline:{exam_id}"
+        max_retries = 60 # 3 minutes total wait time
+        for attempt in range(max_retries):
+            try:
+                result = await auto_extract_questions(
+                    exam_id=exam_id, 
+                    llm_service=llm_service, 
+                    force=False, 
+                    lock_owner=lock_owner,
+                    model_answer_images=model_images
+                )
+                if not result.get("success") and "processing_lock_busy" in str(result.get("message", "")):
+                    if attempt < max_retries - 1:
+                        logger.info(f"[MA-ASYNC] Lock busy for exam {exam_id}. Waiting 3s... (Attempt {attempt+1}/{max_retries})")
+                        await asyncio.sleep(3)
+                        continue
+                break
+            except Exception as e:
+                raise
+                
         success = result.get("success")
         
         if success:

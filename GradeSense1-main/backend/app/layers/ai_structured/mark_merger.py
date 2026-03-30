@@ -168,8 +168,8 @@ def _initial_mark_pass(
     q_keys: List[Tuple[str, int]],
     by_key: Dict[Tuple[str, int], Dict[str, Any]],
     base_marks: Dict[Tuple[str, int], float],
-    q_margin: Dict[Tuple[str, int], Dict[str, Any]],
-    sq_margin: Dict[Tuple[str, int, str], Dict[str, Any]],
+    q_margin: Dict[str, Dict[str, Any]],
+    sq_margin: Dict[Tuple[str, Tuple[int, ...]], Dict[str, Any]],
     section_assignments: Dict[Tuple[str, int], Dict[str, Any]],
     evidence_refs: Dict[Tuple[str, int], List[Dict[str, Any]]],
     question_audit_tree: List[Dict[str, Any]],
@@ -183,10 +183,11 @@ def _initial_mark_pass(
         source = "missing"
         mode = "direct"
 
-        if key in q_margin:
-            total = max(0.0, to_float(q_margin[key]["marks"], 0.0))
+        uid = q.get("question_uid")
+        if uid and uid in q_margin:
+            total = max(0.0, to_float(q_margin[uid]["marks"], 0.0))
             source = "margin"
-            evidence_refs[key].append(dict(q_margin[key]["evidence"]))
+            evidence_refs[key].append(dict(q_margin[uid]["evidence"]))
             logger.info("[MARK_APPLY] q=%s section=%s reason=margin marks=%s", qn, sec, round(total, 4))
         elif key in section_assignments:
             total = max(0.0, to_float(section_assignments[key]["marks"], 0.0))

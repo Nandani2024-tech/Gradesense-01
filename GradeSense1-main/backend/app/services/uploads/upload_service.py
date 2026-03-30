@@ -83,8 +83,7 @@ class UploadService:
                 "model_answer_text_status": "processing",
                 "question_extraction_status": "processing",
                 "processing_state": "extracting",
-                "processing_lock_at": datetime.now(timezone.utc).isoformat(),
-                "processing_lock_owner": f"upload_model_answer:{exam_id}",
+                "processing_lock_owner": f"exam_pipeline:{exam_id}",
                 "question_extraction_count": 0,
                 "model_answer_text_chars": 0
             }}
@@ -202,8 +201,7 @@ class UploadService:
                 "question_paper_processing": True,
                 "question_extraction_status": "processing",
                 "processing_state": "extracting",
-                "processing_lock_at": datetime.now(timezone.utc).isoformat(),
-                "processing_lock_owner": f"upload_question_paper:{exam_id}",
+                "processing_lock_owner": f"exam_pipeline:{exam_id}",
                 "blueprint_status": "extracting",
                 "blueprint_locked": False,
                 "blueprint_locked_at": None,

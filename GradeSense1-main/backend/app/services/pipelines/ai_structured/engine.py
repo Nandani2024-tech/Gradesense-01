@@ -70,6 +70,23 @@ async def extract_and_persist(
             validation_report = cached.get("validation_report") or {}
             raw_ocr_text = cached.get("raw_ocr_text") or ""
             retry_count = int(cached.get("retry_count") or 0)
+            
+            # CHECKPOINT 2: Engine override for MA extraction when QP is cached
+            if model_answer_images and not structure.get("model_answers"):
+                logger.info("[ENGINE] Cached QP found, forcing model answer extraction override")
+                from app.services.pipelines.ai_extraction_service import _extract_model_answers, _recursive_map_ma
+                ma_results = await _extract_model_answers(model_answer_images, structure.get("questions") or [], llm_service, model_name=model_name)
+                
+                structure["model_answers"] = {
+                    "map": ma_results.get("model_answer_map"),
+                    "text": ma_results.get("model_answer_text")
+                }
+                structure["model_answer_map"] = ma_results.get("model_answer_map")
+                structure["model_answer_text"] = ma_results.get("model_answer_text")
+                
+                ma_map = ma_results.get("model_answer_map") or {}
+                _recursive_map_ma(structure.get("questions") or [], ma_map)
+                logger.info("[ENGINE] Forced MA extraction and canonical mapping complete")
         else:
             model_answer_map = locked_exam.get("model_answer_map")
             structure, validation_report, raw_ocr_text, retry_count = await perform_extraction(
@@ -80,6 +97,7 @@ async def extract_and_persist(
                 llm_service=llm_service,
                 model_answer_map=model_answer_map,
                 model_answer_images=model_answer_images,
+                paper_id=exam_id,
             )
             set_cached_structure(
                 exam_id, int(locked_exam.get("blueprint_version", 0) or 0), extraction_hash_seed,
