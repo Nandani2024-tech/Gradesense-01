@@ -771,9 +771,21 @@ def _normalize_batch_payload(
 
         llm_text = str(q.get("question_text") or "").strip()
 
-        # Fix 1: OCR logic removed. If missing text, fail fast.
+        # Fix 1: Fallback logic for empty question_text to prevent STRICT_MODE_VIOLATION
         if not llm_text:
-            logger.error("STRICT_MODE_VIOLATION: Mission question text for qn=%d", qn)
+            instruction = str(q.get("instruction") or "").strip()
+            if instruction:
+                llm_text = instruction
+                logger.info("FALLBACK_TEXT_FROM_INSTRUCTION qn=%d text=%s", qn, llm_text[:100])
+            else:
+                # Concatenate subquestions text as a second fallback
+                sq_texts = [str(sq.get("text") or "").strip() for sq in subquestions if str(sq.get("text") or "").strip()]
+                if sq_texts:
+                    llm_text = " ".join(sq_texts)
+                    logger.info("FALLBACK_TEXT_FROM_SUBQUESTIONS qn=%d count=%d", qn, len(sq_texts))
+
+        if not llm_text:
+            logger.error("STRICT_MODE_VIOLATION: Missing question text for qn=%d", qn)
             raise ValueError(f"extraction_incomplete_no_text: qn={qn}")
 
         # Fix 2: Set ai_confidence based on LLM confidence.
