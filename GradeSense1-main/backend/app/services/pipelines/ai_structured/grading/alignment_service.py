@@ -524,8 +524,8 @@ async def align_answers(
     logger.info("ALIGNMENT_COVERAGE: %.2f", coverage)
     
     if coverage < 0.6:
-        logger.error("PIPELINE_BLOCKED: Alignment coverage too low (%.2f < 0.6)", coverage)
-        raise AlignmentError(f"Alignment coverage too low: {coverage:.2f}")
+        logger.warning("PIPELINE_DEGRADED_ALIGNMENT: Alignment coverage too low (%.2f < 0.6). Proceeding with partial results.", coverage)
+        # We NO LONGER raise AlignmentError here to prevent job crashes.
 
     metrics = _compute_alignment_metrics(all_answers, expected_uids, page_count=len(answer_images), blueprint_index=blueprint_index)
     

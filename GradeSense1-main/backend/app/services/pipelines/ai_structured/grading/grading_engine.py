@@ -67,23 +67,28 @@ class GradingEngine:
         # Phase 6: FATAL INVALID MARKS
         raw_marks = question.get("marks") or question.get("max_marks")
         if raw_marks is None or float(raw_marks) <= 0:
-            logger.error("STRICT_MODE_VIOLATION: Invalid or missing marks for question %s", qid)
-            raise CustomServiceException("invalid_max_marks", 500)
+            logger.warning("STRICT_MODE_DEGRADED: Invalid or missing marks for question %s. Defaulting to 0.0.", qid)
+            # Do NOT raise. Instead return a degraded score.
+            return QuestionScore(
+                question_number=qid,
+                max_marks=0.0,
+                obtained_marks=0.0,
+                status="needs_review",
+                ai_feedback="Invalid max marks in blueprint (e.g. 0 marks detected). Manual review required."
+            )
         max_marks = float(raw_marks)
         
         # Support both 'question' (new) and 'question_text'/'rubric' (legacy)
         q_text = question.get("question") or question.get("question_text") or question.get("rubric")
-        if not q_text:
-            if STRICT_MODE:
-                logger.error("STRICT_MODE_VIOLATION: Missing question text for question %s", qid)
-                raise CustomServiceException("missing_question_text", 500)
-            q_text = "N/A"
+        if not q_text and STRICT_MODE:
+            logger.warning("STRICT_MODE_DEGRADED: Missing question text for question %s. Manual review suggested.", qid)
+            # Do NOT raise.
         
         # For semantic evaluation
         model_answer = question.get("model_answer") or question.get("expected_answer") or ""
         if not model_answer and STRICT_MODE:
-            logger.error("STRICT_MODE_VIOLATION: Missing model_answer for question %s", qid)
-            raise CustomServiceException("missing_model_answer", 500)
+            logger.warning("STRICT_MODE_DEGRADED: Missing model_answer for question %s. Flagging for review.", qid)
+            # Do NOT raise. Instead, we'll continue and set status="needs_review" later.
         
         if not model_answer:
             logger.warning("Missing model_answer for question %s", qid)
@@ -106,8 +111,8 @@ class GradingEngine:
             confidence = float(mapped_packet.get("confidence_score") or mapped_packet.get("mapping_confidence", 1.0))
             raw_text = mapped_packet.get("combined_text")
             if raw_text is None:
-                 logger.error("STRICT_MODE_VIOLATION: Missing combined_text in mapped_packet for %s", qid)
-                 raise CustomServiceException("missing_answer_text", 500)
+                 logger.warning("STRICT_MODE_DEGRADED: Missing combined_text in mapped_packet for %s", qid)
+                 raw_text = ""
             raw_text = raw_text or ""
             if mapped_packet.get("subanswers"):
                 for sa in mapped_packet.get("subanswers", []):
@@ -154,14 +159,35 @@ class GradingEngine:
                 # 🛑 ISOLATION RULE 1: FORBID PARENT TEXT INHERITANCE
                 trimmed_text = sq_raw_text.strip()
                 if not trimmed_text:
-                    logger.error(f"STRICT_MODE_VIOLATION: Missing text for subpart {clean_qid}.{sq_id}")
-                    raise CustomServiceException("parent_text_inheritance_forbidden", 500)
+                    logger.warning(f"STRICT_MODE_DEGRADED: Missing text for subpart {clean_qid}.{sq_id}")
+                    # Award 0 but don't fail the whole engine.
+                    sq_awarded = 0.0
+                    feedback = "Missing student answer text for this subpart."
+                    sq_grading_mode = "DEGRADED"
+                    sub_scores.append(SubQuestionScore(
+                        sub_id=sq_id,
+                        max_marks=sq_max_marks,
+                        obtained_marks=0.0,
+                        ai_feedback=feedback,
+                        grading_mode=sq_grading_mode
+                    ))
+                    continue
                 
                 # 🛑 ISOLATION RULE 2: FORBID TEXT CONTAMINATION (DUPLICATE ANSWERS)
                 if trimmed_text in seen_texts:
                     other_id = seen_texts[trimmed_text]
-                    logger.error(f"STRICT_MODE_VIOLATION: Text contamination between {sq_id} and {other_id}")
-                    raise CustomServiceException("subpart_text_contamination", 500)
+                    logger.warning(f"STRICT_MODE_DEGRADED: Text contamination between {sq_id} and {other_id}")
+                    # Flag for review
+                    sq_awarded = 0.0
+                    feedback = f"Duplicate text detected (Text contamination with {other_id}). Flagged for review."
+                    sub_scores.append(SubQuestionScore(
+                        sub_id=sq_id,
+                        max_marks=sq_max_marks,
+                        obtained_marks=0.0,
+                        ai_feedback=feedback,
+                        grading_mode="CONTAMINATED"
+                    ))
+                    continue
                 
                 seen_texts[trimmed_text] = sq_id
 
@@ -169,10 +195,15 @@ class GradingEngine:
                 sq_norm_result = self.normalizer.normalize(sq_raw_text)
                 sq_clean_answer = sq_norm_result["normalized_answer"]
 
-                # TASK 1 & 3 & Phase 6: FATAL ERROR ON MISSING REFERENCE
+                # TASK 1 & 3 & Phase 6: GRACEFUL DEGRADATION ON MISSING REFERENCE
                 if not sq_model:
-                    logger.error(f"STRICT_MODE_VIOLATION: Subquestion {clean_qid}.{sq_id} - MISSING MODEL")
-                    raise CustomServiceException("missing_model_answer", 500)
+                    logger.warning(f"STRICT_MODE_DEGRADED: Subquestion {clean_qid}.{sq_id} - MISSING MODEL")
+                    sq_awarded = 0.0
+                    feedback = "Missing model answer reference. Manual review required."
+                    detected = []
+                    missing = []
+                    concept_coverage = 0.0
+                    sq_grading_mode = "MISSING_REF"
                 else:
                     # Phase 3: Pure Deterministic Evaluation for Subparts
                     try:
@@ -187,8 +218,13 @@ class GradingEngine:
                         concept_coverage = 1.0 # Bypassed Phase 3
                         sq_grading_mode = "DET_EVALUATED"
                     except ValueError as ve:
-                        logger.error(f"STRICT_MODE_VIOLATION: Subpart evaluation failed: {ve}")
-                        raise CustomServiceException(str(ve), 500)
+                        logger.error(f"STRICT_MODE_DEGRADED: Subpart evaluation failed: {ve}. Resetting to 0.0.")
+                        sq_awarded = 0.0
+                        feedback = f"Subpart evaluation error: {str(ve)}. Flagging for manual review."
+                        detected = []
+                        missing = []
+                        concept_coverage = 0.0
+                        sq_grading_mode = "ERROR"
 
                 # Finalize
                 total_awarded += sq_awarded
@@ -227,13 +263,11 @@ class GradingEngine:
             
             # Phase 5: STICT SUMMATION VALIDATION
             if abs(total_possible_agg - max_marks) > 0.001:
-                logger.error(f"STRICT_MODE_VIOLATION: Subpart max marks sum ({total_possible_agg}) mismatch with parent ({max_marks}) for {qid}")
-                raise CustomServiceException("subpart_aggregation_mismatch", 500)
+                logger.warning(f"STRICT_MODE_DEGRADED: Subpart max marks sum ({total_possible_agg}) mismatch with parent ({max_marks}) for {qid}. Using parent limit.")
             
             # Phase 5: COMPLETION VALIDATION
             if len(sub_scores) != len(sub_questions):
-                logger.error(f"STRICT_MODE_VIOLATION: Missing subpart scores: scored={len(sub_scores)} expected={len(sub_questions)}")
-                raise CustomServiceException("missing_subpart_score", 500)
+                logger.warning(f"STRICT_MODE_DEGRADED: Missing subpart scores: scored={len(sub_scores)} expected={len(sub_questions)}")
             
             # ✅ STEP 5 — SUMMARY LOG
             logger.info(
@@ -255,10 +289,15 @@ class GradingEngine:
             clean_answer = norm_result["normalized_answer"]
 
             if clean_answer.strip():
-                # TASK 1 & 3 & Phase 6: FATAL ERROR ON MISSING REFERENCE
+                # TASK 1 & 3 & Phase 6: GRACEFUL DEGRADATION ON MISSING REFERENCE
                 if not model_answer:
-                    logger.error(f"STRICT_MODE_VIOLATION: Question {qid} - MISSING MODEL")
-                    raise CustomServiceException("missing_model_answer", 500)
+                    logger.warning(f"STRICT_MODE_DEGRADED: Question {qid} - MISSING MODEL")
+                    final_awarded = 0.0
+                    global_feedback = "Missing model answer reference. Manual review required."
+                    concepts_detected_final = []
+                    missing_concepts_final = []
+                    coverage_final = 0.0
+                    grading_mode_final = "MISSING_REF"
                 else:
                     # Phase 3: Pure Deterministic Evaluation
                     try:
@@ -273,12 +312,19 @@ class GradingEngine:
                         coverage_final = 1.0 # Bypassed Phase 3
                         grading_mode_final = "DET_EVALUATED"
                     except ValueError as ve:
-                        logger.error(f"STRICT_MODE_VIOLATION: Evaluation failed: {ve}")
-                        raise CustomServiceException(str(ve), 500)
+                        logger.error(f"STRICT_MODE_DEGRADED: Evaluation failed: {ve}. Resetting to 0.0.")
+                        final_awarded = 0.0
+                        global_feedback = f"Grading error: {str(ve)}. Manual review required."
+                        concepts_detected_final = []
+                        missing_concepts_final = []
+                        coverage_final = 0.0
+                        grading_mode_final = "ERROR"
             else:
-                # Phase 6: FATAL MISSING STUDENT ANSWER
-                logger.error(f"STRICT_MODE_VIOLATION: Question {qid} - MISSING STUDENT ANSWER")
-                raise CustomServiceException("missing_student_answer", 500)
+                # Phase 6: NON-FATAL MISSING STUDENT ANSWER
+                logger.warning(f"STRICT_MODE_DEGRADED: Question {qid} - MISSING STUDENT ANSWER")
+                final_awarded = 0.0
+                global_feedback = "No student answer detected for this question."
+                grading_mode_final = "MISSING_STUDENT"
 
             # Phase 5: PARENT-LEVEL ROUNDING (Monolithic Case)
             final_awarded = round(final_awarded, 2)
@@ -387,9 +433,18 @@ class GradingEngine:
                     )
                 tasks.append(mock_missing_score(clean_qid, float(q.get("marks") or 0.0)))
             else:
-                # Phase 6: FATAL ALIGNMENT MAPPING FAILURE (AMBIGUOUS or ERROR)
-                logger.error(f"STRICT_MODE_VIOLATION: Question {clean_qid} - ALIGNMENT {mapping_status}")
-                raise CustomServiceException("alignment_mapping_failure", 500)
+                # Phase 6: NON-FATAL ALIGNMENT MAPPING FAILURE (AMBIGUOUS or ERROR)
+                logger.warning(f"STRICT_MODE_DEGRADED: Question {clean_qid} - ALIGNMENT {mapping_status}. Awarding 0.0.")
+                
+                async def mock_error_score(qid, max_m, status):
+                    return QuestionScore(
+                        question_number=qid,
+                        obtained_marks=0.0,
+                        max_marks=max_m,
+                        status="needs_review",
+                        ai_feedback=f"Mapping failure ({status}). Manual alignment correction required."
+                    )
+                tasks.append(mock_error_score(clean_qid, float(q.get("marks") or 0.0), mapping_status))
         
         # return_exceptions=True was previously used, now replaced by safe_gather
         results_list = await safe_gather(tasks)
@@ -554,10 +609,10 @@ async def perform_grading(
         )
     if mapping_coverage < ALIGNMENT_COVERAGE_GATE:
         logger.warning(
-            "PIPELINE_BLOCKED_ALIGNMENT exam_id=%s coverage=%.3f threshold=%.3f",
+            "PIPELINE_DEGRADED_ALIGNMENT exam_id=%s coverage=%.3f threshold=%.3f. Proceeding without block.",
             exam_id, mapping_coverage, ALIGNMENT_COVERAGE_GATE,
         )
-        raise CustomServiceException("alignment_coverage_low", 500)
+        # We NO LONGER raise here. We let the job finish so the teacher sees the results.
 
     grading_result = await grade_answers_with_contracts(
         question_structure=structure,

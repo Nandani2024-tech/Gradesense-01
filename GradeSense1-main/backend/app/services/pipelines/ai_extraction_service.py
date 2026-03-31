@@ -893,8 +893,8 @@ def _normalize_batch_payload(
         
         # Phase 1: STRICT Collision Detection
         if q_uid in seen_uids:
-            logger.error("UID_COLLISION_DETECTED: uid=%s", q_uid)
-            raise UIDCollisionError(f"Duplicate UID detected: {q_uid}")
+            logger.warning("[EXTRACTION_UID_COLLISION] Duplicate UID detected: %s. Appending suffix.", q_uid)
+            q_uid = f"{q_uid}_dup_{len(seen_uids)}"
         seen_uids.add(q_uid)
 
         # Store forensic trace (Phase 1)
@@ -1012,9 +1012,8 @@ def _normalize_subquestions_recursive(
         sq_uid = canonicalize_uid(section, parent_num, subpart=current_subpart, paper_id=paper_id)
         
         if sq_uid in seen_uids:
-            logger.error("SUBPART_UID_COLLISION_STRICT: uid=%s", sq_uid)
-            # Phase 3: Strict UID Collision for subparts
-            raise UIDCollisionError(f"Duplicate subpart UID detected: {sq_uid}")
+            logger.warning("[EXTRACTION_SUBPART_UID_COLLISION] Duplicate subpart UID detected: %s. Appending suffix.", sq_uid)
+            sq_uid = f"{sq_uid}_dup_{len(seen_uids)}"
             
         seen_uids.add(sq_uid)
         
@@ -1810,8 +1809,10 @@ def _merge_semantic_with_visual_entities(
     for q in semantic_questions:
         resolved = _resolve_section(q, raw_headers, visual_entities)
         
-        if not resolved:
-            raise ValueError(f"[SECTION_RESOLUTION_FAILED] Question {q.get('number')} has no resolvable section")
+        q_section = q.get("section")
+        if not q_section:
+            logger.warning(f"[SECTION_RESOLUTION_DEGRADED] Question {q.get('number')} has no resolvable section. Falling back to default.")
+            q_section = "default"
             
         if not q.get("section"):
             logger.warning(
@@ -2436,7 +2437,14 @@ Return ONLY valid JSON:
                     
         _index_questions_recursive(questions)
 
-        def _process_answers_recursive(ans_list, parent_path_str=""):
+        # Pre-calculate which nodes in the QP blueprint have sub-questions for flattening logic
+        qp_nodes_with_children = set()
+        for k in uid_path_lookup:
+            if "." in k:
+                parent = ".".join(k.split(".")[:-1])
+                qp_nodes_with_children.add(parent)
+
+        def _process_answers_recursive(ans_list, parent_path_str="", current_mapped_uid=None, current_mapped_path_str=None):
             for a in ans_list:
                 num = str(a.get("number") or a.get("label") or "").strip().lower()
                 path_str = f"{parent_path_str}.{num}" if parent_path_str else num
@@ -2444,18 +2452,53 @@ Return ONLY valid JSON:
                 ans_text = str(a.get("text") or "").strip()
                 ans_marks = _to_float(a.get("marks"), None)
 
-                
-                if path_str in uid_path_lookup:
-                    uid, path = uid_path_lookup[path_str]
-                    canonical_ma_map[uid][_to_path_key(path)] = {
-                        "text": ans_text,
-                        "marks": ans_marks,
-                    }
+                # Track local state for this node and its sub-tree
+                next_mapped_uid = current_mapped_uid
+                next_mapped_path_str = current_mapped_path_str
 
+                if path_str in uid_path_lookup:
+                    # Case A: Direct Blueprint Match (resets the active mapping point)
+                    uid, path = uid_path_lookup[path_str]
+                    next_mapped_uid = uid
+                    next_mapped_path_str = path_str
+                    
+                    existing = canonical_ma_map[uid].get(_to_path_key(path), {})
+                    final_text = ans_text
+                    if existing.get("text") and ans_text and ans_text not in existing.get("text"):
+                        final_text = existing.get("text") + "\n" + ans_text
+                    
+                    canonical_ma_map[uid][_to_path_key(path)] = {
+                        "text": final_text,
+                        "marks": ans_marks if ans_marks is not None else existing.get("marks"),
+                    }
+                elif next_mapped_uid and next_mapped_path_str:
+                    # Case B: Deep Orphan Flattening
+                    # Only flatten if the nearest ancestor we mapped is an actual leaf in the QP
+                    if next_mapped_path_str not in qp_nodes_with_children:
+                        uid = next_mapped_uid
+                        path_info = uid_path_lookup[next_mapped_path_str][1] # Get path tuple
+                        
+                        existing = canonical_ma_map[uid].get(_to_path_key(path_info), {})
+                        ex_text = existing.get("text") or ""
+                        
+                        # Use label formatting for the orphan
+                        bullet = f"{num}. " if num and num != "*" else "• "
+                        line = f"{bullet}{ans_text}"
+                        
+                        if ex_text:
+                            if line not in ex_text:
+                                ex_text += "\n" + line
+                        else:
+                            ex_text = line
+                            
+                        canonical_ma_map[uid][_to_path_key(path_info)] = {
+                            "text": ex_text,
+                            "marks": existing.get("marks") or ans_marks,
+                        }
                 
                 subparts = a.get("subparts") or []
                 if subparts:
-                    _process_answers_recursive(subparts, path_str)
+                    _process_answers_recursive(subparts, path_str, next_mapped_uid, next_mapped_path_str)
         
         _process_answers_recursive(ans_list)
         
