@@ -98,6 +98,7 @@ async def extract_and_persist(
                 model_answer_map=model_answer_map,
                 model_answer_images=model_answer_images,
                 paper_id=exam_id,
+                mode="structure",
             )
             set_cached_structure(
                 exam_id, int(locked_exam.get("blueprint_version", 0) or 0), extraction_hash_seed,
@@ -278,6 +279,16 @@ async def align_submission_for_grading(
     if not exam.get("blueprint_locked") and str(exam.get("blueprint_status", "")).lower() != "ready_locked":
         raise CustomServiceException("blueprint_not_locked", 500)
 
+    # 🔒 ALIGNMENT GUARD: Block if extraction is not successful
+    ex_status = exam.get("question_extraction_status")
+    if ex_status and ex_status not in ["completed", "SUCCESS"]:
+        logger.warning("ALIGNMENT_SKIPPED: Extraction status is %s for exam_id=%s", ex_status, exam.get("exam_id"))
+        return {
+            "success": False,
+            "message": f"Alignment skipped - extraction status is {ex_status}",
+            "submission_id": submission_id
+        }
+
     owner = lock_owner or f"align_{exam.get('exam_id')}_{submission_id}"
     # EXCLUSIVE LOCK REMOVED: Alignment is stateless relative to the exam record.
     # Parallel alignment for multiple submissions is now allowed.
@@ -339,6 +350,12 @@ async def grade_images_with_locked_blueprint(
     
     if not exam.get("blueprint_locked") and str(exam.get("blueprint_status", "")).lower() != "ready_locked":
         raise CustomServiceException("blueprint_not_locked", 500)
+
+    # 🔒 GRADING GUARD: Block if manual review is required
+    if exam.get("needs_manual_review"):
+        logger.warning("GRADING_SKIPPED: Exam %s requires manual review due to extraction failure.", exam_id)
+        from app.models.submission import QuestionScore
+        return [], {"total_awarded": 0.0, "total_possible": 0.0, "message": "Grading skipped - manual review required"}
 
     structure = exam.get("question_structure_v2")
     if not structure:

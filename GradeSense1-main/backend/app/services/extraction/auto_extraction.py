@@ -6,8 +6,8 @@ from typing import List, Dict, Any, Optional
 from app.core.logging_config import logger
 from app.core.database import db
 from app.adapters.interfaces import AbstractLLMService
+from app.core.config import RECONSTRUCTION_ENABLED
 from app.services.pipelines.ai_structured.engine import extract_and_persist
-from app.services.pipelines.ai_extraction_service import _extract_model_answers
 
 async def auto_extract_questions(
     exam_id: str, 
@@ -21,6 +21,10 @@ async def auto_extract_questions(
     Main entry point for automated question extraction.
     Re-routed to the unified Phase 3 extraction pipeline.
     """
+    if force and not RECONSTRUCTION_ENABLED:
+        logger.warning("AUTO_EXTRACT_FORCE_BLOCKED: force=True ignored as reconstruction is disabled. exam_id=%s", exam_id)
+        force = False
+
     try:
         return await extract_and_persist(
             exam_id=exam_id, 

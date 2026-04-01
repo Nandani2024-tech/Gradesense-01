@@ -13,4 +13,5 @@ def run_scoring(
         visual_entities=visual_entities,
         header_total_marks=header_total_marks,
         header_total_reliable=header_total_reliable,
+        mode="grading",
     )

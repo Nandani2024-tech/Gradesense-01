@@ -21,6 +21,7 @@ async def perform_extraction(
     raw_ocr_text: Optional[str] = None,
     max_retries: int = 3,
     paper_id: Optional[str] = None,
+    mode: str = "structure",
 ) -> Tuple[Dict[str, Any], Dict[str, Any], str, int]:
     """Perform question structure extraction with layered pipeline."""
     result = await extract_question_structure(
@@ -34,6 +35,7 @@ async def perform_extraction(
         model_answer_map=model_answer_map,
         model_answer_images=model_answer_images,
         paper_id=paper_id,
+        mode=mode,
     )
     return result, result.get("_validation_report") or {}, result.get("_raw_ocr_text", ""), result.get("_retry_count", 0)
 

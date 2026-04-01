@@ -34,6 +34,13 @@ from .mark_merger import (
 )
 
 
+def normalize_section(section: Any) -> str:
+    """Canonicalize section names to prevent fragmentation (e.g. 'SECTION A' vs 'section_a')."""
+    if not section:
+        return "default"
+    return str(section).strip().lower()
+
+
 def resolve_marks(
     question_structure: Dict[str, Any],
     *,
@@ -41,6 +48,7 @@ def resolve_marks(
     header_total_marks: Optional[float] = None,
     header_total_reliable: bool = False,
     model_answer_map: Optional[Dict[str, Any]] = None,
+    mode: str = "structure", # structure (QP only) | grading (MA reconciliation)
 ) -> Dict[str, Any]:
     """
     Deterministic mark computation priority:
@@ -50,12 +58,27 @@ def resolve_marks(
     4) pattern inference
     5) model answer alignment (Phase 4 Strict)
     """
-    grading_trace = [] # Phase 4 Forensic hook
+    grading_trace = []
     seen_grading_uids = set()
 
     # Pre-normalization: Ensure rubrics exist (STRETCH 7 Step 3 - Preserve nesting)
     raw_questions = [dict(q) for q in (question_structure or {}).get("questions") or []]
+    for q in raw_questions:
+        q["section"] = normalize_section(q.get("section"))
     question_structure["questions"] = raw_questions
+
+    # Normalize visual entities sections to match questions
+    if visual_entities:
+        for q in (visual_entities.get("questions") or []):
+            if isinstance(q, dict):
+                q["section"] = normalize_section(q.get("section"))
+        for row in (visual_entities.get("section_math") or []):
+            if isinstance(row, dict):
+                row["section"] = normalize_section(row.get("section"))
+        for pair in (visual_entities.get("or_pairs") or []):
+            if isinstance(pair, dict):
+                if "sec1" in pair: pair["sec1"] = normalize_section(pair["sec1"])
+                if "sec2" in pair: pair["sec2"] = normalize_section(pair["sec2"])
 
     normalized = normalize_structure_payload(question_structure or {}, allow_collisions=True)
     questions = [dict(q) for q in (normalized.get("questions") or [])]
@@ -82,6 +105,21 @@ def resolve_marks(
     base_marks: Dict[Tuple[str, int], float] = {key: max(0.0, to_float(by_key[key].get("marks"), 0.0)) for key in q_keys}
     evidence_refs: Dict[Tuple[str, int], List[Dict[str, Any]]] = defaultdict(list)
 
+    # Define internal counters for audit and coverage
+    semantic_count = 0
+    visual_count = 0
+    inferred_count = 0
+
+    # Capture semantic marks from Stage-1 before they are potentially overridden
+    # In this new architecture, if the LLM extracted a mark, we trust it as 'semantic'.
+    for key in q_keys:
+        q = by_key[key]
+        m = q.get("marks")
+        if m is not None and to_float(m, 0.0) > 0:
+            q["semantic_marks"] = round(to_float(m, 0.0), 4)
+        else:
+            q["semantic_marks"] = None
+
     q_margin, sq_margin = _margin_mark_maps(visual_entities, questions)
     section_rules = _build_section_math_rules(normalized, visual_entities)
     section_rules = _reconcile_section_rule_starts(section_rules, q_keys)
@@ -90,9 +128,7 @@ def resolve_marks(
     added_count = coverage_result.get("synthetic_anchors_added", 0)
     if added_count > 0:
         logger.info("[SYNTHETIC_ANCHORS_DETECTED] Count=%s", added_count)
-        preview = coverage_result.get("anchors", [])[:3]
-        logger.debug("Synthetic Anchor Preview: %s", preview)
-        
+    
     _log_anchor_merge_result(visual_entities)
     changed_questions: set[Tuple[str, int]] = set()
 
@@ -115,6 +151,57 @@ def resolve_marks(
         question_audit_tree=question_audit_tree,
         changed_questions=changed_questions,
     )
+
+    # --- RESOLUTION PRIORITY: SEMANTIC -> VISUAL -> INFERENCE ---
+    for key in q_keys:
+        q = by_key[key]
+        
+        s_marks = q.get("semantic_marks")
+        v_marks = q.get("marks") # Initial pass put visual/margin marks here
+        
+        if s_marks is not None:
+            q["marks"] = s_marks
+            q["mark_source"] = "semantic"
+            semantic_count += 1
+        elif v_marks is not None:
+            q["marks"] = v_marks
+            # mark_source should already be set by _initial_mark_pass (margin/section_math)
+            visual_count += 1
+        else:
+            q["marks"] = None
+
+    # --- STRICT INFERENCE LAYER ---
+    def can_apply_inference(section_name: str, section_qs: List[Dict[str, Any]]) -> Optional[float]:
+        # Look for section math rule that covers this entire section
+        for rule in section_rules:
+            if rule.get("section") == section_name:
+                total = to_float(rule.get("total"), 0.0)
+                count = to_int(rule.get("count"), 0)
+                if count > 0 and len(section_qs) == count:
+                    # GATED CHECK: Perfect divisibility
+                    if abs(total % count) < 1e-6:
+                        return total / count
+        return None
+
+    # Group questions by section for inference
+    sections_map = defaultdict(list)
+    for q in questions:
+        sections_map[str(q.get("section") or "")].append(q)
+
+    for sec_name, sec_qs in sections_map.items():
+        inferred_val = can_apply_inference(sec_name, sec_qs)
+        if inferred_val is not None:
+            for q in sec_qs:
+                if q.get("marks") is None:
+                    q["marks"] = round(inferred_val, 4)
+                    q["inferred_marks"] = round(inferred_val, 4)
+                    q["mark_source"] = "inferred"
+                    inferred_count += 1
+                    logger.info("[MARK_INFERENCE] q=%s sec=%s val=%s", q.get("number"), sec_name, inferred_val)
+
+    # Update audit tree after resolution and inference
+    for key in q_keys:
+        _sync_audit_for_question(key, question_audit_tree, by_key)
 
     # OR integrity.
     for gid, members in sorted(or_groups_map.items(), key=lambda kv: kv[0]):
@@ -187,91 +274,92 @@ def resolve_marks(
         logger.info("OR_GROUP_RESOLVED group=%s members=%s shared_max=%s", gid, members, round(shared_max, 4))
 
     # Final reconciliation pass for all questions
-    for q in questions:
-        key = (str(q.get("section") or ""), to_int(q.get("number"), 0))
-        uid = q.get("question_uid")
-        
-        # Phase 4 Strict Alignment: Trace extraction -> Model Answer linkage
-        status = "aligned"
-        drop_reason = None
-        
-        ma_entry = (model_answer_map or {}).get(uid) if uid else None
-        ma_marks = None
-        if isinstance(ma_entry, dict):
-            # () is the path for the root parent question
-            root_ma = ma_entry.get(())
-            if root_ma:
-                ma_marks = to_float(root_ma.get("marks"), 0.0)
-                
-        if not uid:
-            status = "unaligned"
-            drop_reason = "missing_uid"
-        elif not ma_entry:
-            status = "dropped"
-            drop_reason = "DROPPED_QUESTION"
-            logger.warning("[PHASE4_ALIGN_MISSING] uid=%s (Extracted but missing model answer)", uid)
-        
-        if uid in seen_grading_uids:
-            logger.error("[PHASE4_DOUBLE_GRADING] uid=%s attempted multiple assignments", uid)
-            status = "collision"
-            drop_reason = "DOUBLE_GRADING"
+    if mode == "grading":
+        for q in questions:
+            key = (str(q.get("section") or ""), to_int(q.get("number"), 0))
+            uid = q.get("question_uid")
             
-        if uid: seen_grading_uids.add(uid)
-        
-        grading_trace.append({
-            "canonical_uid": uid,
-            "raw_text": q.get("question_text"),
-            "section": q.get("section"),
-            "number": q.get("number"),
-            "status": status,
-            "drop_reason": drop_reason,
-            "has_model_answer": ma_entry is not None
-        })
+            # Phase 4 Strict Alignment: Trace extraction -> Model Answer linkage
+            status = "aligned"
+            drop_reason = None
+            
+            ma_entry = (model_answer_map or {}).get(uid) if uid else None
+            ma_marks = None
+            if isinstance(ma_entry, dict):
+                # () is the path for the root parent question
+                root_ma = ma_entry.get(())
+                if root_ma:
+                    ma_marks = to_float(root_ma.get("marks"), 0.0)
+                    
+            if not uid:
+                status = "unaligned"
+                drop_reason = "missing_uid"
+            elif not ma_entry:
+                status = "dropped"
+                drop_reason = "DROPPED_QUESTION"
+                logger.warning("[PHASE4_ALIGN_MISSING] uid=%s (Extracted but missing model answer)", uid)
+            
+            if uid in seen_grading_uids:
+                logger.error("[PHASE4_DOUBLE_GRADING] uid=%s attempted multiple assignments", uid)
+                status = "collision"
+                drop_reason = "DOUBLE_GRADING"
+                
+            if uid: seen_grading_uids.add(uid)
+            
+            grading_trace.append({
+                "canonical_uid": uid,
+                "raw_text": q.get("question_text"),
+                "section": q.get("section"),
+                "number": q.get("number"),
+                "status": status,
+                "drop_reason": drop_reason,
+                "has_model_answer": ma_entry is not None
+            })
 
-        if status == "aligned" and ma_marks is not None and ma_marks > 0:
-            old = to_float(q.get("marks"), 0.0)
-            if abs(old - ma_marks) > 1e-6:
-                q["marks"] = round(ma_marks, 4)
-                q["mark_source"] = MARK_REASON_RECONCILED
-                q["distribution_mode"] = "model_answer"
+            if status == "aligned" and ma_marks is not None and ma_marks > 0:
+                old = to_float(q.get("marks"), 0.0)
+                if abs(old - ma_marks) > 1e-6:
+                    q["marks"] = round(ma_marks, 4)
+                    q["mark_source"] = MARK_REASON_RECONCILED
+                    q["distribution_mode"] = "model_answer"
+                    by_key[key] = q
+                    changed_questions.add(key)
+                    logger.info("[MARK_OVERRIDE] q=%s section=%s reason=model_answer marks=%s", key[1], key[0], round(ma_marks, 4))
+            
+            # Recursive trace for subparts (a, b, c...)
+            def _trace_subparts(subs, parent_ma, parent_path):
+                if not subs: return
+                for sq in subs:
+                    sq_lbl = (sq.get("label") or "").strip()
+                    path = tuple(list(parent_path or []) + [sq_lbl])
+                    sq_ma = (parent_ma or {}).get(path)
+                    sq_uid = sq.get("question_uid") or sq.get("uid")
+                    
+                    sq_status = "aligned" if sq_ma else "dropped"
+                    sq_drop_reason = "DROPPED_QUESTION" if not sq_ma else None
+                    
+                    if sq_uid and sq_uid in seen_grading_uids:
+                        sq_status = "collision"
+                        sq_drop_reason = "DOUBLE_GRADING"
+                    
+                    if sq_uid: seen_grading_uids.add(sq_uid)
+                    
+                    grading_trace.append({
+                        "canonical_uid": sq_uid,
+                        "path": path,
+                        "raw_text": sq.get("text"),
+                        "status": sq_status,
+                        "drop_reason": sq_drop_reason,
+                        "has_model_answer": sq_ma is not None
+                    })
+                    _trace_subparts(sq.get("subquestions"), parent_ma, path)
+
+            _trace_subparts(q.get("subquestions"), ma_entry, ())
+
+            if status == "aligned" and _reconcile_subpart_marks(q, ma_entry):
                 by_key[key] = q
-                changed_questions.add(key)
-                logger.info("[MARK_OVERRIDE] q=%s section=%s reason=model_answer marks=%s", key[1], key[0], round(ma_marks, 4))
-        
-        # Recursive trace for subparts (a, b, c...)
-        def _trace_subparts(subs, parent_ma, parent_path):
-            if not subs: return
-            for sq in subs:
-                sq_lbl = (sq.get("label") or "").strip()
-                path = tuple(list(parent_path or []) + [sq_lbl])
-                sq_ma = (parent_ma or {}).get(path)
-                sq_uid = sq.get("question_uid") or sq.get("uid")
-                
-                sq_status = "aligned" if sq_ma else "dropped"
-                sq_drop_reason = "DROPPED_QUESTION" if not sq_ma else None
-                
-                if sq_uid and sq_uid in seen_grading_uids:
-                    sq_status = "collision"
-                    sq_drop_reason = "DOUBLE_GRADING"
-                
-                if sq_uid: seen_grading_uids.add(sq_uid)
-                
-                grading_trace.append({
-                    "canonical_uid": sq_uid,
-                    "path": path,
-                    "raw_text": sq.get("text"),
-                    "status": sq_status,
-                    "drop_reason": sq_drop_reason,
-                    "has_model_answer": sq_ma is not None
-                })
-                _trace_subparts(sq.get("subquestions"), parent_ma, path)
-
-        _trace_subparts(q.get("subquestions"), ma_entry, ())
-
-        if status == "aligned" and _reconcile_subpart_marks(q, ma_entry):
-            by_key[key] = q
-            logger.info("[MARK_RECONCILE] q=%s section=%s subparts=true", key[1], key[0])
-            _sync_audit_for_question(key, question_audit_tree, by_key)
+                logger.info("[MARK_RECONCILE] q=%s section=%s subparts=true", key[1], key[0])
+                _sync_audit_for_question(key, question_audit_tree, by_key)
 
     resolved_questions = [by_key[key] for key in q_keys]
     resolved_structure = {
@@ -337,8 +425,14 @@ def resolve_marks(
             to_float(audit.get("confidence"), 0.0),
         )
 
-    coverage = round((len(changed_questions) / float(len(q_keys))) if q_keys else 0.0, 4)
-    logger.info("MARK_REASON_APPLIED questions=%s changed=%s coverage=%.4f", len(q_keys), len(changed_questions), coverage)
+    coverage_total = round(((semantic_count + visual_count + inferred_count) / float(len(q_keys))) if q_keys else 0.0, 4)
+    coverage_semantic = round((semantic_count / float(len(q_keys))) if q_keys else 0.0, 4)
+    coverage_visual = round((visual_count / float(len(q_keys))) if q_keys else 0.0, 4)
+    coverage_inferred = round((inferred_count / float(len(q_keys))) if q_keys else 0.0, 4)
+
+    logger.info("MARK_REASON_FINISH semantic=%s visual=%s inferred=%s coverage=%.4f", semantic_count, visual_count, inferred_count, coverage_total)
+    if coverage_semantic < 0.5:
+        logger.warning("LOW_SEMANTIC_COVERAGE ratio=%.4f (Over-reliance on fallback layers)", coverage_semantic)
 
     effective_marks_map = []
     for key in q_keys:
@@ -358,11 +452,17 @@ def resolve_marks(
         "resolved_structure": normalize_structure_payload(resolved_structure),
         "effective_total_marks": _compute_effective_total(resolved_questions),
         "effective_marks_map": effective_marks_map,
-        "mark_override_coverage": coverage,
+        "mark_override_coverage": coverage_total,
+        "coverage_metrics": {
+            "total": coverage_total,
+            "semantic": coverage_semantic,
+            "visual": coverage_visual,
+            "inferred": coverage_inferred,
+        },
         "or_groups_map": {gid: sorted(list(members)) for gid, members in or_groups_map.items() if len(members) >= 2},
         "ai_visual_mismatches": ai_visual_mismatches,
         "question_audit_tree": sorted(question_audit_tree, key=lambda x: (str(x.get("section") or ""), to_int(x.get("number"), 0))),
-        "_grading_trace": grading_trace # Phase 4 Forensic Hook
+        "_grading_trace": grading_trace if mode == "grading" else []
     }
 
 __all__ = ['resolve_marks']

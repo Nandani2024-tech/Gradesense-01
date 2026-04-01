@@ -12,6 +12,7 @@ from app.core.logging_config import logger
 
 from app.services.exams.exam_service import exam_service
 from app.services import blueprint_service
+from app.core.config import RECONSTRUCTION_ENABLED
 from app.schemas.responses import (
     ExamCreateResponse,
     ExamUpdateResponse,
@@ -193,6 +194,10 @@ async def re_extract_question_structure(exam_id: str, user: User = Depends(get_c
     """Re-extract COMPLETE question structure."""
     if user.role != "teacher":
         raise HTTPException(status_code=403, detail="Only teachers can re-extract questions")
+
+    if not RECONSTRUCTION_ENABLED:
+        logger.warning("RE_EXTRACT_BLOCKED: Reconstruction is globally disabled. exam_id=%s", exam_id)
+        raise HTTPException(status_code=400, detail="Reconstruction is currently disabled by system configuration.")
 
     logger.info("RE_EXTRACT_QUESTIONS_REQUEST exam_id=%s user_id=%s", exam_id, user.user_id)
     try:

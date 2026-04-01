@@ -208,8 +208,9 @@ def validate_structure(
         repair_tasks.append("low_visual_coverage")
 
     # Mark coverage and total.
-    marked_questions = sum(1 for q in questions if max(0.0, to_float(q.get("marks"), 0.0)) > 0)
-    mark_coverage = round((marked_questions / float(len(questions))) if questions else 0.0, 4)
+    # Total marks resolution coverage is passed down from reasoned.get("mark_override_coverage") in service
+    mark_coverage = round(to_float(structure.get("mark_override_coverage"), 0.0), 4)
+    
     if mark_coverage < 0.8:
         errors.append(f"mark_coverage_low:{mark_coverage}")
         repair_tasks.append("missing_marks")

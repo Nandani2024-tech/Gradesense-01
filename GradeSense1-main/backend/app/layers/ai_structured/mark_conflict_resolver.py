@@ -67,22 +67,25 @@ def _apply_section_rule_conflicts(
         start_q = to_int(rule.get("start_question"), 0)
         rule_sec = str(rule.get("section") or "").strip()
         
-        # Find the specific key this rule starts at
-        found_idx = -1
-        for i, k in enumerate(q_keys):
-            if k[1] == start_q and (not rule_sec or k[0] == rule_sec):
-                found_idx = i
-                break
-                
-        if count <= 0 or per <= 0 or found_idx == -1:
-            continue
-            
-        # Run window is now in q_keys space
-        run = q_keys[found_idx:found_idx + count]
-        
-        # Ensure we don't bleed into another section if rule was section-scoped
+        # Find the keys strictly within this section space to avoid global list bleed
         if rule_sec:
-            run = [k for k in run if k[0] == rule_sec]
+            section_keys = [k for k in q_keys if k[0] == rule_sec]
+            try:
+                found_idx = section_keys.index((rule_sec, start_q))
+                run = section_keys[found_idx:found_idx + count]
+            except ValueError:
+                # start_q not found in this section
+                continue
+        else:
+            # Fallback for section-agnostic rules (legacy or global)
+            found_idx = -1
+            for i, k in enumerate(q_keys):
+                if k[1] == start_q:
+                    found_idx = i
+                    break
+            if found_idx == -1:
+                continue
+            run = q_keys[found_idx:found_idx + count]
 
         rule_id = f"sec_{idx + 1}"
         priority = _section_rule_priority(rule)

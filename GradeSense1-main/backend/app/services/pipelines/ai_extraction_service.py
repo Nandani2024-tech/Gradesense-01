@@ -12,6 +12,8 @@ import re
 import uuid
 from datetime import datetime
 from collections import defaultdict
+from app.core.config import RECONSTRUCTION_ENABLED
+from app.core.exceptions import CustomServiceException, ExtractionValidationError
 from typing import Any, Dict, List, Optional, Tuple
 import traceback
 
@@ -2595,6 +2597,16 @@ def _recursive_map_ma(items: List[Dict[str, Any]], ma_map: Dict[str, Dict[Tuple[
             _recursive_map_ma(children, ma_map)
 
 
+def is_structure_safe(structure: Dict[str, Any]) -> bool:
+    """Hardened safety check for extraction structure."""
+    if not structure or not isinstance(structure, dict):
+        return False
+    questions = structure.get("questions") or []
+    if len(questions) == 0:
+        return False
+    # Ensure all root questions have a UID (Canonical Identity Enforcement)
+    return all(bool(q.get("question_uid")) for q in questions)
+
 async def extract_question_structure(
     *,
     question_paper_images: List[str],
@@ -2612,6 +2624,7 @@ async def extract_question_structure(
     llm_service: "AbstractLLMService",
     model_answer_map: Optional[Dict[str, Any]] = None,
     paper_id: Optional[str] = None,
+    mode: str = "structure", # structure | grading
 ) -> Tuple[Dict[str, Any], Dict[str, Any], str, int]:
     """Extract question structure with layered visual+semantic pipeline."""
     
@@ -3117,6 +3130,7 @@ async def extract_question_structure(
         header_total_marks=header_total_marks,
         header_total_reliable=header_total_reliable,
         model_answer_map=model_answer_map,
+        mode=mode,
     )
     
     # Phase 4: Capture main grading trace
@@ -3128,6 +3142,10 @@ async def extract_question_structure(
 
 
     # Layer 5: consistency validator with repair tasks.
+    # Pass through the resolved structure which now contains mark_override_coverage
+    if reasoned.get("mark_override_coverage") is not None:
+        structure["mark_override_coverage"] = reasoned["mark_override_coverage"]
+
     validation_report = validate_structure_stage3(
         structure,
         header_total_marks=header_total_marks,
@@ -3164,6 +3182,29 @@ async def extract_question_structure(
             str(err).startswith("subpart_sum_mismatch") for err in errors_now
         )
         if not only_subpart_mismatch:
+            if not RECONSTRUCTION_ENABLED:
+                logger.warning("RECONSTRUCTION_DISABLED: Skipping reconstruction for paper_id=%s. Marking for manual review.", paper_id)
+                
+                # 🔒 SAFE FALLBACK STATE
+                if paper_id:
+                    try:
+                        from app.core.database import db
+                        await db.exams.update_one(
+                            {"exam_id": paper_id},
+                            {
+                                "$set": {
+                                    "question_extraction_status": "FAILED_VALIDATION",
+                                    "needs_manual_review": True,
+                                    "unresolved_flags": errors_now
+                                }
+                            }
+                        )
+                    except Exception as e:
+                        logger.error("FAILED_TO_UPDATE_EXAM_STATE error=%s", str(e))
+                
+                # 🔴 CRITICAL: STOP PIPELINE
+                raise ExtractionValidationError(f"Reconstruction disabled - invalid structure detected: {errors_now}")
+
             logger.warning("RECONSTRUCT_STRUCTURE errors=%s", errors_now)
             try:
                 reconstruction_prompt = build_reconstruction_prompt(
@@ -3187,6 +3228,7 @@ async def extract_question_structure(
                     header_total_marks=header_total_marks,
                     header_total_reliable=header_total_reliable,
                     model_answer_map=model_answer_map,
+                    mode=mode,
                 )
                 # Phase 4: Combine traces from retry if applicable
                 retry_grading_trace = reconstructed_reasoned.pop("_grading_trace", [])
@@ -3195,7 +3237,8 @@ async def extract_question_structure(
                 reconstructed_structure = reconstructed_reasoned.get("resolved_structure") or reconstructed_semantic
                 reconstructed_audit = list(reconstructed_reasoned.get("question_audit_tree") or [])
                 
-
+                if reconstructed_reasoned.get("mark_override_coverage") is not None:
+                    reconstructed_structure["mark_override_coverage"] = reconstructed_reasoned["mark_override_coverage"]
 
                 reconstructed_validation = validate_structure_stage3(
                     reconstructed_structure,
