@@ -77,13 +77,13 @@ def normalize_structure_payload(payload: Dict[str, Any], paper_id: Optional[str]
         
         seen_uids[final_uid] = 1
 
-        if qn <= 0:
-            continue
+        # Removed 'if qn <= 0: continue' to preserve unparseable Phase 1 'None' items
         subquestions = [_normalize_subquestion(sq) for sq in (q.get("subquestions") or []) if isinstance(sq, dict)]
         subquestions.sort(key=lambda item: str(item.get("label") or ""))
         normalized_questions.append(
             {
-                "number": qn,
+                "number": q.get("number"),
+                "raw_number": str(q.get("raw_number") or ""),
                 "question_uid": final_uid,
                 "uid": final_uid,
                 "section": (str(q.get("section") or "").strip() or None),
@@ -106,7 +106,13 @@ def normalize_structure_payload(payload: Dict[str, Any], paper_id: Optional[str]
             }
         )
 
-    normalized_questions.sort(key=lambda item: (str(item.get("section") or ""), int(item["number"])))
+    # Phase 2 Deterministic Sort for normalized structs
+    normalized_questions.sort(key=lambda item: (
+        str(item.get("section") or ""),
+        0 if isinstance(item.get("number"), int) else 1,
+        item.get("number") if isinstance(item.get("number"), int) else str(item.get("raw_number") or ""),
+        str(item.get("uid") or "")
+    ))
 
     # Drop singleton OR groups; OR semantics require at least two branches.
     or_counts = Counter(
@@ -179,6 +185,8 @@ def normalize_structure_payload(payload: Dict[str, Any], paper_id: Optional[str]
         "model_answers": payload.get("model_answers"),
         "model_answer_map": payload.get("model_answer_map"),
         "model_answer_text": payload.get("model_answer_text"),
+        "distribution_gaps": payload.get("distribution_gaps") or [],
+        "_meta_traces": payload.get("_meta_traces") or {},
     }
 
 

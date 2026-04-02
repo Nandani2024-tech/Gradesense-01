@@ -7,7 +7,12 @@ import re
 from typing import Any, Optional, Tuple
 
 
-_INT_RE = re.compile(r"^[+-]?\d+$")
+_ROBUST_INT_PATTERNS = [
+    re.compile(r"^[+-]?(\d+)$"),             # Standard: 12, +12, -12
+    re.compile(r"^[+-]?(\d+)[.)]$"),         # Trailing: 12. or 12)
+    re.compile(r"^Q\.?\s*(\d+)$", re.I),     # Prefixed: Q12 or Q.12
+]
+
 _FLOAT_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$")
 _SECTION_MATH_RE = re.compile(
     r"(?<!\d)(\d+(?:\.\d+)?)\s*[x×*]\s*(\d+(?:\.\d+)?)\s*=\s*(\d+(?:\.\d+)?)(?!\d)",
@@ -15,28 +20,37 @@ _SECTION_MATH_RE = re.compile(
 )
 
 
-def safe_int(value: Any, default: int = 0) -> int:
-    """Parse strict integer values only; rejects partial/embedded numbers."""
+def safe_int(value: Any, default: Any = None) -> Any:
+    """
+    Parse integer values with question-aware robustness.
+    Now handles '11.', 'Q12', '12)' etc.
+    Returns 'default' (None by default) on failure instead of silent 0.
+    """
     try:
         if value is None:
-            return int(default)
+            return default
         if isinstance(value, bool):
-            return int(default)
+            return default
         if isinstance(value, int):
             return int(value)
         if isinstance(value, float):
             if not math.isfinite(value):
-                return int(default)
+                return default
             rounded = int(round(value))
             if abs(value - rounded) > 1e-9:
-                return int(default)
+                return default
             return rounded
+            
         text = str(value).strip()
-        if not _INT_RE.fullmatch(text):
-            return int(default)
-        return int(text)
+        # Try robust patterns first
+        for pat in _ROBUST_INT_PATTERNS:
+            match = pat.match(text)
+            if match:
+                return int(match.group(1))
+                
+        return default
     except Exception:
-        return int(default)
+        return default
 
 
 def safe_float(value: Any, default: float = 0.0) -> float:

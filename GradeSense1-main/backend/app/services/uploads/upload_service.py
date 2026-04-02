@@ -84,7 +84,6 @@ class UploadService:
                 "question_extraction_status": "processing",
                 "processing_state": "extracting",
                 "processing_lock_owner": f"exam_pipeline:{exam_id}",
-                "question_extraction_count": 0,
                 "model_answer_text_chars": 0
             }}
         )

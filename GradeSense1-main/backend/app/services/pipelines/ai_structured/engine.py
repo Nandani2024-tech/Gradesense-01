@@ -65,6 +65,7 @@ async def extract_and_persist(
         ).hexdigest()
 
         cached = get_cached_structure(exam_id, int(locked_exam.get("blueprint_version", 0) or 0), extraction_hash_seed)
+        is_ma_only_update = False
         if cached and not force:
             structure = cached.get("structure") or {}
             validation_report = cached.get("validation_report") or {}
@@ -86,6 +87,7 @@ async def extract_and_persist(
                 
                 ma_map = ma_results.get("model_answer_map") or {}
                 _recursive_map_ma(structure.get("questions") or [], ma_map)
+                is_ma_only_update = True
                 logger.info("[ENGINE] Forced MA extraction and canonical mapping complete")
         else:
             model_answer_map = locked_exam.get("model_answer_map")
@@ -138,46 +140,66 @@ async def extract_and_persist(
 
         effective_total = _to_float(snapshot.get("effective_total_marks"), _to_float(locked_exam.get("total_marks"), 0.0))
 
-        exam_update_payload = {
-            "$set": {
-                "processing_state": "idle",
-                "question_extraction_status": "completed",
-                "question_paper_processing": False,
-                "question_extraction_count": len(legacy_questions),
-                "question_structure_v2": normalized,
-                "question_structure_validation": validation_report,
-                "question_structure_confidence": normalized.get("structure_confidence", 0.0),
-                "question_structure_source": "ai_structured",
-                "question_structure_retry_count": int(retry_count),
-                "question_audit_tree": snapshot.get("question_audit_tree") or audit_tree,
-                "unresolved_flags": snapshot.get("unresolved_flags") or unresolved_flags,
-                "structure_confidence": normalized.get("structure_confidence", 0.0),
-                "active_structure_hash": snapshot.get("structure_hash"),
-                "blueprint_locked": True,
-                "blueprint_status": "ready_locked",
-                "blueprint_version": int(next_version),
-                "locked_at": snapshot.get("locked_at"),
-                "blueprint_locked_at": snapshot.get("locked_at"),
-                "questions": legacy_questions,
-                "questions_count": len(legacy_questions),
-                "total_marks": effective_total if effective_total > 0 else _to_float(locked_exam.get("total_marks"), 0.0),
-                "effective_total_marks": effective_total,
-                "or_groups_map": snapshot.get("or_groups_map"),
+        set_payload = {
+            "processing_state": "idle",
+            "question_extraction_status": "completed",
+            "question_paper_processing": False,
+            "question_extraction_count": len(legacy_questions),
+            "question_structure_v2": normalized,
+            "question_structure_validation": validation_report,
+            "question_structure_confidence": normalized.get("structure_confidence", 0.0),
+            "question_structure_source": "ai_structured",
+            "question_structure_retry_count": int(retry_count),
+            "question_audit_tree": snapshot.get("question_audit_tree") or audit_tree,
+            "unresolved_flags": snapshot.get("unresolved_flags") or unresolved_flags,
+            "structure_confidence": normalized.get("structure_confidence", 0.0),
+            "active_structure_hash": snapshot.get("structure_hash"),
+            "blueprint_locked": True,
+            "blueprint_status": "ready_locked",
+            "blueprint_version": int(next_version),
+            "locked_at": snapshot.get("locked_at"),
+            "blueprint_locked_at": snapshot.get("locked_at"),
+            "questions": legacy_questions,
+            "questions_count": len(legacy_questions),
+            "total_marks": effective_total if effective_total > 0 else _to_float(locked_exam.get("total_marks"), 0.0),
+            "effective_total_marks": effective_total,
+            "or_groups_map": snapshot.get("or_groups_map"),
+            "processing_lock_at": datetime.utcnow(),
+            "processing_lock_owner": owner,
+            "attempt_rules": snapshot.get("attempt_rules"),
+            "model_name": model_name,
+            "prompt_version": PROMPT_VERSION,
+            "pipeline_version": PIPELINE_VERSION,
+            "extraction_hash": extraction_hash,
+        }
+
+        # ONLY update model answer metadata if this execution was specifically for model answers
+        if model_answer_images is not None:
+            set_payload.update({
                 "model_answer_file_id": locked_exam.get("model_answer_file_id"),
-                "model_answer_pages": len(model_answer_images or []),
+                "model_answer_pages": len(model_answer_images),
                 "has_model_answer": bool(model_answer_images),
                 "model_answer_processing": False,
                 "model_answer_text_status": "completed" if model_answer_images else "none",
+                "model_answer_text_chars": len(normalized.get("model_answer_text") or "")
+            })
+
+        # If this was ONLY a model answer update on top of a cached QP, use dot notation to prevent overwriting parallel UI edits
+        if is_ma_only_update:
+            ma_payload = {
+                "question_structure_v2.model_answers": normalized.get("model_answers"),
+                "question_structure_v2.model_answer_map": normalized.get("model_answer_map"),
+                "question_structure_v2.model_answer_text": normalized.get("model_answer_text"),
+                "question_structure_v2.questions": normalized.get("questions"), # Updated with mapped answers
+                "questions": legacy_questions, # Consistency across formats
+                "model_answer_processing": False,
+                "model_answer_text_status": "completed",
                 "model_answer_text_chars": len(normalized.get("model_answer_text") or ""),
-                "processing_lock_at": datetime.utcnow(),
-                "processing_lock_owner": owner,
-                "attempt_rules": snapshot.get("attempt_rules"),
-                "model_name": model_name,
-                "prompt_version": PROMPT_VERSION,
-                "pipeline_version": PIPELINE_VERSION,
-                "extraction_hash": extraction_hash,
+                "processing_state": "idle"
             }
-        }
+            exam_update_payload = {"$set": ma_payload}
+        else:
+            exam_update_payload = {"$set": set_payload}
 
         logger.info("PRE_PERSIST_STRUCTURE question_count=%s content_keys=%s", len(legacy_questions), list(normalized.keys()))
         # Log a snippet of the first question's model answer for verification

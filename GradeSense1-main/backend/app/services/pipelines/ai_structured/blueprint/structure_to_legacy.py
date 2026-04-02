@@ -6,11 +6,14 @@ from app.layers.ai_structured.validation import compute_effective_total
 def question_structure_to_legacy_questions(structure: Dict[str, Any]) -> List[Dict[str, Any]]:
     legacy = []
     for q in (structure.get("questions") or []):
+        num = q.get("number")
+        qn = int(num) if num is not None else None
+        uuid_fallback = f"qv2_{qn}" if qn is not None else "qv2_unk"
         legacy.append(
             {
-                "question_number": int(q.get("number")),
-                "question_uid": str(q.get("question_uid") or f"qv2_{int(q.get('number'))}"),
-                "question_uuid": str(q.get("question_uid") or f"qv2_{int(q.get('number'))}"),
+                "question_number": qn,
+                "question_uid": str(q.get("question_uid") or uuid_fallback),
+                "question_uuid": str(q.get("question_uid") or uuid_fallback),
                 "max_marks": compute_effective_total(q),
                 "question_text": str(q.get("question_text") or "").strip(),
                 "model_answer": str(q.get("model_answer") or "").strip(),

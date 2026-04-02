@@ -10,10 +10,22 @@ from .common_utils import _to_float
 def _question_structure_to_legacy_questions(structure: Dict[str, Any]) -> List[Dict[str, Any]]:
     legacy = []
     for q in (structure.get("questions") or []):
+        num = q.get("number")
+        if num is None:
+            qn = None
+            uuid_fallback = "qv2_unk"
+        else:
+            try:
+                qn = int(num)
+                uuid_fallback = f"qv2_{qn}"
+            except ValueError:
+                qn = None
+                uuid_fallback = "qv2_unk"
+                
         legacy.append(
             {
-                "question_number": int(q.get("number")),
-                "question_uuid": str(q.get("question_uuid") or f"qv2_{int(q.get('number'))}"),
+                "question_number": qn,
+                "question_uuid": str(q.get("question_uuid") or uuid_fallback),
                 "max_marks": _to_float(q.get("marks"), 0.0),
                 "question_text": str(q.get("question_text") or "").strip(),
                 "rubric": str(q.get("question_text") or "").strip(),
@@ -45,11 +57,14 @@ def _apply_audit_tree_marks(structure: Dict[str, Any], question_audit_tree: Opti
     if not audit_rows:
         return normalized
 
-    by_num: Dict[int, Dict[str, Any]] = {
-        int(q.get("number")): q
-        for q in (normalized.get("questions") or [])
-        if str(q.get("number", "")).isdigit()
-    }
+    by_num: Dict[int, Dict[str, Any]] = {}
+    for q in (normalized.get("questions") or []):
+        try:
+            val = q.get("number")
+            if val is not None:
+                by_num[int(val)] = q
+        except ValueError:
+            pass
     for row in audit_rows:
         qn = int(row.get("number") or 0)
         if qn <= 0 or qn not in by_num:
@@ -83,7 +98,7 @@ def _apply_audit_tree_marks(structure: Dict[str, Any], question_audit_tree: Opti
             q["subquestions"] = new_sub
         by_num[qn] = q
 
-    normalized["questions"] = [by_num[int(q.get("number"))] for q in (normalized.get("questions") or []) if str(q.get("number", "")).isdigit()]
+    normalized["questions"] = [by_num[int(q.get("number"))] for q in (normalized.get("questions") or []) if q.get("number") is not None and str(q.get("number", "")).lstrip('-').isdigit() and int(q.get("number")) in by_num]
     
     # Phase 2 Fix: Call compute_paper_effective_total for list of questions
     normalized["total_marks"] = compute_paper_effective_total(normalized.get("questions") or [])

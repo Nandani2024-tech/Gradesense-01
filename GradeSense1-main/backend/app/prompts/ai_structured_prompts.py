@@ -291,43 +291,51 @@ def build_visual_extraction_prompt(
     )
 
 
-def build_reconstruction_prompt(
+def build_targeted_repair_prompt(
     *,
     previous_structure: Dict[str, Any],
     validation_errors: List[str],
     raw_ocr_text: str,
 ) -> str:
     ocr_chunk = str(raw_ocr_text or "")
-    prev_struct_chunk = str(json.dumps(previous_structure, ensure_ascii=True))[:30000]
+    
+    # We compress the previous structure to drastically save input context tokens
+    compressed_structure = []
+    for q in previous_structure.get("questions") or []:
+        compressed_q = {
+            "number": q.get("number"),
+            "section": q.get("section"),
+            "marks": q.get("marks"),
+            "subquestions_count": len(q.get("subquestions") or []),
+            "uid": q.get("question_uid") or q.get("uid")
+        }
+        compressed_structure.append(compressed_q)
+
+    prev_struct_chunk = str(json.dumps({"questions": compressed_structure}, ensure_ascii=True))
+    
     return (
-        "Reconstruct the same exam structure and fix only validation errors.\n"
-        "Hard guardrails:\n"
+        "We found extracting errors/gaps in the current exam structure.\n"
+        "Your task is to TARGETED REPAIR the specific validation errors.\n"
+        "DO NOT REGENERATE THE WHOLE PAPER. ONLY RETURN THE MISSING OR BROKEN QUESTIONS in the 'questions' array.\n"
+        "\nHard guardrails:\n"
+        "- ONLY output questions that fix the listed validation errors.\n"
+        "- Do not output the questions that are already correct.\n"
         "- Do not invent numbering.\n"
         "- Do not merge distinct questions.\n"
         "- This is structural parsing, not summarization.\n"
         "- Stage-1 only: do not assign marks; set all marks to 0.\n"
         "- Never split one question's marks unless explicit visual subparts exist.\n"
         "- Treat N x M as section distribution evidence; do not split questions.\n"
-        "- Do not create subquestions from marks math alone.\n"
-        "- Do not create subquestions from MCQ options.\n"
-        "- If section math appears in the left margin (n x m = x), it applies to the next n questions; do not assign marks.\n"
-        "- If the paper says 'any one/any of the following/alternative question', keep choices in question_text or options; do not create subquestions.\n"
-        "- Do not output or_group_id; visual layer handles OR pairing.\n"
         "- Do not compute final totals or redistribute marks.\n"
-        "- Keep mark hints only when explicitly visible in paper.\n"
-        "- Do not include section_math_blocks; visual layer detects section math.\n"
-        "- Keep visual evidence for every question.\n"
         "- Keep question_text concise and JSON-safe; collapse long dot leaders/repeated punctuation to '...'.\n"
-        "- Do not include raw newlines inside string values; use \n for line breaks.\n"
-        "- Do not include unescaped quotes inside strings.\n"
-        "Return strict JSON only.\n\n"
-        "Current extracted structure:\n"
+        "Return strict JSON only matching the schema exactly, but with only the repaired questions in the list.\n\n"
+        "Compressed Current Extracted Structure (for context):\n"
         f"{prev_struct_chunk}\n\n"
-        "Validation errors to fix:\n"
+        "Validation errors to fix (ONLY output questions required to fix these):\n"
         + "\n".join(f"- {e}" for e in (validation_errors or ["unknown_error"]))
         + "\n\nSchema:\n"
         + _json_schema_block(EXTRACTION_SCHEMA)
-        + "\n\nOCR Support Text:\n"
+        + "\n\nOCR Support Text (for reference):\n"
         + ocr_chunk
     )
 

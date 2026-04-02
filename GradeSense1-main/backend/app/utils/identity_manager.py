@@ -1,4 +1,5 @@
 import re
+import hashlib
 import unicodedata
 from app.utils.text_utils import normalize_text_unicode_safe
 
@@ -47,7 +48,7 @@ def normalize_section(section: str) -> str:
         
     return text
 
-def canonicalize_uid(section: str, number: int, subpart: str = None, paper_id: str = None) -> str:
+def canonicalize_uid(section: str, number: int = None, subpart: str = None, paper_id: str = None, raw_number: str = None) -> str:
     """
     Consolidated UID generation (Phase 1).
     Format: [paper_id_]{section_slug}_q{number}[_s{subpart_slug}]
@@ -56,7 +57,14 @@ def canonicalize_uid(section: str, number: int, subpart: str = None, paper_id: s
     
     # Ensure number is a valid positive integer
     if number is None:
-        num_part = "unk"
+        if raw_number and str(raw_number).strip():
+            # Slugify the raw string for a valid UID
+            clean_raw = normalize_text_unicode_safe(str(raw_number).lower())
+            clean_raw = re.sub(r'[\s:,-]+', '_', clean_raw).strip('_')
+            clean_raw = re.sub(r'[\(\)\[\]\{\}\.]', '', clean_raw)
+            num_part = f"q_{clean_raw}" if clean_raw else "q_unk"
+        else:
+            num_part = "q_unk"
     else:
         try:
             # We keep it as a string if it's not a pure int to support "1", "1.1" etc if needed
@@ -79,12 +87,12 @@ def canonicalize_uid(section: str, number: int, subpart: str = None, paper_id: s
             
     return base_uid
 
-def build_question_uid(section: str, number: int, paper_id: str = None) -> str:
+def build_question_uid(section: str, number: int = None, paper_id: str = None, raw_number: str = None) -> str:
     """
     Legacy wrapper for backward compatibility with audit hooks.
     Uses canonicalize_uid internally.
     """
-    return canonicalize_uid(section, number, paper_id=paper_id)
+    return canonicalize_uid(section, number, paper_id=paper_id, raw_number=raw_number)
 
 def normalize_question_id(qid: str) -> str:
     """Standardizes Question IDs from Vision models (e.g., '1', '22a', 'Q 34')."""
@@ -144,31 +152,46 @@ def assign_question_uids(questions: List[Dict[str, Any]], paper_id: str = None) 
     for q in questions:
         sec = q.get("section") or "default"
         num = q.get("number")
+        raw_num = q.get("raw_number")
         
-        if num is None:
-            continue
-            
-        uid = canonicalize_uid(sec, num, paper_id=paper_id)
+        uid = canonicalize_uid(sec, num, paper_id=paper_id, raw_number=raw_num)
         
         if uid in seen_uids:
-            raise UIDCollisionError(f"Collision detected for UID: {uid}. Section: {sec}, Number: {num}")
-        
+            # Deterministic hash instead of _dup_X
+            text_snippet = str(q.get("question_text") or "").strip().lower()
+            base = f"{sec}|{raw_num}|{text_snippet}".strip().lower()
+            
+            if not base or base == "none|none|":
+                # Fallback only if absolutely no data exists
+                base = f"{sec}|fallback|{len(seen_uids)}"
+                
+            text_hash = hashlib.md5(base.encode("utf-8")).hexdigest()[:6]
+            uid = f"{uid}_h{text_hash}"
+            
         seen_uids.add(uid)
         q["question_uid"] = uid
         q["uid"] = uid
         
         # Handle subquestions recursively
-        _recursive_assign_uids(q.get("subquestions") or [], sec, num, seen_uids, paper_id=paper_id)
+        _recursive_assign_uids(q.get("subquestions") or [], sec, num, seen_uids, paper_id=paper_id, parent_raw_number=raw_num)
 
-def _recursive_assign_uids(subquestions: List[Dict[str, Any]], section: str, parent_number: int, seen_uids: set, parent_subpart: str = None, paper_id: str = None) -> None:
+def _recursive_assign_uids(subquestions: List[Dict[str, Any]], section: str, parent_number: int, seen_uids: set, parent_subpart: str = None, paper_id: str = None, parent_raw_number: str = None) -> None:
     for sq in subquestions:
         label = sq.get("label") or "sub"
         # Deep recursion: parent_subpart prefix ensures uniqueness for nested items (e.g. q1_sa_si)
         current_subpart = f"{parent_subpart}_{label}" if parent_subpart else label
-        uid = canonicalize_uid(section, parent_number, subpart=current_subpart, paper_id=paper_id)
+        uid = canonicalize_uid(section, parent_number, subpart=current_subpart, paper_id=paper_id, raw_number=parent_raw_number)
         
         if uid in seen_uids:
-            raise UIDCollisionError(f"Collision detected for subpart UID: {uid}")
+            # Deterministic hash for subparts
+            text_snippet = str(sq.get("text") or "").strip().lower()
+            base = f"{section}|{parent_raw_number}|{current_subpart}|{text_snippet}".strip().lower()
+            
+            if not base or base == "none|none|none|":
+                base = f"{section}|fallback|{len(seen_uids)}"
+                
+            text_hash = hashlib.md5(base.encode("utf-8")).hexdigest()[:6]
+            uid = f"{uid}_h{text_hash}"
             
         seen_uids.add(uid)
         sq["question_uid"] = uid
@@ -176,5 +199,4 @@ def _recursive_assign_uids(subquestions: List[Dict[str, Any]], section: str, par
         
         nested = sq.get("subquestions") or []
         if nested:
-            _recursive_assign_uids(nested, section, parent_number, seen_uids, parent_subpart=current_subpart, paper_id=paper_id)
-            _recursive_assign_uids(nested, section, parent_number, seen_uids, parent_subpart=current_subpart, paper_id=paper_id)
+            _recursive_assign_uids(nested, section, parent_number, seen_uids, parent_subpart=current_subpart, paper_id=paper_id, parent_raw_number=parent_raw_number)

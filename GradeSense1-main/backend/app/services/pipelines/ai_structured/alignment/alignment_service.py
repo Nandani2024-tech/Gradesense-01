@@ -126,7 +126,7 @@ async def perform_alignment_and_update(
         "expected_questions": sorted(
             int(q.get("number"))
             for q in (structure.get("questions") or [])
-            if str(q.get("number", "")).isdigit()
+            if q.get("number") is not None and str(q.get("number")).lstrip('-').isdigit()
         ),
         "detected_questions": sorted(
             {

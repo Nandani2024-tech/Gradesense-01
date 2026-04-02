@@ -119,14 +119,35 @@ async def run_grading_orchestrator(
             )
 
         # 1. Fetch the blueprint (SSOT)
-        blueprint = await extract_question_structure(exam_id)
-        if not blueprint or not blueprint.get("questions"):
-            raise ValueError(f"Blueprint not found or empty for exam: {exam_id}")
+        import tenacity
+        from app.core.exceptions import CustomServiceException
+
+        @tenacity.retry(
+            retry=tenacity.retry_if_exception(lambda e: isinstance(e, CustomServiceException) and (e.message == "blueprint_not_locked" or e.message == "SSOT_MISSING")),
+            wait=tenacity.wait_exponential(multiplier=4, min=4, max=60),
+            stop=tenacity.stop_after_attempt(10),
+            before_sleep=lambda retry_state: logger.info(f"Retrying grading orchestrator for {submission_id} due to blueprint lock... attempt {retry_state.attempt_number}")
+        )
+        async def fetch_and_align():
+            # 1.1 Fetch blueprint
+            blue = await extract_question_structure(exam_id)
+            if not blue or not blue.get("questions"):
+                raise ValueError(f"Blueprint not found or empty for exam: {exam_id}")
             
-        # Task 3: Pre-grading validation
-        validate_blueprint_ids(blueprint)
+            validate_blueprint_ids(blue)
+            
+            # 1.2 Perform Alignment
+            logger.info(f"🔗 Starting alignment: submission_id={submission_id}")
+            return await align_submission_for_grading(
+                submission_id=submission_id,
+                structure=blue,
+                llm_service=llm_service
+            ), blue
+
+        # Execute retryable fetch and align
+        aligned_result_raw, blueprint = await fetch_and_align()
         
-        logger.info(f"✅ Blueprint fetched and validated: exam_id={exam_id}")
+        logger.info(f"✅ Blueprint fetched and aligned: exam_id={exam_id}")
 
         # 2. Fetch Submission & Images
         logger.info(f"🔍 Fetching submission: submission_id={submission_id}")
@@ -145,14 +166,6 @@ async def run_grading_orchestrator(
         student_id = student_info.get("student_id")
         student_name = student_info.get("student_name")
         logger.info("✅ Resolved student info: id=%s, name=%s", student_id, student_name)
-
-        # 4. Perform Alignment
-        logger.info(f"🔗 Starting alignment: submission_id={submission_id}")
-        aligned_result_raw = await align_submission_for_grading(
-            submission_id=submission_id,
-            structure=blueprint,
-            llm_service=llm_service
-        )
 
         # ✅ PHASE 2.2 DEBUG LOGS
         logger.info("DEBUG_GRADING_INPUT_KEYS: %s", list(aligned_result_raw.get("answers", {}).keys()))

@@ -57,8 +57,10 @@ def _question_to_legacy(question: Dict[str, Any]) -> Dict[str, Any]:
                 "rubric": str(sq.get("text") or "").strip(),
             }
         )
+        num = question.get("number")
+        qn = int(num) if num is not None else None
     return {
-        "question_number": int(question.get("number")),
+        "question_number": qn,
         "max_marks": _to_float(question.get("marks"), 0.0),
         "rubric": str(question.get("question_text") or "").strip(),
         "question_text": str(question.get("question_text") or "").strip(),
@@ -225,8 +227,9 @@ def _select_context_images(
 
     # Student answer pages (from alignment_result)
     if include_student:
-        qn = int(question.get("number", 0) or 0)
-        if answer_images:
+        num = question.get("number")
+        qn = int(num) if num is not None else None
+        if answer_images and qn is not None:
             # Phase 3: handles both list and dict
             ans_payload = alignment_result.get("answers") or {}
             ans_iterator = ans_payload.values() if isinstance(ans_payload, dict) else ans_payload
@@ -353,6 +356,8 @@ def _select_model_answer_text(
         return fallback_text
     q_raw = question.get("number")
     try:
+        if q_raw is None:
+            return fallback_text
         qn = str(int(q_raw))
     except Exception:
         return fallback_text
@@ -435,8 +440,10 @@ async def infer_objective_key_consensus(
 
     non_empty = [k for k in attempts if k]
     if not non_empty:
+        num = question.get("number")
+        qn = int(num) if num is not None else None
         return {
-            "question_number": int(question.get("number")),
+            "question_number": qn,
             "inferred_key": None,
             "consensus_ratio": 0.0,
             "confidence_flag": "low",
@@ -467,8 +474,10 @@ async def infer_objective_key_consensus(
         )
         # ADDED LOGGING END
 
+    num = question.get("number")
+    qn = int(num) if num is not None else None
     return {
-        "question_number": int(question.get("number")),
+        "question_number": qn,
         "inferred_key": key,
         "consensus_ratio": round(consensus_ratio, 2),
         "confidence_flag": confidence_flag,
@@ -568,7 +577,22 @@ async def grade_answers_with_contracts(
     llm_service: AbstractLLMService,
     job_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    questions = sorted(question_structure.get("questions") or [], key=lambda q: int(q.get("number", 0) or 0))
+    questions = sorted(question_structure.get("questions") or [], key=lambda q: (
+        str(q.get("section") or ""),
+        0 if isinstance(q.get("number"), int) else 1,
+        q.get("number") if isinstance(q.get("number"), int) else str(q.get("raw_number") or ""),
+        str(q.get("uid") or "")
+    ))
+    
+    def _deep_sort_subs(subs):
+        if not subs or not isinstance(subs, list): return
+        subs.sort(key=lambda s: (str(s.get("label") or ""), str(s.get("uid") or "")))
+        for s in subs:
+            _deep_sort_subs(s.get("subquestions"))
+            
+    for q in questions:
+        _deep_sort_subs(q.get("subquestions"))
+        
     legacy_questions = [_question_to_legacy(q) for q in questions]
     blueprint_enrichment = build_blueprint_enrichment(legacy_questions)
 
@@ -578,7 +602,8 @@ async def grade_answers_with_contracts(
 
     async def _grade_single_question(q: Dict[str, Any]):
         async with semaphore:
-            qn = int(q.get("number"))
+            num = q.get("number")
+            qn = int(num) if num is not None else None
             per_question_model_answer = _select_model_answer_text(
                 question=q,
                 model_answer_map=model_answer_map,
@@ -601,12 +626,12 @@ async def grade_answers_with_contracts(
                 include_model=True,
                 include_question=True,
             )
-            contract = (blueprint_enrichment.get(qn) or {}).get("grading_contract") or build_grading_contract(
-                _question_to_legacy(q)
-            )
+            contract = (blueprint_enrichment.get(qn) or {}).get("grading_contract") if qn is not None else None
+            if not contract:
+                contract = build_grading_contract(_question_to_legacy(q))
             logger.info("CONTRACT_CREATED exam_id=%s question=%s", exam_id or "unknown", qn)
 
-            answer_by_sub = grouped_answers.get(qn, {})
+            answer_by_sub = grouped_answers.get(qn, {}) if qn is not None else {}
             merged_answer_text = "\n".join(v for _, v in sorted(answer_by_sub.items(), key=lambda item: str(item[0])))
             has_answer = bool(merged_answer_text.strip())
             logger.info("GRADING_INPUT question=%s has_answer=%s text_len=%s", qn, has_answer, len(merged_answer_text))
@@ -772,7 +797,7 @@ async def grade_answers_with_contracts(
                 )
 
             qs = QuestionScore(
-                question_number=qn,
+                question_number=str(qn) if qn is not None else "unk",
                 max_marks=round(_to_float(contract.get("total_marks"), _to_float(q.get("marks"), 0.0)), 2),
                 obtained_marks=round(_to_float(applied.get("obtained_marks"), 0.0), 2),
                 ai_feedback=question_feedback or "Evaluated using answer key and rubric.",

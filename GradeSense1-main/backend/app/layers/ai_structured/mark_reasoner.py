@@ -82,7 +82,24 @@ def resolve_marks(
 
     normalized = normalize_structure_payload(question_structure or {}, allow_collisions=True)
     questions = [dict(q) for q in (normalized.get("questions") or [])]
-    questions.sort(key=lambda q: (str(q.get("section") or ""), to_int(q.get("number"), 0)))
+    # Phase 2 Deterministic Sort
+    questions.sort(key=lambda q: (
+        str(q.get("section") or ""),
+        0 if isinstance(q.get("number"), int) else 1,
+        q.get("number") if isinstance(q.get("number"), int) else str(q.get("raw_number") or ""),
+        str(q.get("uid") or "")
+    ))
+    
+    # Recursively sort subquestions
+    def _deep_sort_subs(subs):
+        if not subs or not isinstance(subs, list): return
+        subs.sort(key=lambda s: (str(s.get("label") or ""), str(s.get("uid") or "")))
+        for s in subs:
+            _deep_sort_subs(s.get("subquestions"))
+            
+    for q in questions:
+        _deep_sort_subs(q.get("subquestions"))
+        
     if not questions:
         return {
             "resolved_structure": normalized,
@@ -100,7 +117,15 @@ def resolve_marks(
         for q in questions 
         if to_int(q.get("number"), 0) > 0
     }
-    q_keys = sorted(by_key.keys(), key=lambda x: (x[0], x[1]))
+    
+    # Maintain deterministic sorted order for q_keys
+    q_keys = []
+    for q in questions:
+        num = to_int(q.get("number"), 0)
+        if num > 0:
+            key = (str(q.get("section") or ""), num)
+            if key in by_key and key not in q_keys:
+                q_keys.append(key)
     
     base_marks: Dict[Tuple[str, int], float] = {key: max(0.0, to_float(by_key[key].get("marks"), 0.0)) for key in q_keys}
     evidence_refs: Dict[Tuple[str, int], List[Dict[str, Any]]] = defaultdict(list)
@@ -361,7 +386,16 @@ def resolve_marks(
                 logger.info("[MARK_RECONCILE] q=%s section=%s subparts=true", key[1], key[0])
                 _sync_audit_for_question(key, question_audit_tree, by_key)
 
-    resolved_questions = [by_key[key] for key in q_keys]
+    # Phase 2: Preserve None questions in their established deterministic sort order
+    resolved_questions = []
+    for q in questions:
+        num = to_int(q.get("number"), 0)
+        if num > 0:
+            key = (str(q.get("section") or ""), num)
+            if key in by_key and by_key[key] not in resolved_questions:
+                resolved_questions.append(by_key[key])
+        else:
+            resolved_questions.append(q)
     resolved_structure = {
         "questions": resolved_questions,
         "section_math_blocks": [
@@ -431,8 +465,10 @@ def resolve_marks(
     coverage_inferred = round((inferred_count / float(len(q_keys))) if q_keys else 0.0, 4)
 
     logger.info("MARK_REASON_FINISH semantic=%s visual=%s inferred=%s coverage=%.4f", semantic_count, visual_count, inferred_count, coverage_total)
-    if coverage_semantic < 0.5:
-        logger.warning("LOW_SEMANTIC_COVERAGE ratio=%.4f (Over-reliance on fallback layers)", coverage_semantic)
+    if coverage_semantic < 0.1 and coverage_total > 0.9:
+        logger.info("SEMANTIC_MARKS_OFF ratio=%.4f (Relying fully on visual reconciliation as expected)", coverage_semantic)
+    elif coverage_semantic < 0.5:
+        logger.warning("LOW_SEMANTIC_COVERAGE ratio=%.4f (Potential extraction gap)", coverage_semantic)
 
     effective_marks_map = []
     for key in q_keys:

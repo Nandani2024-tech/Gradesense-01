@@ -10,6 +10,7 @@ import json
 import os
 import re
 import uuid
+import hashlib
 from datetime import datetime
 from collections import defaultdict
 from app.core.config import RECONSTRUCTION_ENABLED
@@ -30,7 +31,7 @@ from app.infrastructure.ocr.provider.core import get_ocr_provider
 from app.layers.ai_structured.mark_reasoner import resolve_marks
 from app.prompts.ai_structured_prompts import (
     build_extraction_prompt,
-    build_reconstruction_prompt,
+    build_targeted_repair_prompt,
     get_extraction_system_prompt,
     build_visual_extraction_prompt,
     get_visual_extraction_system_prompt,
@@ -41,7 +42,7 @@ from app.layers.ai_structured.structure_repair import apply_structure_repairs
 from app.layers.ai_structured.structure_validator import validate_structure as validate_structure_stage3
 from app.layers.ai_structured.validation import normalize_structure_payload
 from app.adapters.visual_extractor import extract_visual_entities
-from app.utils.identity_manager import canonicalize_uid, normalize_section, UIDCollisionError
+from app.utils.identity_manager import canonicalize_uid, normalize_section, build_question_uid, UIDCollisionError
 from app.utils.text_utils import normalize_text_unicode_safe
 
 
@@ -810,27 +811,32 @@ def _normalize_batch_payload(
     section_math_blocks: List[Dict[str, Any]] = []
     orphan_subparts = []
     q_by_uid = {}
+    
+    # Phase 3: Reactive Rebinding State
+    last_valid_section = None
+    rebinding_trace = []
+    
+    # Phase 4: Inference Relaxation Trace
+    inference_trace = []
 
     for q in questions:
         if not isinstance(q, dict):
             continue
         
         raw_num = q.get("number")
-        qn = _parse_question_number(raw_num)
+        qn = safe_int(raw_num, default=None)
         
-        # STRICT CLEANUP: If number is unparseable as int, we still process it!
-        # Legacy discard logic REMOVED.
-        if qn is None and raw_num:
-             # Try to treat the whole raw_num as the number if it's alphanumeric
-             # This handles cases like "1a" or "Q1" that might have been rejected but should be kept
-             logger.info("PROCESSING_UNCONVENTIONAL_ID: raw=%s", raw_num)
-             # We use 0 as a flag or try to extract leading digits
-             match = re.search(r'\d+', str(raw_num))
-             qn = int(match.group(0)) if match else 0
-
-        if qn == 0 and not raw_num:
-            logger.error("STRICT_MODE_VIOLATION: Missing question number entirely. Generating fallback UID.")
-            qn = -1 # Special negative flag for missing numbers
+        # Determine Parse Status
+        if qn is not None:
+            if str(raw_num).strip().isdigit():
+                parse_status = "valid"
+            else:
+                parse_status = "recovered"
+        else:
+            parse_status = "failed"
+            # Maintain qn = None, no fallback to 0 or -1
+            if not str(raw_num or "").strip():
+                 logger.error("STRICT_MODE_VIOLATION: Missing question number entirely. Using fallback UID.")
 
         subquestions: List[Dict[str, Any]] = []
         for sq in (q.get("subquestions") or []):
@@ -885,18 +891,44 @@ def _normalize_batch_payload(
         ai_conf = _to_float(q.get("ai_confidence", q.get("confidence")), 0.0)
         ai_conf = max(ai_conf, 0.1)
 
-        # identity: generate globally unique question_uid (canonical)
+        # Phase 3: Reactive Rebinding Lookup
         raw_sec = (str(q.get("section") or "").strip() or None)
+        
+        is_orphan = not raw_sec or raw_sec.lower() in ("default", "section_unk", "unknown", "unk")
+        
+        if not is_orphan:
+            last_valid_section = raw_sec
+        elif last_valid_section is not None:
+            # Rebind the orphan via top-to-bottom anchor proximity
+            assigned_section = last_valid_section
+            logger.info("[PHASE3_REBINDING] Orphan question '%s' bounded to anchor section '%s'", raw_num, assigned_section)
+            q["section"] = assigned_section
+            raw_sec = assigned_section
+            
+            # Log trace for Phase 5 Cap+Gap
+            rebinding_trace.append({
+                "raw_number": raw_num,
+                "assigned_section": assigned_section,
+                "distance": 1 
+            })
+
         sec_name = raw_sec if raw_sec else "default"
-        q_uid = canonicalize_uid(sec_name, qn, paper_id=paper_id)
+        q_uid = canonicalize_uid(sec_name, qn, paper_id=paper_id, raw_number=raw_num)
 
         # Log UID Trace
         logger.info("[UID_TRACE] raw_sec=%s raw_num=%s -> uid=%s", raw_sec, q.get("number"), q_uid)
         
         # Phase 1: STRICT Collision Detection
         if q_uid in seen_uids:
-            logger.warning("[EXTRACTION_UID_COLLISION] Duplicate UID detected: %s. Appending suffix.", q_uid)
-            q_uid = f"{q_uid}_dup_{len(seen_uids)}"
+            # Deterministic composite hash
+            text_snippet = str(q.get("question_text", "")).strip().lower()
+            base = f"{sec_name}|{raw_num}|{text_snippet}".strip().lower()
+            if not base or base == "none|none|":
+                base = f"{sec_name}|fallback|{len(seen_uids)}"
+            text_hash = hashlib.md5(base.encode("utf-8")).hexdigest()[:6]
+            q_uid = f"{q_uid}_h{text_hash}"
+            logger.warning("[EXTRACTION_UID_COLLISION] Duplicate UID detected. Appending hash: %s", q_uid)
+            
         seen_uids.add(q_uid)
 
         # Store forensic trace (Phase 1)
@@ -918,24 +950,44 @@ def _normalize_batch_payload(
             "subpart_of": None,
             "status": "extracted"
         })
+        # Phase 4: Inference Gate Relaxation
+        inference_flags = dict(q.get("_flags") or {})
+        
+        if parse_status == "failed":
+            ai_conf = 0.1
+            inference_flags["requires_manual_mapping"] = True
+            inference_trace.append({
+                "uid": q_uid,
+                "parse_status": "failed",
+                "marks": q.get("marks")
+            })
+        elif parse_status == "recovered":
+            ai_conf = min(ai_conf, 0.9)
+            inference_trace.append({
+                "uid": q_uid,
+                "parse_status": "recovered",
+                "marks": q.get("marks")
+            })
 
         question_obj = {
             "number": qn,
-            "raw_number": str(q.get("number")),
+            "raw_number": str(raw_num or ""),
+            "number_parse_status": parse_status,
             "question_uid": q_uid,
             "uid": q_uid,
             "section": raw_sec,
             "instruction": (str(q.get("instruction") or "").strip() or None),
             "question_text": normalized_llm_text,
             "question_type": _normalize_type(q.get("question_type")),
-            "marks": None,
-            "mark_source": "missing",
-            "mark_confidence": 0.0,
+            "marks": q.get("marks"),  # Preserved for Phase 5 Cap+Gap
+            "mark_source": "extracted" if q.get("marks") is not None else "missing",
+            "mark_confidence": ai_conf if q.get("marks") is not None else 0.0,
             "options": list(q.get("options") or []) or None,
             "subquestions": [], # Will be populated recursively below
             "image_evidence": evidence,
             "ai_confidence": round(ai_conf, 4),
             "confidence": round(ai_conf, 4),
+            "_flags": inference_flags
         }
 
         # Recursive subquestion normalization
@@ -951,7 +1003,8 @@ def _normalize_batch_payload(
                 uid_trace, 
                 paper_id,
                 None, # parent_subpart prefix
-                semantic_trace # Phase 3 Trace Hook
+                semantic_trace, # Phase 3 Trace Hook
+                inference_trace # Phase 4 Hook
             )
 
         normalized_questions.append(question_obj)
@@ -978,15 +1031,69 @@ def _normalize_batch_payload(
             logger.info("SUBPART_RECOVERED parent=%s label=%s", orphan["parent"], orphan["label"])
 
         parent_q["subquestions"] = sorted(subparts, key=lambda s: str(s.get("label") or "").strip().lower())
+    # Phase 5: Cap + Gap Missing Distributions
+    distribution_gaps = []
+    
+    # Generate Gaps (Unmapped/Floating Marks from Failed Parses)
+    def _search_tree_for_gaps(q_list):
+        for q_obj in q_list:
+            if q_obj.get("_flags", {}).get("requires_manual_mapping"):
+                distribution_gaps.append({
+                    "type": "gap",
+                    "uid": q_obj.get("uid"),
+                    "section": q_obj.get("section"),
+                    "marks": q_obj.get("marks"),
+                    "reason": "missing number / failed parse",
+                    "_flags": {"requires_manual_mapping": True}
+                })
+            _search_tree_for_gaps(q_obj.get("subquestions") or [])
+            
+    _search_tree_for_gaps(normalized_questions)
+    
+    # Generate Caps (Missing Expected Sequential Numbers)
+    section_groups = {}
+    for q_obj in normalized_questions:
+        num = q_obj.get("number")
+        sec = q_obj.get("section") or "default"
+        if isinstance(num, int):
+            if sec not in section_groups:
+                section_groups[sec] = []
+            section_groups[sec].append(num)
+            
+    for sec, numbers in section_groups.items():
+        if not numbers:
+            continue
+        max_num = max(numbers)
+        existing_set = set(numbers)
+        # Calculate expected vs actual numbers from 1 to Max
+        for expected in range(1, max_num):
+            if expected not in existing_set:
+                cap_uid = canonicalize_uid(sec, expected, paper_id=paper_id)
+                distribution_gaps.append({
+                    "type": "cap",
+                    "uid": cap_uid,
+                    "section": sec,
+                    "expected_number": expected,
+                    "marks": None, # Forces UI resolving state
+                    "reason": "missing expected sequential number",
+                    "_flags": {"requires_manual_mapping": True}
+                })
 
     return {
         "questions": normalized_questions,
         "section_math_blocks": section_math_blocks,
-        "total_questions": int(payload.get("total_questions") or len(normalized_questions)),
-        "total_marks": 0.0,
-        "effective_total_marks": 0.0,
+        "total_questions": len(normalized_questions),
+        "total_marks": _to_float(payload.get("total_marks"), 0.0),
+        "effective_total_marks": _to_float(payload.get("effective_total_marks"), 0.0),
         "numbering_contiguous": bool(payload.get("numbering_contiguous", False)),
-        "_semantic_trace": semantic_trace # Phase 3 Trace hook
+        "distribution_gaps": distribution_gaps,
+        # Forward Trace Data
+        "_meta_traces": {
+            "uid_trace": uid_trace,
+            "rebinding_trace": rebinding_trace,
+            "inference_trace": inference_trace,
+            "semantic": semantic_trace
+        }
     }
 
 
@@ -1000,7 +1107,8 @@ def _normalize_subquestions_recursive(
     uid_trace: List[Dict[str, Any]],
     paper_id: Optional[str] = None,
     parent_subpart: str = None,
-    semantic_trace: Optional[List[Dict[str, Any]]] = None # Phase 3 Hook
+    semantic_trace: Optional[List[Dict[str, Any]]] = None, # Phase 3 Hook
+    inference_trace: Optional[List[Dict[str, Any]]] = None # Phase 4 Hook
 ):
     for sq in raw_subs:
         if not isinstance(sq, dict):
@@ -1014,8 +1122,14 @@ def _normalize_subquestions_recursive(
         sq_uid = canonicalize_uid(section, parent_num, subpart=current_subpart, paper_id=paper_id)
         
         if sq_uid in seen_uids:
-            logger.warning("[EXTRACTION_SUBPART_UID_COLLISION] Duplicate subpart UID detected: %s. Appending suffix.", sq_uid)
-            sq_uid = f"{sq_uid}_dup_{len(seen_uids)}"
+            text_snippet = str(sq.get("text") or sq.get("question_text") or "").strip().lower()
+            parent_raw = parent_num # wait, we don't have parent_raw easily here, but we can just use parent_uid
+            base = f"{parent_uid}|{current_subpart}|{text_snippet}".strip().lower()
+            if not base or base == "none|none|none|":
+                base = f"{parent_uid}|fallback|{len(seen_uids)}"
+            text_hash = hashlib.md5(base.encode("utf-8")).hexdigest()[:6]
+            sq_uid = f"{sq_uid}_h{text_hash}"
+            logger.warning("[EXTRACTION_SUBPART_UID_COLLISION] Duplicate subpart UID detected. Appending hash: %s", sq_uid)
             
         seen_uids.add(sq_uid)
         
@@ -1040,14 +1154,48 @@ def _normalize_subquestions_recursive(
             "normalized_text": norm_text
         })
         
+        raw_label = str(sq.get("label") or sq.get("number") or "").strip()
+        parsed_idx = _label_to_index(raw_label)
+        label_status = "valid" if (raw_label.isdigit() or len(raw_label) == 1) else "recovered"
+        if parsed_idx is None:
+            label_status = "failed"
+            
+        # Phase 4: Inference Gate Relaxation (Subparts)
+        inference_flags = dict(sq.get("_flags") or {})
+        ai_conf = _to_float(sq.get("confidence") or sq.get("ai_confidence"), 0.0)
+        ai_conf = max(ai_conf, 0.1)
+        
+        if label_status == "failed":
+            ai_conf = 0.1
+            inference_flags["requires_manual_mapping"] = True
+            if inference_trace is not None:
+                inference_trace.append({
+                    "uid": sq_uid,
+                    "parse_status": "failed",
+                    "marks": sq.get("marks")
+                })
+        elif label_status == "recovered":
+            ai_conf = min(ai_conf, 0.9)
+            if inference_trace is not None:
+                inference_trace.append({
+                    "uid": sq_uid,
+                    "parse_status": "recovered",
+                    "marks": sq.get("marks")
+                })
+
         sq_obj = {
             "label": label,
+            "raw_label": raw_label,
+            "label_parse_status": label_status,
             "text": norm_text,
             "question_uid": sq_uid,
             "uid": sq_uid,
-            "marks": None,
-            "mark_source": "missing",
-            "mark_confidence": 0.0,
+            "marks": sq.get("marks"),  # Preserved for Phase 5 Cap+Gap
+            "mark_source": "extracted" if sq.get("marks") is not None else "missing",
+            "mark_confidence": ai_conf if sq.get("marks") is not None else 0.0,
+            "confidence": round(ai_conf, 4),
+            "ai_confidence": round(ai_conf, 4),
+            "_flags": inference_flags,
             "subquestions": []
         }
         target_list.append(sq_obj)
@@ -1064,7 +1212,8 @@ def _normalize_subquestions_recursive(
                 uid_trace, 
                 paper_id,
                 current_subpart,
-                semantic_trace # Recursive Hook
+                semantic_trace, # Recursive Hook
+                inference_trace # Phase 4 Hook
             )
 
 
@@ -1729,7 +1878,6 @@ def _merge_semantic_with_visual_entities(
     page_ocr_texts: Optional[List[str]] = None,
     full_ocr_results: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    from app.utils.identity_manager import build_question_uid, normalize_section
     import copy
     import re
 
@@ -3207,7 +3355,13 @@ async def extract_question_structure(
 
             logger.warning("RECONSTRUCT_STRUCTURE errors=%s", errors_now)
             try:
-                reconstruction_prompt = build_reconstruction_prompt(
+                # Add validation error fallback check for severe extraction failure
+                original_q_count = len(structure.get("questions") or [])
+                if expected_question_count and expected_question_count > 0:
+                    if original_q_count < (expected_question_count * 0.3):
+                        logger.warning("SEVERE_EXTRACTION_FAILURE: Expected %s questions but got %s. Targeted repair may struggle but will attempt.", expected_question_count, original_q_count)
+
+                reconstruction_prompt = build_targeted_repair_prompt(
                     previous_structure=structure,
                     validation_errors=errors_now or ["unknown_validation_failure"],
                     raw_ocr_text=raw_ocr_text,
@@ -3218,8 +3372,36 @@ async def extract_question_structure(
                     model_name=model_name,
                     llm_service=llm_service,
                 )
-                reconstructed_semantic = _normalize_batch_payload(reconstructed_raw, page_offset=0, paper_id=paper_id)
-                reconstructed_semantic = _merge_semantic_with_visual_entities(reconstructed_semantic, visual_entities)
+                
+                reconstructed_semantic_partial = _normalize_batch_payload(reconstructed_raw, page_offset=0, paper_id=paper_id)
+                
+                # Merge the targeted repair output back into the existing structure
+                repaired_semantic = {
+                    "questions": list(structure.get("questions") or []),
+                    "section_math_blocks": list(structure.get("section_math_blocks") or [])
+                }
+                
+                original_questions = { (q.get("question_uid") or q.get("uid")): dict(q) for q in repaired_semantic["questions"] if (q.get("question_uid") or q.get("uid")) }
+                for rq in (reconstructed_semantic_partial.get("questions") or []):
+                    rq_uid = rq.get("question_uid") or rq.get("uid")
+                    if not rq_uid:
+                        continue
+                    if rq_uid in original_questions:
+                        logger.warning("TARGETED_REPAIR_MERGING uid=%s", rq_uid)
+                        original_questions[rq_uid] = _merge_questions(original_questions[rq_uid], rq)
+                    else:
+                        logger.warning("TARGETED_REPAIR_APPENDING uid=%s", rq_uid)
+                        original_questions[rq_uid] = rq
+                
+                # Update repaired semantic questions and sort them
+                repaired_questions_list = list(original_questions.values())
+                try:
+                    repaired_questions_list.sort(key=lambda q: (str(q.get("section") or ""), _to_int(q.get("number"), 0)))
+                except:
+                    pass
+                repaired_semantic["questions"] = repaired_questions_list
+
+                reconstructed_semantic = _merge_semantic_with_visual_entities(repaired_semantic, visual_entities)
                 from app.utils.identity_manager import assign_question_uids
                 assign_question_uids(reconstructed_semantic.get("questions") or [], paper_id=paper_id)
                 reconstructed_reasoned = resolve_marks(
