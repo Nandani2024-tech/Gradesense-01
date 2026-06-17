@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   backend:
     build: 
@@ -7,8 +5,13 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
-    env_file:
-      - ./backend/.env
+    # env_file:
+    #   - ./backend/.env
+    environment:
+      - MONGO_URL=mongodb://mongodb:27017/gradesense
+      - DB_NAME=gradesense
+      - JWT_SECRET_KEY=default_dev_secret_key
+      - COLLEGE_V2_PIPELINE_ENABLED=true
     depends_on:
       - mongodb
       - ocr-service
